@@ -975,10 +975,18 @@ then build them in the tablespace.
                                                 segments per space
 @return true if all necessary rollback segments and trx_rseg_t objects
 were created. */
+/*根据目标回滚段数量调整回滚段
+ *
+ * 将更多的rseg添加到每个表空间的rseg列表中，直到它们有srv_rollback_segments为止。
+ * 使用任何已经存在的回滚段，以便可以用任何现有的undo日志填充和处理purge_queue。
+ * 如果这个表空间中不存在回滚段，而我们根据target_rollback_segments需要它们，那么就在表空间中构建它们。
+ * */
 bool trx_rseg_adjust_rollback_segments(ulong target_rollback_segments) {
+    /** 已创建的回滚段总数 */
   /** The number of rollback segments created in the datafile. */
   ulint n_total_created = 0;
 
+    /* 确保临时表空间的回滚段数量足够 */
   /* Make sure Temporary Tablespace has enough rsegs. */
   if (!trx_rseg_add_rollback_segments(srv_tmp_space.space_id(),
                                       target_rollback_segments,
@@ -986,17 +994,20 @@ bool trx_rseg_adjust_rollback_segments(ulong target_rollback_segments) {
     return (false);
   }
 
+    /* 如果处于强制恢复模式，只使用临时表空间的回滚段，不再调整其他表空间 */
   /* Only the temp rsegs are used with a high force_recovery. */
   if (srv_force_recovery >= SRV_FORCE_NO_UNDO_LOG_SCAN) {
     return (true);
   }
 
+    /* 加锁以保护回滚段空间列表 */
   /* Adjust the number of rollback segments in each Undo Tablespace
   whether or not it is currently active. If rollback segments are written
   to the tablespace, they will be checkpointed. But we cannot hold
   undo::spaces->s_lock while doing a checkpoint because of latch order
   violation.  So traverse the list by ID. */
   undo::spaces->s_lock();
+    /* 遍历每个回滚段空间，调整回滚段数量 */
   for (auto undo_space : undo::spaces->m_spaces) {
     if (!trx_rseg_add_rollback_segments(
             undo_space->id(), target_rollback_segments, undo_space->rsegs(),
@@ -1007,6 +1018,7 @@ bool trx_rseg_adjust_rollback_segments(ulong target_rollback_segments) {
   }
   undo::spaces->s_unlock();
 
+    /* 如果创建了新的回滚段且系统不是只读模式，触发最新的检查点操作 */
   /* Make sure these rollback segments are checkpointed. */
   if (n_total_created > 0 && !srv_read_only_mode && srv_force_recovery == 0) {
     log_make_latest_checkpoint();

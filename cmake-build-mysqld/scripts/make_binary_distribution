@@ -1,0 +1,1 @@
+cd /Users/victor/mysql/percona-server/cmake-build-mysqld && '/Applications/CLion.app/Contents/bin/cmake/mac/bin/cpack' -G TGZ --config CPackConfig.cmake

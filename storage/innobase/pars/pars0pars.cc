@@ -97,8 +97,11 @@ ib_mutex_t pars_mutex;
 static bool pars_inited = false;
 
 /** Initialize for the internal parser */
+/*初始化解析器模块*/
 void pars_init() {
+    /* 创建一个互斥锁，用于保护解析器的访问 */
   mutex_create(LATCH_ID_PARSER, &pars_mutex);
+    /* 标记解析器初始化完成 */
   pars_inited = true;
 }
 

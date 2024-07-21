@@ -1659,21 +1659,28 @@ static dberr_t log_sys_check_directory(const Log_files_context &ctx,
   return DB_SUCCESS;
 }
 
+/* 初始化redo日志系统 */
 dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
                      lsn_t &new_files_lsn) {
+    /* 验证输入的flushed_lsn是有效数据LSN */
   ut_a(log_is_data_lsn(flushed_lsn));
+    /* 确保日志系统尚未初始化 */
   ut_a(log_sys == nullptr);
 
+    /* 初始化指向新文件的LSN为0 */
   new_files_lsn = 0;
 
+    /* 设置日志文件上下文，用于后续检查和操作日志文件 */
   Log_files_context log_files_ctx{srv_log_group_home_dir,
                                   Log_files_ruleset::PRE_8_0_30};
 
+    /* 检查根目录下是否存在日志文件 */
   std::string root_path;
   bool found_files_in_root{false};
   dberr_t err =
       log_sys_check_directory(log_files_ctx, root_path, found_files_in_root);
 
+    /* 如果根目录检查失败，则报告错误并返回 */
   /* Report error if innodb_log_group_home_dir / datadir has not been found or
   could not be listed. It's a proper decision for all redo format versions:
     - older formats store there ib_logfile* files directly,
@@ -1683,37 +1690,48 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
     return err;
   }
 
+    /* 设置日志文件读取前的回调函数，用于验证和统计 */
   Log_file_handle::s_on_before_read = [](Log_file_id, Log_file_type file_type,
                                          os_offset_t, os_offset_t read_size) {
+      /* 确保读取的是普通日志文件 */
     ut_a(file_type == Log_file_type::NORMAL);
+      /* 确认服务器正在启动中 */
     ut_a(srv_is_being_started);
 #ifndef UNIV_HOTBACKUP
+      /* 增加读取数据的统计 */
     srv_stats.data_read.add(read_size);
 #endif /* !UNIV_HOTBACKUP */
   };
 
+    /* 设置日志文件写入前的回调函数，用于验证和统计 */
   Log_file_handle::s_on_before_write =
       [](Log_file_id file_id, Log_file_type file_type, os_offset_t write_offset,
          os_offset_t write_size) {
+          /* 确保不是只读模式 */
         ut_a(!srv_read_only_mode);
+          /* 如果服务器不是在启动中，进行更详细的验证 */
         if (!srv_is_being_started) {
           ut_a(log_sys != nullptr);
           auto file = log_sys->m_files.file(file_id);
+            /* 确保普通日志文件的写入不超出文件大小 */
           if (file_type == Log_file_type::NORMAL) {
             ut_a(file != log_sys->m_files.end());
             ut_a((file_id == log_sys->m_current_file.m_id &&
                   write_offset + write_size <= file->m_size_in_bytes) ||
                  write_offset + write_size <= LOG_FILE_HDR_SIZE);
           } else {
+              /* 确保系统文件的写入位置正确 */
             ut_a(file == log_sys->m_files.end());
             ut_a(file_id == log_sys->m_current_file.next_id());
           }
         }
 #ifndef UNIV_HOTBACKUP
+          /* 增加写入数据的统计 */
         srv_stats.data_written.add(write_size);
 #endif
       };
 
+    /* 根据操作系统和配置设置日志文件的同步策略 */
 #ifdef _WIN32
   Log_file_handle::s_skip_fsyncs =
       (srv_win_file_flush_method == SRV_WIN_IO_UNBUFFERED);
@@ -1723,22 +1741,28 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
        srv_unix_file_flush_method == SRV_UNIX_NOSYNC);
 #endif /* _WIN32 */
 
+    /* 如果在根目录下没有找到日志文件 */
   if (!found_files_in_root) {
+      /* 更新日志文件上下文为当前版本的规则 */
     log_files_ctx =
         Log_files_context{srv_log_group_home_dir, Log_files_ruleset::CURRENT};
 
+      /* 检查子目录下是否存在日志文件 */
     std::string subdir_path;
     bool found_files_in_subdir{false};
     err = log_sys_check_directory(log_files_ctx, subdir_path,
                                   found_files_in_subdir);
 
+      /* 根据检查结果进行相应处理 */
     switch (err) {
       case DB_SUCCESS:
+          /* 如果期望没有文件但找到了文件，报错并返回 */
         if (expect_no_files && found_files_in_subdir) {
           ib::error(ER_IB_MSG_LOG_INIT_DIR_NOT_EMPTY_WONT_INITIALIZE,
                     subdir_path.c_str());
           return DB_ERROR;
         }
+            /* 如果不是只读模式，尝试删除未使用的日志文件 */
         if (!srv_read_only_mode) {
           /* The problem is that a lot of people is not aware
           that sending SHUTDOWN command does not end when the
@@ -1758,13 +1782,16 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
         }
         break;
       case DB_NOT_FOUND:
+          /* 如果没有找到子目录，根据期望是否有文件进行处理 */
         /* The #innodb_redo directory has not been found. */
         if (expect_no_files) {
+            /* 如果期望没有文件，尝试创建子目录 */
           /* InnoDB needs to create new directory #innodb_redo. */
           if (!os_file_create_directory(subdir_path.c_str(), false)) {
             return DB_ERROR;
           }
         } else {
+            /* 如果既没有找到文件也没有找到子目录，报错并返回 */
           /* InnoDB does not start if neither ib_logfile* files were found,
           nor the #innodb_redo directory was found. User should be informed
           about the problem and decide to either:
@@ -1776,11 +1803,13 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
         }
         break;
       default:
+          /* 其他错误，报错并返回 */
         ib::error(ER_IB_MSG_LOG_INIT_DIR_LIST_FAILED, subdir_path.c_str());
         return err;
     }
 
   } else {
+      /* 在根目录下找到了旧的日志文件，但期望没有文件，报错并返回 */
     /* Found existing files in old location for redo files (PRE_8_0_30).
     If expected to see no files (and create new), return error emitting
     the error message. */
@@ -1791,10 +1820,13 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
     }
   }
 
+    /* 创建日志系统实例 */
   log_sys_create();
+    /* 验证日志系统实例已创建 */
   ut_a(log_sys != nullptr);
   log_t &log = *log_sys;
 
+    /* 校验并发度余量是否安全 */
   bool is_concurrency_margin_safe;
   log_concurrency_margin(
       Log_files_capacity::soft_logical_capacity_for_hard(
@@ -1802,6 +1834,7 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
               srv_redo_log_capacity_used)),
       is_concurrency_margin_safe);
 
+    /* 如果并发度余量不安全，调整并报错 */
   if (!is_concurrency_margin_safe) {
     os_offset_t min_redo_log_capacity = srv_redo_log_capacity_used;
     os_offset_t max_redo_log_capacity = LOG_CAPACITY_MAX;
@@ -1822,6 +1855,7 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
       }
     }
 
+      /* 对最小重做日志容量进行对齐 */
     /* The innodb_redo_log_capacity is always rounded to 1M */
     min_redo_log_capacity =
         ut_uint64_align_up(min_redo_log_capacity, 1024UL * 1024);
@@ -1835,22 +1869,28 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
     return DB_ERROR;
   }
 
+    /* 设置日志文件上下文到日志系统 */
   log.m_files_ctx = std::move(log_files_ctx);
 
+    /* 如果期望没有文件，创建新的日志文件 */
   if (expect_no_files) {
+      /* 确保不处于只读模式并且强制恢复级别不够高 */
     ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
     ut_a(!srv_read_only_mode);
 
+      /* 使用flushed_lsn作为新文件的LSN */
     ut_a(log.m_files_ctx.m_files_ruleset == Log_files_ruleset::CURRENT);
 
     new_files_lsn = flushed_lsn;
     return log_files_create(log, flushed_lsn);
   }
 
+    /* 如果强制恢复级别足够高，直接返回成功 */
   if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
     return DB_SUCCESS;
   }
 
+    /* 处理现有日志文件，包括解析格式、验证和更新日志系统状态 */
   Log_files_dict files{log.m_files_ctx};
   Log_format format;
   std::string creator_name;
@@ -1864,6 +1904,7 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
       creator_name, log_flags, log_uuid);
   switch (res) {
     case Log_files_find_result::FOUND_VALID_FILES:
+        /* 更新日志系统的格式和其他信息 */
       log.m_format = format;
       log.m_creator_name = creator_name;
       log.m_log_flags = log_flags;
@@ -1872,9 +1913,11 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
       break;
 
     case Log_files_find_result::FOUND_UNINITIALIZED_FILES:
+        /* 处理未初始化的日志文件 */
       ut_a(format == Log_format::CURRENT);
       [[fallthrough]];
     case Log_files_find_result::FOUND_NO_FILES:
+        /* 处理没有找到日志文件的情况 */
       ut_a(log.m_files_ctx.m_files_ruleset == Log_files_ruleset::CURRENT);
       ut_a(files.empty());
 
@@ -1902,6 +1945,7 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
       return DB_ERROR;
   }
 
+  /*检查redo log的格式*/
   /* Check format of the redo log and emit information to the error log,
   if the format was not the newest one. */
   err = log_sys_check_format(log);

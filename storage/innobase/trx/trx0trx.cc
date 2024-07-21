@@ -1083,15 +1083,24 @@ static inline void trx_remove_from_rw_trx_list(trx_t *trx) {
  already exist when this function is called, because the lists of
  transactions to be rolled back or cleaned up are built based on the
  undo log lists. */
+ /*从undo表空间中构建事务列表，主要提取active&prepare状态的事务
+  *
+  * 为事务创建trx对象，并在数据库启动时初始化trx_sys的trx列表。
+  * 在调用此函数时，回滚段和撤销日志列表必须已经存在，
+  * 因为要回滚或清理的事务的列表是基于撤销日志列表构建的。
+  * */
 void trx_lists_init_at_db_start(void) {
+     /* 确保服务器正在启动中 */
   ut_a(srv_is_being_started);
 
+     /* 遍历TRX_SYS中的回滚段，尝试恢复事务 */
   /* Look through the rollback segments in the TRX_SYS for
   transaction undo logs. */
   for (auto rseg : trx_sys->rsegs) {
     trx_resurrect(rseg);
   }
 
+     /* 加锁undo空间，遍历每个空间的回滚段，同样尝试恢复事务 */
   /* Look through the rollback segments in each RSEG_ARRAY for
   transaction undo logs. */
   undo::spaces->s_lock();
@@ -1104,6 +1113,7 @@ void trx_lists_init_at_db_start(void) {
   }
   undo::spaces->s_unlock();
 
+     /* 收集所有可能的活跃事务 */
   ut::vector<trx_t *> trxs;
   for (auto &shard : trx_sys->shards) {
     shard.active_rw_trxs.latch_and_execute(
@@ -1114,14 +1124,18 @@ void trx_lists_init_at_db_start(void) {
         },
         UT_LOCATION_HERE);
   }
+     /* 对事务进行排序，确保按照事务ID的顺序处理 */
   std::sort(trxs.begin(), trxs.end(),
             [&](trx_t *a, trx_t *b) { return a->id < b->id; });
 
+     /* 处理每个事务，根据状态更新系统事务列表 */
   for (trx_t *trx : trxs) {
+      /* 如果事务处于活跃或准备状态，则将其ID添加到读写事务ID列表中 */
     if (trx->state.load(std::memory_order_relaxed) == TRX_STATE_ACTIVE ||
         trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) {
       trx_sys->rw_trx_ids.push_back(trx->id);
     }
+      /* 将事务添加到读写事务列表中 */
     trx_add_to_rw_trx_list(trx);
   }
 }

@@ -776,15 +776,22 @@ byte *fsp_parse_init_file_page(byte *ptr, byte *end_ptr [[maybe_unused]],
 }
 
 /** Initializes the fsp system. */
+/*初始化文件系统参数*/
 void fsp_init() {
+    /* 确保页面大小大于0，且页面大小是FSP_EXTENT_SIZE的倍数 */
+    /* 这是为了确保存储空间的分配能够高效地进行，避免浪费空间 */
   /* FSP_EXTENT_SIZE must be a multiple of page & zip size */
   ut_a(UNIV_PAGE_SIZE > 0);
   ut_a(0 == (UNIV_PAGE_SIZE % FSP_EXTENT_SIZE));
 
-  static_assert(!(UNIV_PAGE_SIZE_MAX % FSP_EXTENT_SIZE_MAX),
+    /* 确保UNIV_PAGE_SIZE_MAX是FSP_EXTENT_SIZE_MAX的倍数 */
+    /* 这是为了确保在支持的最大页面大小下，extent大小能够被正确处理 */
+    static_assert(!(UNIV_PAGE_SIZE_MAX % FSP_EXTENT_SIZE_MAX),
                 "UNIV_PAGE_SIZE_MAX % FSP_EXTENT_SIZE_MAX != 0");
 
-  static_assert(!(UNIV_ZIP_SIZE_MIN % FSP_EXTENT_SIZE_MIN),
+    /* 确保UNIV_ZIP_SIZE_MIN是FSP_EXTENT_SIZE_MIN的倍数 */
+    /* 这是为了确保在最小压缩页面大小下，extent大小能够被正确处理 */
+    static_assert(!(UNIV_ZIP_SIZE_MIN % FSP_EXTENT_SIZE_MIN),
                 "UNIV_ZIP_SIZE_MIN % FSP_EXTENT_SIZE_MIN != 0");
 
   /* Does nothing at the moment */

@@ -1,0 +1,1123 @@
+/Applications/CLion.app/Contents/bin/cmake/mac/bin/cmake -DDOWNLOAD_BOOST=1 -DWITH_BOOST=/Users/victor/mysql/percona_8.0.33/boost_1_77_0 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/Users/victor/mysql/percona_8.0.33 -DMYSQL_DATADIR=/Users/victor/mysql/percona_8.0.33/data -DSYSCONFDIR=/Users/victor/mysql/percona_8.0.33 -DMYSQL_UNIX_ADDR=/Users/victor/mysql/percona_8.0.33/data/mysql.sock -DMYSQL_MAINTAINER_MODE=false -DWITH_SSL=/usr/local/Cellar/openssl@1.1/1.1.1t -S /Users/victor/mysql/percona-server -B /Users/victor/mysql/percona-server/cmake-build-mysqld
+-- Running cmake version 3.22.3
+-- Found Git: /usr/local/bin/git (found version "2.32.0") 
+-- CMAKE_MODULE_PATH is /Users/victor/mysql/percona-server/cmake
+-- MySQL 8.0.33-25
+-- The C compiler identification is AppleClang 15.0.0.15000309
+-- The CXX compiler identification is AppleClang 15.0.0.15000309
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Source directory /Users/victor/mysql/percona-server
+-- Binary directory /Users/victor/mysql/percona-server/cmake-build-mysqld
+-- CMAKE_GENERATOR: Unix Makefiles
+-- Performing Test HAVE_SUPPORTED_CLANG_VERSION
+-- Performing Test HAVE_SUPPORTED_CLANG_VERSION - Success
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Check size of void *
+-- Check size of void * - done
+-- SIZEOF_VOIDP 8
+-- DEFAULT_PLATFORM macos14.5
+-- Packaging as: percona-server-8.0.33-25-macos14.5-x86_64
+-- Local boost dir /Users/victor/mysql/percona_8.0.33/boost_1_77_0
+-- Found /Users/victor/mysql/percona_8.0.33/boost_1_77_0/boost/version.hpp 
+-- BOOST_VERSION_NUMBER is #define BOOST_VERSION 107700
+-- BOOST_INCLUDE_DIR /Users/victor/mysql/percona_8.0.33/boost_1_77_0
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Looking for floor
+-- Looking for floor - found
+-- Looking for log
+-- Looking for log - found
+-- Looking for gethostbyname_r
+-- Looking for gethostbyname_r - not found
+-- Looking for gethostbyname_r in nsl_r
+-- Looking for gethostbyname_r in nsl_r - not found
+-- Looking for gethostbyname_r in nsl
+-- Looking for gethostbyname_r in nsl - not found
+-- Looking for bind
+-- Looking for bind - found
+-- Looking for setsockopt
+-- Looking for setsockopt - found
+-- Looking for dlopen
+-- Looking for dlopen - found
+-- Looking for dlsym
+-- Looking for dlsym - found
+-- Looking for sched_yield
+-- Looking for sched_yield - found
+-- Looking for clock_gettime
+-- Looking for clock_gettime - found
+-- Looking for timer_create
+-- Looking for timer_create - not found
+-- Looking for timer_create in rt
+-- Looking for timer_create in rt - not found
+-- Looking for backtrace
+-- Looking for backtrace - found
+-- Looking for include file alloca.h
+-- Looking for include file alloca.h - found
+-- Looking for include file arpa/inet.h
+-- Looking for include file arpa/inet.h - found
+-- Looking for include file dlfcn.h
+-- Looking for include file dlfcn.h - found
+-- Looking for include file endian.h
+-- Looking for include file endian.h - not found
+-- Looking for include file execinfo.h
+-- Looking for include file execinfo.h - found
+-- Looking for include file fpu_control.h
+-- Looking for include file fpu_control.h - not found
+-- Looking for include file grp.h
+-- Looking for include file grp.h - found
+-- Looking for include file langinfo.h
+-- Looking for include file langinfo.h - found
+-- Looking for include file malloc.h
+-- Looking for include file malloc.h - not found
+-- Looking for include file netinet/in.h
+-- Looking for include file netinet/in.h - found
+-- Looking for include file poll.h
+-- Looking for include file poll.h - found
+-- Looking for include file pwd.h
+-- Looking for include file pwd.h - found
+-- Looking for include file strings.h
+-- Looking for include file strings.h - found
+-- Looking for include file sys/ioctl.h
+-- Looking for include file sys/ioctl.h - found
+-- Looking for include file sys/mman.h
+-- Looking for include file sys/mman.h - found
+-- Looking for include file sys/prctl.h
+-- Looking for include file sys/prctl.h - not found
+-- Looking for include file sys/resource.h
+-- Looking for include file sys/resource.h - found
+-- Looking for include file sys/select.h
+-- Looking for include file sys/select.h - found
+-- Looking for include file sys/socket.h
+-- Looking for include file sys/socket.h - found
+-- Looking for include files curses.h, term.h
+-- Looking for include files curses.h, term.h - found
+-- Looking for include file termios.h
+-- Looking for include file termios.h - found
+-- Looking for include file termio.h
+-- Looking for include file termio.h - not found
+-- Looking for include file unistd.h
+-- Looking for include file unistd.h - found
+-- Looking for include file sys/wait.h
+-- Looking for include file sys/wait.h - found
+-- Looking for include file sys/param.h
+-- Looking for include file sys/param.h - found
+-- Looking for include file fnmatch.h
+-- Looking for include file fnmatch.h - found
+-- Looking for include file sys/un.h
+-- Looking for include file sys/un.h - found
+-- Looking for include files sys/types.h, sasl/sasl.h
+-- Looking for include files sys/types.h, sasl/sasl.h - found
+-- Looking for _aligned_malloc
+-- Looking for _aligned_malloc - not found
+-- Looking for backtrace
+-- Looking for backtrace - found
+-- Looking for index
+-- Looking for index - found
+-- Looking for chown
+-- Looking for chown - found
+-- Looking for cuserid
+-- Looking for cuserid - not found
+-- Looking for directio
+-- Looking for directio - not found
+-- Looking for ftruncate
+-- Looking for ftruncate - found
+-- Looking for fchmod
+-- Looking for fchmod - found
+-- Looking for fcntl
+-- Looking for fcntl - found
+-- Looking for fdatasync
+-- Looking for fdatasync - found
+-- Looking for fdatasync
+-- Looking for fdatasync - not found
+-- Looking for fedisableexcept
+-- Looking for fedisableexcept - not found
+-- Looking for fsync
+-- Looking for fsync - found
+-- Looking for gethrtime
+-- Looking for gethrtime - not found
+-- Looking for getpass
+-- Looking for getpass - found
+-- Looking for getpassphrase
+-- Looking for getpassphrase - not found
+-- Looking for getpwnam
+-- Looking for getpwnam - found
+-- Looking for getpwuid
+-- Looking for getpwuid - found
+-- Looking for getrusage
+-- Looking for getrusage - found
+-- Looking for initgroups
+-- Looking for initgroups - found
+-- Looking for issetugid
+-- Looking for issetugid - found
+-- Looking for getuid
+-- Looking for getuid - found
+-- Looking for geteuid
+-- Looking for geteuid - found
+-- Looking for getgid
+-- Looking for getgid - found
+-- Looking for getegid
+-- Looking for getegid - found
+-- Looking for madvise
+-- Looking for madvise - found
+-- Looking for malloc_info
+-- Looking for malloc_info - not found
+-- Looking for mlock
+-- Looking for mlock - found
+-- Looking for mlockall
+-- Looking for mlockall - found
+-- Looking for mmap64
+-- Looking for mmap64 - not found
+-- Looking for poll
+-- Looking for poll - found
+-- Looking for posix_fallocate
+-- Looking for posix_fallocate - not found
+-- Looking for posix_memalign
+-- Looking for posix_memalign - found
+-- Looking for pthread_condattr_setclock
+-- Looking for pthread_condattr_setclock - not found
+-- Looking for pthread_getaffinity_np
+-- Looking for pthread_getaffinity_np - not found
+-- Looking for pthread_sigmask
+-- Looking for pthread_sigmask - found
+-- Looking for sleep
+-- Looking for sleep - found
+-- Looking for stpcpy
+-- Looking for stpcpy - found
+-- Looking for stpncpy
+-- Looking for stpncpy - found
+-- Looking for strlcpy
+-- Looking for strlcpy - found
+-- Looking for strndup
+-- Looking for strndup - found
+-- Looking for strlcat
+-- Looking for strlcat - found
+-- Looking for strptime
+-- Looking for strptime - found
+-- Looking for strsignal
+-- Looking for strsignal - found
+-- Looking for tell
+-- Looking for tell - not found
+-- Looking for vasprintf
+-- Looking for vasprintf - found
+-- Looking for memalign
+-- Looking for memalign - not found
+-- Looking for nl_langinfo
+-- Looking for nl_langinfo - found
+-- Looking for ntohll
+-- Looking for ntohll - not found
+-- Looking for memset_s
+-- Looking for memset_s - found
+-- Looking for epoll_create
+-- Looking for epoll_create - not found
+-- Looking for include file sys/time.h
+-- Looking for include file sys/time.h - found
+-- Looking for include file sys/times.h
+-- Looking for include file sys/times.h - found
+-- Looking for times
+-- Looking for times - found
+-- Looking for gettimeofday
+-- Looking for gettimeofday - found
+-- Looking for lrand48
+-- Looking for lrand48 - found
+-- Looking for TIOCGWINSZ
+-- Looking for TIOCGWINSZ - found
+-- Looking for FIONREAD
+-- Looking for FIONREAD - found
+-- Looking for FIONREAD
+-- Looking for FIONREAD - found
+-- Looking for MADV_DONTDUMP
+-- Looking for MADV_DONTDUMP - not found
+-- Performing Test HAVE_O_TMPFILE
+-- Performing Test HAVE_O_TMPFILE - Failed
+-- Looking for timer_create
+-- Looking for timer_create - not found
+-- Looking for timer_settime
+-- Looking for timer_settime - not found
+-- Looking for kqueue
+-- Looking for kqueue - found
+-- Performing Test HAVE_SETNS
+-- Performing Test HAVE_SETNS - Failed
+-- Looking for EVFILT_TIMER
+-- Looking for EVFILT_TIMER - found
+-- Check size of char *
+-- Check size of char * - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of long long
+-- Check size of long long - done
+-- Check size of time_t
+-- Check size of time_t - done
+-- Performing Test HAVE_TM_GMTOFF
+-- Performing Test HAVE_TM_GMTOFF - Success
+-- Check size of ulong
+-- Check size of ulong - failed
+-- Check size of u_int32_t
+-- Check size of u_int32_t - done
+-- Performing Test HAVE_VISIBILITY_HIDDEN
+-- Performing Test HAVE_VISIBILITY_HIDDEN - Success
+-- Performing Test HAVE_CLOCK_GETTIME
+-- Performing Test HAVE_CLOCK_GETTIME - Success
+-- Performing Test HAVE_CLOCK_REALTIME
+-- Performing Test HAVE_CLOCK_REALTIME - Success
+-- Checking stack direction : -1
+-- Looking for include files time.h, sys/time.h
+-- Looking for include files time.h, sys/time.h - found
+-- Looking for O_NONBLOCK
+-- Looking for O_NONBLOCK - found
+-- Performing Test HAVE_PAUSE_INSTRUCTION
+-- Performing Test HAVE_PAUSE_INSTRUCTION - Success
+-- Looking for C++ include cxxabi.h
+-- Looking for C++ include cxxabi.h - found
+-- Performing Test HAVE_ABI_CXA_DEMANGLE
+-- Performing Test HAVE_ABI_CXA_DEMANGLE - Success
+-- Performing Test HAVE_BUILTIN_UNREACHABLE
+-- Performing Test HAVE_BUILTIN_UNREACHABLE - Success
+-- Performing Test HAVE_BUILTIN_EXPECT
+-- Performing Test HAVE_BUILTIN_EXPECT - Success
+-- Looking for __builtin_stpcpy
+-- Looking for __builtin_stpcpy - not found
+-- Performing Test HAVE_GCC_SYNC_BUILTINS
+-- Performing Test HAVE_GCC_SYNC_BUILTINS - Success
+-- Performing Test HAVE_SYS_GETTID
+-- Performing Test HAVE_SYS_GETTID - Success
+-- Performing Test HAVE_PTHREAD_GETTHREADID_NP
+-- Performing Test HAVE_PTHREAD_GETTHREADID_NP - Failed
+-- Performing Test HAVE_PTHREAD_THREADID_NP
+-- Performing Test HAVE_PTHREAD_THREADID_NP - Success
+-- Performing Test HAVE_INTEGER_PTHREAD_SELF
+-- Performing Test HAVE_INTEGER_PTHREAD_SELF - Failed
+-- Performing Test HAVE_PTHREAD_SETNAME_NP_LINUX
+-- Performing Test HAVE_PTHREAD_SETNAME_NP_LINUX - Failed
+-- Performing Test HAVE_PTHREAD_SETNAME_NP_MACOS
+-- Performing Test HAVE_PTHREAD_SETNAME_NP_MACOS - Success
+-- Looking for netinet/in6.h
+-- Looking for netinet/in6.h - not found
+-- Check size of struct in6_addr
+-- Check size of struct in6_addr - failed
+-- Performing Test HAVE_SOCKADDR_IN_SIN_LEN
+-- Performing Test HAVE_SOCKADDR_IN_SIN_LEN - Success
+-- Performing Test HAVE_SOCKADDR_IN6_SIN6_LEN
+-- Performing Test HAVE_SOCKADDR_IN6_SIN6_LEN - Success
+-- Looking for include file numa.h
+-- Looking for include file numa.h - not found
+-- Looking for include file numaif.h
+-- Looking for include file numaif.h - not found
+-- NUMA library missing or required version not available
+-- ZLIB_VERSION (bundled) is 1.2.13
+-- ZLIB_INCLUDE_DIR /Users/victor/mysql/percona-server/extra/zlib/zlib-1.2.13
+-- Check size of off64_t
+-- Check size of off64_t - failed
+-- Looking for fseeko
+-- Looking for fseeko - found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Performing Test HAVE_CXX_W_missing_profile
+-- Performing Test HAVE_CXX_W_missing_profile - Failed
+-- Performing Test HAVE_CXX_W_deprecated_non_prototype
+-- Performing Test HAVE_CXX_W_deprecated_non_prototype - Success
+-- ZSTD_VERSION (bundled) is 1.5.0
+-- ZSTD_INCLUDE_DIR /Users/victor/mysql/percona-server/extra/zstd/zstd-1.5.0/lib
+-- Performing Test HAVE_CXX_W_documentation
+-- Performing Test HAVE_CXX_W_documentation - Success
+-- ZSTD_LEGACY_SUPPORT not defined!
+-- OPENSSL_VERSION (/usr/local/Cellar/openssl@1.1/1.1.1t) is 1.01.01
+-- The openssl command does not support zlib
+-- OPENSSL_INCLUDE_DIR = /usr/local/Cellar/openssl@1.1/1.1.1t/include
+-- OPENSSL_LIBRARY = /usr/local/Cellar/openssl@1.1/1.1.1t/lib/libssl.dylib
+-- CRYPTO_LIBRARY = /usr/local/Cellar/openssl@1.1/1.1.1t/lib/libcrypto.dylib
+-- OPENSSL_LIB_DIR = 
+-- OPENSSL_VERSION_MAJOR = 1
+-- OPENSSL_VERSION_MINOR = 01
+-- OPENSSL_FIX_VERSION = 01
+-- Looking for SHA512_DIGEST_LENGTH
+-- Looking for SHA512_DIGEST_LENGTH - found
+-- SSL_LIBRARIES = /usr/local/Cellar/openssl@1.1/1.1.1t/lib/libssl.dylib;/usr/local/Cellar/openssl@1.1/1.1.1t/lib/libcrypto.dylib
+-- Looking for X509_check_host
+-- Looking for X509_check_host - found
+-- Looking for X509_check_ip
+-- Looking for X509_check_ip - found
+-- WITH_SSL_PATH /usr/local/Cellar/openssl@1.1/1.1.1t
+-- CRYPTO_EXT .dylib
+-- 
+-- SSL_LIBRARIES = /Users/victor/mysql/percona-server/cmake-build-mysqld/library_output_directory/./libssl.dylib;/Users/victor/mysql/percona-server/cmake-build-mysqld/library_output_directory/./libcrypto.dylib
+-- INSTALL openssl TO bin
+-- INSTALL libcrypto.dylib to lib
+-- INSTALL libssl.dylib to lib
+-- KERBEROS path is none, disabling kerberos support.
+-- HAVE_KRB5_KRB5_H  
+-- KERBEROS_LIBRARIES  
+-- SASL_LIBRARY /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/lib/libsasl2.tbd
+-- SASL_VERSION (system) is 2.1.26
+-- LBER_LIBRARY /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/lib/liblber.tbd
+-- LDAP_LIBRARY /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/System/Library/Frameworks/ldap.framework
+-- Looking for lber.h
+-- Looking for lber.h - found
+-- Looking for ldap.h
+-- Looking for ldap.h - found
+-- Check size of mbstate_t
+-- Check size of mbstate_t - done
+-- Performing Test HAVE_LANGINFO_CODESET
+-- Performing Test HAVE_LANGINFO_CODESET - Success
+-- Looking for wcsdup
+-- Looking for wcsdup - found
+-- Check size of wchar_t
+-- Check size of wchar_t - done
+-- Check size of wint_t
+-- Check size of wint_t - done
+-- Found Curses: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/lib/libcurses.tbd  
+-- Looking for 3 include files stdio.h, ..., readline/history.h
+-- Looking for 3 include files stdio.h, ..., readline/history.h - found
+-- READLINE_INCLUDE_DIR /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/include/readline
+-- READLINE_LIBRARY /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/lib/libreadline.tbd
+-- Performing Test READLINE_HAVE_HIST_ENTRY
+-- Performing Test READLINE_HAVE_HIST_ENTRY - Success
+-- Performing Test READLINE_USE_LIBEDIT_INTERFACE
+-- Performing Test READLINE_USE_LIBEDIT_INTERFACE - Success
+-- Performing Test READLINE_USE_NEW_READLINE_INTERFACE
+-- Performing Test READLINE_USE_NEW_READLINE_INTERFACE - Failed
+-- Performing Test HAVE_CXX_W_dangling_pointer
+-- Performing Test HAVE_CXX_W_dangling_pointer - Failed
+-- Found Git: /usr/local/bin/git  
+-- Performing Test check_c_compiler_flag__Wall
+-- Performing Test check_c_compiler_flag__Wall - Success
+-- Performing Test check_c_compiler_flag__Wextra
+-- Performing Test check_c_compiler_flag__Wextra - Success
+-- Performing Test check_c_compiler_flag__Wno_unused_parameter
+-- Performing Test check_c_compiler_flag__Wno_unused_parameter - Success
+-- Performing Test check_c_compiler_flag__Wstrict_aliasing
+-- Performing Test check_c_compiler_flag__Wstrict_aliasing - Success
+-- Performing Test check_c_compiler_flag__Wstrict_prototypes
+-- Performing Test check_c_compiler_flag__Wstrict_prototypes - Success
+-- Performing Test check_c_compiler_flag__fno_strict_aliasing
+-- Performing Test check_c_compiler_flag__fno_strict_aliasing - Success
+-- Performing Test check_c_compiler_flag__Wmissing_prototypes
+-- Performing Test check_c_compiler_flag__Wmissing_prototypes - Success
+-- Performing Test check_c_compiler_flag__Winit_self
+-- Performing Test check_c_compiler_flag__Winit_self - Success
+-- Performing Test check_c_compiler_flag__Wmissing_field_initializers
+-- Performing Test check_c_compiler_flag__Wmissing_field_initializers - Success
+-- Performing Test check_c_compiler_flag__Wdeclaration_after_statement
+-- Performing Test check_c_compiler_flag__Wdeclaration_after_statement - Success
+-- Performing Test check_c_compiler_flag__Waddress
+-- Performing Test check_c_compiler_flag__Waddress - Success
+-- Performing Test check_c_compiler_flag__Wnormalized_id
+-- Performing Test check_c_compiler_flag__Wnormalized_id - Failed
+-- Performing Test check_c_compiler_flag__Woverride_init
+-- Performing Test check_c_compiler_flag__Woverride_init - Success
+-- Performing Test check_c_compiler_flag__Wlogical_op
+-- Performing Test check_c_compiler_flag__Wlogical_op - Failed
+-- Performing Test check_c_compiler_flag__Wwrite_strings
+-- Performing Test check_c_compiler_flag__Wwrite_strings - Success
+-- Performing Test check_c_compiler_flag__Wno_unused_function
+-- Performing Test check_c_compiler_flag__Wno_unused_function - Success
+-- Performing Test check_c_compiler_flag__Wno_error_deprecated_declarations
+-- Performing Test check_c_compiler_flag__Wno_error_deprecated_declarations - Success
+-- Performing Test check_c_compiler_flag__Qunused_arguments
+-- Performing Test check_c_compiler_flag__Qunused_arguments - Success
+-- Looking for __GNU_LIBRARY__
+-- Looking for __GNU_LIBRARY__ - not found
+-- Looking for _GNU_SOURCE
+-- Looking for _GNU_SOURCE - not found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for sys/socket.h
+-- Looking for sys/socket.h - found
+-- Looking for netinet/in.h
+-- Looking for netinet/in.h - found
+-- Looking for sys/un.h
+-- Looking for sys/un.h - found
+-- Check size of struct sockaddr_un
+-- Check size of struct sockaddr_un - done
+-- Looking for netinet/in6.h
+-- Looking for netinet/in6.h - not found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Looking for netdb.h
+-- Looking for netdb.h - found
+-- Looking for dlfcn.h
+-- Looking for dlfcn.h - found
+-- Looking for arpa/inet.h
+-- Looking for arpa/inet.h - found
+-- Looking for fcntl.h
+-- Looking for fcntl.h - found
+-- Looking for inttypes.h
+-- Looking for inttypes.h - found
+-- Looking for memory.h
+-- Looking for memory.h - found
+-- Looking for poll.h
+-- Looking for poll.h - found
+-- Looking for port.h
+-- Looking for port.h - not found
+-- Looking for signal.h
+-- Looking for signal.h - found
+-- Looking for stdarg.h
+-- Looking for stdarg.h - found
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stdlib.h
+-- Looking for stdlib.h - found
+-- Looking for strings.h
+-- Looking for strings.h - found
+-- Looking for string.h
+-- Looking for string.h - found
+-- Looking for sys/devpoll.h
+-- Looking for sys/devpoll.h - not found
+-- Looking for sys/epoll.h
+-- Looking for sys/epoll.h - not found
+-- Looking for sys/eventfd.h
+-- Looking for sys/eventfd.h - not found
+-- Looking for sys/event.h
+-- Looking for sys/event.h - found
+-- Looking for sys/ioctl.h
+-- Looking for sys/ioctl.h - found
+-- Looking for sys/mman.h
+-- Looking for sys/mman.h - found
+-- Looking for sys/param.h
+-- Looking for sys/param.h - found
+-- Looking for sys/queue.h
+-- Looking for sys/queue.h - found
+-- Looking for sys/select.h
+-- Looking for sys/select.h - found
+-- Looking for sys/sendfile.h
+-- Looking for sys/sendfile.h - not found
+-- Looking for sys/stat.h
+-- Looking for sys/stat.h - found
+-- Looking for sys/time.h
+-- Looking for sys/time.h - found
+-- Looking for sys/uio.h
+-- Looking for sys/uio.h - found
+-- Looking for include files sys/types.h, ifaddrs.h
+-- Looking for include files sys/types.h, ifaddrs.h - found
+-- Looking for mach/mach_time.h
+-- Looking for mach/mach_time.h - found
+-- Looking for netinet/tcp.h
+-- Looking for netinet/tcp.h - found
+-- Looking for sys/wait.h
+-- Looking for sys/wait.h - found
+-- Looking for sys/resource.h
+-- Looking for sys/resource.h - found
+-- Looking for sys/timerfd.h
+-- Looking for sys/timerfd.h - not found
+-- Looking for errno.h
+-- Looking for errno.h - found
+-- Looking for epoll_create
+-- Looking for epoll_create - not found
+-- Looking for epoll_ctl
+-- Looking for epoll_ctl - not found
+-- Looking for eventfd
+-- Looking for eventfd - not found
+-- Looking for clock_gettime
+-- Looking for clock_gettime - found
+-- Looking for fcntl
+-- Looking for fcntl - found
+-- Looking for getaddrinfo
+-- Looking for getaddrinfo - found
+-- Looking for getnameinfo
+-- Looking for getnameinfo - found
+-- Looking for gettimeofday
+-- Looking for gettimeofday - found
+-- Looking for getprotobynumber
+-- Looking for getprotobynumber - found
+-- Looking for getservbyname
+-- Looking for getservbyname - found
+-- Looking for inet_ntop
+-- Looking for inet_ntop - found
+-- Looking for inet_pton
+-- Looking for inet_pton - found
+-- Looking for kqueue
+-- Looking for kqueue - found
+-- Looking for mmap
+-- Looking for mmap - found
+-- Looking for pipe
+-- Looking for pipe - found
+-- Looking for pipe2
+-- Looking for pipe2 - not found
+-- Looking for poll
+-- Looking for poll - found
+-- Looking for port_create
+-- Looking for port_create - not found
+-- Looking for sendfile
+-- Looking for sendfile - found
+-- Looking for sigaction
+-- Looking for sigaction - found
+-- Looking for signal
+-- Looking for signal - found
+-- Looking for splice
+-- Looking for splice - not found
+-- Looking for strlcpy
+-- Looking for strlcpy - found
+-- Looking for strsep
+-- Looking for strsep - found
+-- Looking for strtok_r
+-- Looking for strtok_r - found
+-- Looking for strtoll
+-- Looking for strtoll - found
+-- Looking for vasprintf
+-- Looking for vasprintf - found
+-- Looking for sysctl
+-- Looking for sysctl - found
+-- Looking for accept4
+-- Looking for accept4 - not found
+-- Looking for arc4random
+-- Looking for arc4random - found
+-- Looking for arc4random_buf
+-- Looking for arc4random_buf - found
+-- Looking for epoll_create1
+-- Looking for epoll_create1 - not found
+-- Looking for getegid
+-- Looking for getegid - found
+-- Looking for geteuid
+-- Looking for geteuid - found
+-- Looking for getifaddrs
+-- Looking for getifaddrs - found
+-- Looking for issetugid
+-- Looking for issetugid - found
+-- Looking for mach_absolute_time
+-- Looking for mach_absolute_time - found
+-- Looking for nanosleep
+-- Looking for nanosleep - found
+-- Looking for usleep
+-- Looking for usleep - found
+-- Looking for timeradd
+-- Looking for timeradd - not found
+-- Looking for timerclear
+-- Looking for timerclear - not found
+-- Looking for timercmp
+-- Looking for timercmp - not found
+-- Looking for timerfd_create
+-- Looking for timerfd_create - not found
+-- Looking for timerisset
+-- Looking for timerisset - not found
+-- Looking for putenv
+-- Looking for putenv - found
+-- Looking for setenv
+-- Looking for setenv - found
+-- Looking for setrlimit
+-- Looking for setrlimit - found
+-- Looking for umask
+-- Looking for umask - found
+-- Looking for unsetenv
+-- Looking for unsetenv - found
+-- Looking for gethostbyname_r
+-- Looking for gethostbyname_r - not found
+-- Looking for select
+-- Looking for select - found
+-- Check size of uint8_t
+-- Check size of uint8_t - done
+-- Check size of uint16_t
+-- Check size of uint16_t - done
+-- Check size of uint32_t
+-- Check size of uint32_t - done
+-- Check size of uint64_t
+-- Check size of uint64_t - done
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of unsigned
+-- Check size of unsigned - done
+-- Check size of unsigned int
+-- Check size of unsigned int - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of long long
+-- Check size of long long - done
+-- Performing Test HAVE_INLINE
+-- Performing Test HAVE_INLINE - Success
+-- Looking for __func__
+-- Looking for __func__ - found
+-- Looking for __FUNCTION__
+-- Looking for __FUNCTION__ - found
+-- Looking for TAILQ_FOREACH
+-- Looking for TAILQ_FOREACH - found
+-- Performing Test EVENT__HAVE_DECL_CTL_KERN
+-- Performing Test EVENT__HAVE_DECL_CTL_KERN - Success
+-- Looking for CTL_KERN - found
+-- Performing Test EVENT__HAVE_DECL_KERN_ARND
+-- Performing Test EVENT__HAVE_DECL_KERN_ARND - Failed
+-- Looking for KERN_ARND - not found
+-- Performing Test EVENT__HAVE_DECL_KERN_RANDOM
+-- Performing Test EVENT__HAVE_DECL_KERN_RANDOM - Failed
+-- Looking for KERN_RANDOM - not found
+-- Performing Test EVENT__HAVE_DECL_RANDOM_UUID
+-- Performing Test EVENT__HAVE_DECL_RANDOM_UUID - Failed
+-- Looking for RANDOM_UUID - not found
+-- Looking for F_SETFD
+-- Looking for F_SETFD - found
+-- Check size of fd_mask
+-- Check size of fd_mask - done
+-- Check size of size_t
+-- Check size of size_t - done
+-- Check size of off_t
+-- Check size of off_t - done
+-- Check size of ssize_t
+-- Check size of ssize_t - done
+-- Check size of SSIZE_T
+-- Check size of SSIZE_T - failed
+-- Check size of socklen_t
+-- Check size of socklen_t - done
+-- Check size of pid_t
+-- Check size of pid_t - done
+-- Check size of pthread_t
+-- Check size of pthread_t - done
+-- Check size of uintptr_t
+-- Check size of uintptr_t - done
+-- Check size of void *
+-- Check size of void * - done
+-- Check size of time_t
+-- Check size of time_t - done
+-- Checking if kqueue works with pipes...
+-- Performing Test EVENT__HAVE_WORKING_KQUEUE
+-- Performing Test EVENT__HAVE_WORKING_KQUEUE - Success
+-- Check size of struct addrinfo
+-- Check size of struct addrinfo - done
+-- Check size of struct in6_addr
+-- Check size of struct in6_addr - done
+-- Performing Test EVENT__HAVE_STRUCT_IN6_ADDR_S6_ADDR16
+-- Performing Test EVENT__HAVE_STRUCT_IN6_ADDR_S6_ADDR16 - Failed
+-- Performing Test EVENT__HAVE_STRUCT_IN6_ADDR_S6_ADDR32
+-- Performing Test EVENT__HAVE_STRUCT_IN6_ADDR_S6_ADDR32 - Failed
+-- Check size of sa_family_t
+-- Check size of sa_family_t - done
+-- Check size of struct sockaddr_in6
+-- Check size of struct sockaddr_in6 - done
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_IN6_SIN6_LEN
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_IN6_SIN6_LEN - Success
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_IN_SIN_LEN
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_IN_SIN_LEN - Failed
+-- Check size of struct sockaddr_storage
+-- Check size of struct sockaddr_storage - done
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_STORAGE_SS_FAMILY
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_STORAGE_SS_FAMILY - Success
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_STORAGE___SS_FAMILY
+-- Performing Test EVENT__HAVE_STRUCT_SOCKADDR_STORAGE___SS_FAMILY - Failed
+-- Check size of struct linger
+-- Check size of struct linger - done
+-- Performing Test HAVE_ARRAY_PARAMETER
+-- Performing Test HAVE_ARRAY_PARAMETER - Success
+-- LIBEVENT_VERSION (bundled) 2.1.11
+-- LIBEVENT_INCLUDE_DIRS /Users/victor/mysql/percona-server/extra/libevent/libevent-2.1.11-stable/include;/Users/victor/mysql/percona-server/cmake-build-mysqld/extra/libevent/libevent-2.1.11-stable/include
+-- LIBEVENT_LIBRARIES event_core;event_extra;event_openssl;event_pthreads
+-- LZ4_VERSION (bundled) is 1.9.4
+-- LZ4_INCLUDE_DIR /Users/victor/mysql/percona-server/extra/lz4/lz4-1.9.4/lib
+-- Performing Test HAVE_CXX_W_return_local_addr
+-- Performing Test HAVE_CXX_W_return_local_addr - Failed
+-- Performing Test HAVE_CXX_W_unused_but_set_variable
+-- Performing Test HAVE_CXX_W_unused_but_set_variable - Success
+-- Performing Test HAVE_CXX_W_misleading_indentation
+-- Performing Test HAVE_CXX_W_misleading_indentation - Success
+-- Performing Test HAVE_CXX_W_maybe_uninitialized
+-- Performing Test HAVE_CXX_W_maybe_uninitialized - Failed
+-- Performing Test HAVE_CXX_W_implicit_int_float_conversion
+-- Performing Test HAVE_CXX_W_implicit_int_float_conversion - Success
+-- Performing Test HAVE_CXX_W_restrict
+-- Performing Test HAVE_CXX_W_restrict - Failed
+-- Performing Test HAVE_CXX_W_stringop_truncation
+-- Performing Test HAVE_CXX_W_stringop_truncation - Failed
+-- Performing Test HAVE_CXX_W_address
+-- Performing Test HAVE_CXX_W_address - Success
+-- Performing Test HAVE_CXX_W_array_compare
+-- Performing Test HAVE_CXX_W_array_compare - Failed
+-- ICU_VERSION (bundled) is 69
+-- ICU_INCLUDE_DIRS /Users/victor/mysql/percona-server/extra/icu/icu-release-69-1/source/common;/Users/victor/mysql/percona-server/extra/icu/icu-release-69-1/source/stubdata;/Users/victor/mysql/percona-server/extra/icu/icu-release-69-1/source/i18n
+-- ICU_LIBRARIES icui18n;icuuc;icustubdata
+-- PROTOBUF_VERSION (bundled) is 3.19.4
+-- PROTOBUF_INCLUDE_DIR /Users/victor/mysql/percona-server/extra/protobuf/protobuf-3.19.4/src
+-- PROTOBUF_LIBRARY libprotobuf
+-- PROTOBUF_LITE_LIBRARY libprotobuf-lite
+-- PROTOBUF_PROTOC_EXECUTABLE protoc
+-- Found BISON: /usr/bin/bison (found version "2.3") 
+-- Found CURL: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/lib/libcurl.tbd (found version "8.6.0")  
+-- CURL_INCLUDE_DIR = /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/usr/include
+-- CURL_VERSION (system) is 8.6
+-- RAPIDJSON_INCLUDE_DIR /Users/victor/mysql/percona-server/extra/rapidjson/include
+-- RAPIDJSON_MAJOR_VERSION is 1
+-- RAPIDJSON_MINOR_VERSION is 1
+-- Build with DWITH_COREDUMPER = OFF. Only supported on linux.
+-- FIDO_VERSION (bundled) is 1.8.0
+-- FIDO_INCLUDE_DIR /Users/victor/mysql/percona-server/extra/libfido2/libfido2-1.8.0/src
+-- Performing Test HAVE_CXX_W_deprecated_copy
+-- Performing Test HAVE_CXX_W_deprecated_copy - Success
+-- Performing Test HAVE_CXX_W_extra_semi
+-- Performing Test HAVE_CXX_W_extra_semi - Success
+-- Performing Test HAVE_CXX_W_stringop_overflow
+-- Performing Test HAVE_CXX_W_stringop_overflow - Failed
+-- Performing Test HAVE_CXX_W_unused_variable
+-- Performing Test HAVE_CXX_W_unused_variable - Success
+-- Performing Test HAVE_CXX_W_unused_const_variable
+-- Performing Test HAVE_CXX_W_unused_const_variable - Success
+-- Performing Test protobuf_HAVE_BUILTIN_ATOMICS
+-- Performing Test protobuf_HAVE_BUILTIN_ATOMICS - Success
+-- Performing Test HAVE_CXX_W_strict_prototypes
+-- Performing Test HAVE_CXX_W_strict_prototypes - Success
+-- Check size of size_t
+-- Check size of size_t - done
+-- LTO is enabled
+-- Performing Test COMPILER_HAS_HIDDEN_VISIBILITY
+-- Performing Test COMPILER_HAS_HIDDEN_VISIBILITY - Success
+-- Performing Test COMPILER_HAS_HIDDEN_INLINE_VISIBILITY
+-- Performing Test COMPILER_HAS_HIDDEN_INLINE_VISIBILITY - Success
+-- Performing Test COMPILER_HAS_DEPRECATED_ATTR
+-- Performing Test COMPILER_HAS_DEPRECATED_ATTR - Success
+-- Performing Test HAVE_SHORTEN_64_TO_32
+-- Performing Test HAVE_SHORTEN_64_TO_32 - Success
+-- Performing Test HAVE_STACK_PROTECTOR_ALL
+-- Performing Test HAVE_STACK_PROTECTOR_ALL - Success
+-- Looking for include file cbor.h
+-- Looking for include file cbor.h - not found
+-- Looking for include file err.h
+-- Looking for include file err.h - found
+-- Looking for include file openssl/opensslv.h
+-- Looking for include file openssl/opensslv.h - not found
+-- Looking for include file signal.h
+-- Looking for include file signal.h - found
+-- Looking for include file sys/random.h
+-- Looking for include file sys/random.h - found
+-- Looking for include files windows.h, webauthn.h
+-- Looking for include files windows.h, webauthn.h - not found
+-- Looking for arc4random_buf
+-- Looking for arc4random_buf - found
+-- Looking for explicit_bzero
+-- Looking for explicit_bzero - not found
+-- Looking for freezero
+-- Looking for freezero - not found
+-- Looking for getline
+-- Looking for getline - found
+-- Looking for getopt
+-- Looking for getopt - found
+-- Looking for getpagesize
+-- Looking for getpagesize - found
+-- Looking for getrandom
+-- Looking for getrandom - not found
+-- Looking for readpassphrase
+-- Looking for readpassphrase - found
+-- Looking for recallocarray
+-- Looking for recallocarray - not found
+-- Looking for sigaction
+-- Looking for sigaction - found
+-- Looking for sysconf
+-- Looking for sysconf - found
+-- Looking for timespecsub
+-- Looking for timespecsub - not found
+-- Looking for timingsafe_bcmp
+-- Looking for timingsafe_bcmp - found
+-- Check size of sig_atomic_t
+-- Check size of sig_atomic_t - done
+CMake Error at CMakeLists.txt:2095 (ADD_SUBDIRECTORY):
+  The source directory
+
+    /Users/victor/mysql/percona-server/extra/libkmip
+
+  does not contain a CMakeLists.txt file.
+
+
+-- Performing Test HAVE_Wunreachable-code-break
+-- Performing Test HAVE_Wunreachable-code-break - Success
+-- Performing Test HAVE_Wunreachable-code-return
+-- Performing Test HAVE_Wunreachable-code-return - Success
+-- Performing Test HAVE_CXX_W_inconsistent_missing_destructor_override
+-- Performing Test HAVE_CXX_W_inconsistent_missing_destructor_override - Success
+-- Performing Test HAVE_CXX_W_inconsistent_missing_override
+-- Performing Test HAVE_CXX_W_inconsistent_missing_override - Success
+-- Performing Test HAVE_CXX_W_shadow_field
+-- Performing Test HAVE_CXX_W_shadow_field - Success
+-- Found OpenSSL: /usr/local/Cellar/openssl@1.1/1.1.1t/lib/libcrypto.dylib (found version "1.1.1t")  
+-- mysys depends on ext::zlib
+-- mysys depends on ext::zstd
+-- clientlib depends on ext::zlib
+-- Found Unix DNS SRV APIs
+-- Building authentication_ldap_sasl_client WITHOUT Kerberos
+-- ADD_INSTALL_RPATH_FOR_FIDO2 authentication_fido_client
+-- Building KERBEROS client authentication plug-in for linux.
+CMake Warning at libmysql/authentication_kerberos/CMakeLists.txt:58 (MESSAGE):
+  Skipping the KERBEROS client authentication plugin.
+
+
+-- MERGE_CONVENIENCE_LIBRARIES TARGET perconaserverclient
+-- MERGE_CONVENIENCE_LIBRARIES LIBS clientlib;mytime;strings;vio;mysys;zlib;zstd
+-- Looking for sched_getcpu
+-- Looking for sched_getcpu - not found
+-- Looking for nanosleep
+-- Looking for nanosleep - found
+-- Performing Test HAVE_FALLOC_PUNCH_HOLE_AND_KEEP_SIZE
+-- Performing Test HAVE_FALLOC_PUNCH_HOLE_AND_KEEP_SIZE - Failed
+-- Performing Test HAVE_FALLOC_FL_ZERO_RANGE
+-- Performing Test HAVE_FALLOC_FL_ZERO_RANGE - Failed
+-- Performing Test HAVE_IB_GCC_SYNC_SYNCHRONISE
+-- Performing Test HAVE_IB_GCC_SYNC_SYNCHRONISE - Success
+-- Performing Test HAVE_IB_GCC_ATOMIC_THREAD_FENCE
+-- Performing Test HAVE_IB_GCC_ATOMIC_THREAD_FENCE - Success
+-- Performing Test HAVE_IB_LINUX_FUTEX
+-- Performing Test HAVE_IB_LINUX_FUTEX - Failed
+-- Performing Test HAVE_CXX_W_logical_op
+-- Performing Test HAVE_CXX_W_logical_op - Failed
+-- Performing Test HAVE_CXX_W_cast_function_type
+-- Performing Test HAVE_CXX_W_cast_function_type - Success
+-- Building ndbcluster plugin
+-- Looking for pthread_self
+-- Looking for pthread_self - found
+-- Looking for sched_get_priority_min
+-- Looking for sched_get_priority_min - found
+-- Looking for sched_get_priority_max
+-- Looking for sched_get_priority_max - found
+-- Looking for sched_setaffinity
+-- Looking for sched_setaffinity - not found
+-- Looking for sched_setscheduler
+-- Looking for sched_setscheduler - not found
+-- Looking for processor_bind
+-- Looking for processor_bind - not found
+-- Looking for epoll_create
+-- Looking for epoll_create - not found
+-- Looking for atomic_swap_32
+-- Looking for atomic_swap_32 - not found
+-- Looking for pthread_mutexattr_init
+-- Looking for pthread_mutexattr_init - found
+-- Looking for pthread_mutexattr_settype
+-- Looking for pthread_mutexattr_settype - found
+-- Looking for pthread_mutexattr_setpshared
+-- Looking for pthread_mutexattr_setpshared - found
+-- Looking for pthread_setschedparam
+-- Looking for pthread_setschedparam - found
+-- Looking for priocntl
+-- Looking for priocntl - not found
+-- Looking for processor_affinity
+-- Looking for processor_affinity - not found
+-- Looking for cpuset_setaffinity
+-- Looking for cpuset_setaffinity - not found
+-- Looking for setpriority
+-- Looking for setpriority - found
+-- Looking for bzero
+-- Looking for bzero - found
+-- Looking for ffs
+-- Looking for ffs - found
+-- Looking for include file atomic.h
+-- Looking for include file atomic.h - not found
+-- Looking for include file Processtopologyapi.h
+-- Looking for include file Processtopologyapi.h - not found
+-- Looking for include file Processthreadsapi.h
+-- Looking for include file Processthreadsapi.h - not found
+-- Looking for include file ncursesw/curses.h
+-- Looking for include file ncursesw/curses.h - not found
+-- Looking for include file ncursesw.h
+-- Looking for include file ncursesw.h - not found
+-- Looking for include file ncurses.h
+-- Looking for include file ncurses.h - found
+-- Looking for include file ncurses/curses.h
+-- Looking for include file ncurses/curses.h - not found
+-- Looking for include file xfs/xfs.h
+-- Looking for include file xfs/xfs.h - not found
+-- Performing Test HAVE___BUILTIN_FFS
+-- Performing Test HAVE___BUILTIN_FFS - Success
+-- Performing Test HAVE___BUILTIN_CTZ
+-- Performing Test HAVE___BUILTIN_CTZ - Success
+-- Performing Test HAVE___BUILTIN_CLZ
+-- Performing Test HAVE___BUILTIN_CLZ - Success
+-- Performing Test HAVE__BITSCANFORWARD
+-- Performing Test HAVE__BITSCANFORWARD - Failed
+-- Performing Test HAVE__BITSCANREVERSE
+-- Performing Test HAVE__BITSCANREVERSE - Failed
+-- Performing Test HAVE_MAC_OS_X_THREAD_INFO
+-- Performing Test HAVE_MAC_OS_X_THREAD_INFO - Success
+-- Performing Test HAVE_LINUX_SCHEDULING
+-- Performing Test HAVE_LINUX_SCHEDULING - Failed
+-- Performing Test HAVE_SOLARIS_AFFINITY
+-- Performing Test HAVE_SOLARIS_AFFINITY - Failed
+-- Performing Test HAVE_LINUX_FUTEX
+-- Performing Test HAVE_LINUX_FUTEX - Failed
+-- Looking for getrlimit
+-- Looking for getrlimit - found
+-- Excluding Cluster Java components
+-- Check size of char
+-- Check size of char - done
+-- Check size of short
+-- Check size of short - done
+-- Check size of int
+-- Check size of int - done
+-- Check size of long
+-- Check size of long - done
+-- Check size of char*
+-- Check size of char* - done
+-- Check size of long long
+-- Check size of long long - done
+-- ndbgeneral depends on ext::zlib
+-- ndbapi depends on ext::zlib
+-- LIBS_TO_MERGE mysys;mytime;ndbapi;ndbgeneral;ndblogger;ndbmgmapi;ndbmgmcommon;ndbportlib;ndbsignaldata;ndbtrace;ndbtransport;strings;zlib
+-- MERGE_CONVENIENCE_LIBRARIES TARGET ndbclient_static
+-- MERGE_CONVENIENCE_LIBRARIES LIBS mysys;mytime;ndbapi;ndbgeneral;ndblogger;ndbmgmapi;ndbmgmcommon;ndbportlib;ndbsignaldata;ndbtrace;ndbtransport;strings;zlib
+-- Building with MyRocks storage engine = 1
+-- MyRocks: Using local RocksDB
+-- Found Git: /usr/local/bin/git (found version "2.32.0") 
+CMake Error: File /Users/victor/mysql/percona-server/storage/rocksdb/rocksdb/util/build_version.cc.in does not exist.
+CMake Error at storage/rocksdb/CMakeLists.txt:72 (CONFIGURE_FILE):
+  CONFIGURE_FILE Problem configuring file
+
+
+CMake Error at storage/rocksdb/CMakeLists.txt:75 (MESSAGE):
+  Missing Makefile in rocksdb directory.  Try "git submodule update".
+
+
+/var/folders/n_/qp55mnw96n779_339x98sy780000gn/T/tmp.sMH3m8LE6H:1: rocksdb/src.mk: No such file or directory
+make: *** No rule to make target `rocksdb/src.mk'.  Stop.
+CMake Error at storage/rocksdb/CMakeLists.txt:111 (STRING):
+  STRING sub-command REGEX, mode MATCHALL needs at least 5 arguments total to
+  command.
+
+
+-- MyRocks x86_64 build architecture: -march=native
+-- Performing Test CHECK_VARIABLE_DEFINED___SSE4_2__
+-- Performing Test CHECK_VARIABLE_DEFINED___SSE4_2__ - Success
+-- Performing Test CHECK_VARIABLE_DEFINED___PCLMUL__
+-- Performing Test CHECK_VARIABLE_DEFINED___PCLMUL__ - Success
+-- Performing Test CHECK_VARIABLE_DEFINED___AVX2__
+-- Performing Test CHECK_VARIABLE_DEFINED___AVX2__ - Success
+-- Performing Test CHECK_VARIABLE_DEFINED___AVX512F__
+-- Performing Test CHECK_VARIABLE_DEFINED___AVX512F__ - Failed
+-- Performing Test HAVE_ALIGNED_NEW
+-- Performing Test HAVE_ALIGNED_NEW - Success
+-- Performing Test HAVE_UINT128_EXTENSION
+-- Performing Test HAVE_UINT128_EXTENSION - Success
+-- Performing Test HAVE_THREAD_LOCAL
+-- Performing Test HAVE_THREAD_LOCAL - Success
+-- Performing Test HAVE_FALLOCATE
+-- Performing Test HAVE_FALLOCATE - Failed
+-- Performing Test HAVE_PTHREAD_MUTEX_ADAPTIVE_NP
+-- Performing Test HAVE_PTHREAD_MUTEX_ADAPTIVE_NP - Failed
+-- Performing Test HAVE_BACKTRACE_SYMBOLS
+-- Performing Test HAVE_BACKTRACE_SYMBOLS - Success
+-- Performing Test HAVE_SYNC_FILE_RANGE_WRITE
+-- Performing Test HAVE_SYNC_FILE_RANGE_WRITE - Failed
+-- Looking for malloc_usable_size
+-- Looking for malloc_usable_size - not found
+-- Looking for sched_getcpu
+-- Looking for sched_getcpu - not found
+-- Looking for getauxval
+-- Looking for getauxval - not found
+-- MyRocks compile definitions: BOOST_NO_CXX98_FUNCTION_BASE;HAVE_ALIGNED_NEW;HAVE_AVX2;HAVE_CONFIG_H;HAVE_PCLMUL;HAVE_SSE42;HAVE_TLSv13;HAVE_UINT128_EXTENSION;LZ4;LZ4_DISABLE_DEPRECATE_WARNINGS;OS_MACOSX;ROCKSDB_BACKTRACE;ROCKSDB_LIB_IO_POSIX;ROCKSDB_PLATFORM_POSIX;ROCKSDB_SUPPORT_THREAD_LOCAL;ZLIB;ZSTD;_USE_MATH_DEFINES;__STDC_FORMAT_MACROS;__STDC_LIMIT_MACROS;__STDC_WANT_LIB_EXT1__=1
+-- Performing Test HAVE_C__Wno_unused_parameter
+-- Performing Test HAVE_C__Wno_unused_parameter - Success
+-- Performing Test HAVE_CXX__Wno_unused_parameter
+-- Performing Test HAVE_CXX__Wno_unused_parameter - Success
+-- Performing Test HAVE_C__Wno_suggest_override
+-- Performing Test HAVE_C__Wno_suggest_override - Success
+-- Performing Test HAVE_CXX__Wno_suggest_override
+-- Performing Test HAVE_CXX__Wno_suggest_override - Success
+-- Performing Test HAVE_C__Wno_invalid_offsetof
+-- Performing Test HAVE_C__Wno_invalid_offsetof - Success
+-- Performing Test HAVE_CXX__Wno_invalid_offsetof
+-- Performing Test HAVE_CXX__Wno_invalid_offsetof - Success
+-- Performing Test HAVE_CXX__Wno_shadow_field
+-- Performing Test HAVE_CXX__Wno_shadow_field - Success
+-- Performing Test HAVE_CXX__Wno_conditional_uninitialized
+-- Performing Test HAVE_CXX__Wno_conditional_uninitialized - Success
+-- Performing Test HAVE_CXX__Wno_unused_but_set_variable
+-- Performing Test HAVE_CXX__Wno_unused_but_set_variable - Success
+-- Performing Test HAVE_CXX__Wno_array_parameter
+-- Performing Test HAVE_CXX__Wno_array_parameter - Success
+-- Performing Test HAVE_CXX__Wno_deprecated_copy
+-- Performing Test HAVE_CXX__Wno_deprecated_copy - Success
+-- Performing Test HAVE_CXX__Wno_range_loop_construct
+-- Performing Test HAVE_CXX__Wno_range_loop_construct - Success
+-- Performing Test HAVE_PEERCRED
+-- Performing Test HAVE_PEERCRED - Failed
+-- Performing Test HAVE_XDR_OPS_X_PUTINT32
+-- Performing Test HAVE_XDR_OPS_X_PUTINT32 - Failed
+-- Performing Test HAVE_XDR_OPS_X_GETINT32
+-- Performing Test HAVE_XDR_OPS_X_GETINT32 - Failed
+-- Performing Test HAVE_RPC_INLINE_T
+-- Performing Test HAVE_RPC_INLINE_T - Failed
+-- Performing Test HAVE_CXX_W_unused_but_set_parameter
+-- Performing Test HAVE_CXX_W_unused_but_set_parameter - Success
+-- Performing Test HAVE_CXX_W_suggest_override
+-- Performing Test HAVE_CXX_W_suggest_override - Success
+-- GROUP_REPLICATION_WITH_ROCKSDB is turned off
+-- Building keyring_vault plugin
+-- MYSQLX - Text log of protobuf messages enabled
+-- Building Encryption UDF component
+-- Performing Test HAVE_NO_BUILTIN_MEMCMP
+-- Performing Test HAVE_NO_BUILTIN_MEMCMP - Success
+-- Performing Test HAVE_CXX_W_format_overflow
+-- Performing Test HAVE_CXX_W_format_overflow - Failed
+-- Performing Test HAVE_CXX_W_unused_local_typedefs
+-- Performing Test HAVE_CXX_W_unused_local_typedefs - Success
+-- Building keyring_vault unittests
+-- json_client_library depends on ext::zlib
+-- MERGE_CONVENIENCE_LIBRARIES TARGET json_binlog_static
+-- MERGE_CONVENIENCE_LIBRARIES LIBS json_client_library;mysys;mytime;strings
+-- BISON outputs /Users/victor/mysql/percona-server/cmake-build-mysqld/sql/sql_yacc.cc;/Users/victor/mysql/percona-server/cmake-build-mysqld/sql/sql_yacc.h
+-- BISON outputs /Users/victor/mysql/percona-server/cmake-build-mysqld/sql/sql_hints.yy.cc;/Users/victor/mysql/percona-server/cmake-build-mysqld/sql/sql_hints.yy.h
+-- CONFIG_CLIENT_LIBS -lssl -lcrypto -lresolv
+-- CONFIG_LIBS_PRIVATE -lssl -lcrypto -lresolv
+-- INSTALL perconaserverclient.pc lib/pkgconfig
+-- MySQL 8.0.33-25
+-- Looking for prlimit
+-- Looking for prlimit - not found
+-- Performing Test COMPILER_HAS_SANITIZE_COVERAGE_TRACE_PC_GUARD
+-- Performing Test COMPILER_HAS_SANITIZE_COVERAGE_TRACE_PC_GUARD - Success
+-- Performing Test COMPILER_HAS_SANITIZE_COVERAGE_TRACE_EDGE
+-- Performing Test COMPILER_HAS_SANITIZE_COVERAGE_TRACE_EDGE - Success
+-- Performing Test COMPILER_HAS_SANITIZE_COVERAGE_TRACE_CMP
+-- Performing Test COMPILER_HAS_SANITIZE_COVERAGE_TRACE_CMP - Success
+-- Performing Test COMPILER_HAS_PROFILE_INSTR_GENERATE
+-- Performing Test COMPILER_HAS_PROFILE_INSTR_GENERATE - Failed
+-- Performing Test COMPILER_HAS_COVERAGE_MAPPING
+-- Performing Test COMPILER_HAS_COVERAGE_MAPPING - Success
+-- Performing Test COMPILER_HAS_SANITIZE_FUZZER
+-- Performing Test COMPILER_HAS_SANITIZE_FUZZER - Failed
+-- Performing Test CLANG_HAS_LIBFUZZER
+-- Performing Test CLANG_HAS_LIBFUZZER - Failed
+-- Performing Test HAVE_CXX_W_unused_function
+-- Performing Test HAVE_CXX_W_unused_function - Success
+-- Performing Test HAVE_CXX_W_error
+-- Performing Test HAVE_CXX_W_error - Success
+-- Performing Test HAVE_CXX_W_missing_noreturn
+-- Performing Test HAVE_CXX_W_missing_noreturn - Success
+-- Performing Test HAVE_CXX_W_conditional_uninitialized
+-- Performing Test HAVE_CXX_W_conditional_uninitialized - Success
+-- Performing Test HAVE_CXX_W_suggest_attribute_format
+-- Performing Test HAVE_CXX_W_suggest_attribute_format - Failed
+-- Performing Test HAVE_CXX_W_implicit_fallthrough
+-- Performing Test HAVE_CXX_W_implicit_fallthrough - Success
+-- Performing Test HAVE_CXX_W_format_truncation
+-- Performing Test HAVE_CXX_W_format_truncation - Failed
+-- Performing Test HAVE_CXX_W_parentheses_equality
+-- Performing Test HAVE_CXX_W_parentheses_equality - Success
+-- Could NOT find Doxygen (missing: DOXYGEN_EXECUTABLE) 
+-- CMAKE_BUILD_TYPE: Debug
+-- COMPILE_DEFINITIONS: BOOST_NO_CXX98_FUNCTION_BASE;__STDC_WANT_LIB_EXT1__=1;HAVE_CONFIG_H;__STDC_LIMIT_MACROS;__STDC_FORMAT_MACROS;_USE_MATH_DEFINES;LZ4_DISABLE_DEPRECATE_WARNINGS;HAVE_TLSv13
+-- CMAKE_C_FLAGS: -fno-omit-frame-pointer -ftls-model=initial-exec  -Wall -Wextra -Wformat-security -Wvla -Wundef -Wmissing-format-attribute -Wwrite-strings -Wconditional-uninitialized -Wextra-semi -Wmissing-noreturn -Wunreachable-code-break -Wunreachable-code-return
+-- CMAKE_CXX_FLAGS: -std=c++17 -fno-omit-frame-pointer -ftls-model=initial-exec  -Wall -Wextra -Wformat-security -Wvla -Wundef -Wmissing-format-attribute -Woverloaded-virtual -Wcast-qual -Wno-null-conversion -Wno-unused-private-field -Wconditional-uninitialized -Wdeprecated -Wno-deprecated-declarations -Wno-shorten-64-to-32 -Wextra-semi -Wheader-hygiene -Wnon-virtual-dtor -Wundefined-reinterpret-cast -Wrange-loop-analysis -Winconsistent-missing-destructor-override -Winconsistent-missing-override -Wshadow-field
+-- CMAKE_CXX_FLAGS_DEBUG: -DSAFE_MUTEX -DENABLED_DEBUG_SYNC -g
+-- CMAKE_CXX_FLAGS_RELWITHDEBINFO: -DNDEBUG -D_FORTIFY_SOURCE=2 -ffunction-sections -fdata-sections -O2 -g -DNDEBUG
+-- CMAKE_CXX_FLAGS_RELEASE: -DNDEBUG -D_FORTIFY_SOURCE=2 -ffunction-sections -fdata-sections -O3 -DNDEBUG
+-- CMAKE_CXX_FLAGS_MINSIZEREL: -DNDEBUG -D_FORTIFY_SOURCE=2 -ffunction-sections -fdata-sections -Os -DNDEBUG
+-- CMAKE_C_LINK_FLAGS: -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+-- CMAKE_CXX_LINK_FLAGS: -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+-- CMAKE_EXE_LINKER_FLAGS 
+-- CMAKE_MODULE_LINKER_FLAGS 
+-- CMAKE_SHARED_LINKER_FLAGS 
+-- Configuring incomplete, errors occurred!
+See also "/Users/victor/mysql/percona-server/cmake-build-mysqld/CMakeFiles/CMakeOutput.log".
+See also "/Users/victor/mysql/percona-server/cmake-build-mysqld/CMakeFiles/CMakeError.log".

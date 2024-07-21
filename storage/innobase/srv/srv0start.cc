@@ -421,18 +421,32 @@ undo spaces, we must wait for the DD to be scanned in boot_tablespaces()
 in order to know the space_id, space_name, and file_name.
 @param[in]  space_num  undo tablespace number
 @return error code */
+/*在系统崩溃后修复undo表空间，如果它被截断的话。继续完成undo表空间的截断操作
+ * 在undo表空间上启动修复进程(如果它在进程中)当服务器崩溃时被截断。此时，只需删除旧文件(如果存在的话)。
+ * 我们可以在这里对隐式撤销空间进行整个重建，因为我们隐式地知道space_id、space_name和file_name。
+ * 但是对于explicit撤销空格，我们必须等待在boot_tablespaces()中扫描DD。
+ * 以便知道space_id、space_name和file_name。
+ * 参考：https://zhuanlan.zhihu.com/p/564275376
+ * */
 static dberr_t srv_undo_tablespace_fixup_num(space_id_t space_num) {
+    /* 检查是否有活跃的截断日志存在，如果不存在，则不需要修复 */
   if (!undo::is_active_truncate_log_present(space_num)) {
     return (DB_SUCCESS);
   }
 
+    /* 信息日志：记录正在修复的undo表空间编号 */
   ib::info(ER_IB_MSG_1077, ulong{space_num});
 
+    /* 如果服务器处于只读模式，修复操作不被允许 */
   if (srv_read_only_mode) {
     ib::error(ER_IB_MSG_1078);
     return (DB_READ_ONLY);
   }
 
+    /* 尝试根据表空间编号找到对应的文件
+     * 搜索使用分配给它的任何空间id的文件撤销数量。
+     * 目录扫描确保没有重复的文件使用相同的space_id或相同的undo space号。
+     * */
   /*
     Search for a file that is using any of the space IDs assigned to this
     undo number. The directory scan assured that there are no duplicate files
@@ -442,14 +456,19 @@ static dberr_t srv_undo_tablespace_fixup_num(space_id_t space_num) {
   std::string scanned_name;
   fil_system_get_file_by_space_num(space_num, space_id, scanned_name);
 
+    /* 如果找到了文件，删除它 */
   /* If the previous file still exists, delete it. */
   if (scanned_name.length() > 0) {
+      /* 刷新该表空间的所有更改，确保在删除前已应用到内存 */
     /* Flush any changes recovered in REDO */
     fil_flush(space_id);
+      /* 关闭表空间，释放相关资源 */
     fil_space_close(space_id);
+      /* 删除找到的文件，如果文件存在的话 */
     os_file_delete_if_exists(innodb_data_file_key, scanned_name.c_str(),
                              nullptr);
 
+      /* 如果没有找到文件，但空间编号是隐式的，尝试删除隐式文件名的文件 */
   } else if (space_num < FSP_IMPLICIT_UNDO_TABLESPACES) {
     /* If there is any file with the implicit file name, delete it. */
     undo::Tablespace undo_space(undo::num2id(space_num, 0));
@@ -530,6 +549,7 @@ dberr_t srv_undo_tablespace_fixup(const char *space_name, const char *file_name,
 /** Open an undo tablespace.
 @param[in]  undo_space  Undo tablespace
 @return DB_SUCCESS or error code */
+/*打开undo表空间的原子方法*/
 dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
   DBUG_EXECUTE_IF("ib_undo_tablespace_open_fail",
                   return (DB_CANNOT_OPEN_FILE););
@@ -543,9 +563,11 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
   char *undo_name = undo_space.space_name();
   char *file_name = undo_space.file_name();
 
+    /* 尝试从内部数据结构中获取已打开的表空间 */
   /* Check if it was already opened during redo recovery. */
   fil_space_t *space = fil_space_get(space_id);
 
+    /* 如果已打开，则先刷新并关闭文件句柄 */
   /* Flush and close any current file handle so we can open
   a local one below. */
   if (space != nullptr) {
@@ -553,6 +575,7 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     fil_space_close(space_id);
   }
 
+    /* 检查文件是否符合当前的只读模式 */
   if (!os_file_check_mode(file_name, srv_read_only_mode)) {
     ib::error(ER_IB_MSG_1081, file_name,
               srv_read_only_mode ? "readable!" : "writable!");
@@ -560,6 +583,7 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     return (DB_READ_ONLY);
   }
 
+    /* 创建本地文件句柄 */
   /* Open a local handle. */
   fh = os_file_create(
       innodb_data_file_key, file_name,
@@ -569,6 +593,7 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     return (DB_CANNOT_OPEN_FILE);
   }
 
+    /* 根据配置检查文件是否支持原子写入 */
   /* Check if this file supports atomic write. */
 #if !defined(NO_FALLOCATE) && defined(UNIV_LINUX)
   if (!dblwr::is_enabled()) {
@@ -580,7 +605,9 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
   atomic_write = false;
 #endif /* !NO_FALLOCATE && UNIV_LINUX */
 
+    /* 如果表空间尚未在内部数据结构中注册，则进行注册 */
   if (space == nullptr) {
+      /* 初始化表空间标志 */
     /* Load the tablespace into InnoDB's internal data structures.
     Set the compressed page size to 0 (non-compressed) */
     flags = fsp_flags_init(univ_page_size, false, false, false, false);
@@ -588,10 +615,12 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     ut_a(space != nullptr);
     ut_ad(fil_validate());
 
+      /* 获取文件大小并计算页面数量 */
     os_offset_t size = os_file_get_size(fh);
     ut_a(size != (os_offset_t)-1);
     page_no_t n_pages = static_cast<page_no_t>(size / UNIV_PAGE_SIZE);
 
+      /* 创建文件节点 */
     if (fil_node_create(file_name, n_pages, space, false, atomic_write) ==
         nullptr) {
       os_file_close(fh);
@@ -602,16 +631,19 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     }
 
   } else {
+      /* 更新已有文件句柄的原子写入标志 */
     auto &file = space->files.front();
 
     file.atomic_write = atomic_write;
   }
 
+    /* 读取并验证undo表空间的加密元数据 */
   /* Read the encryption metadata in this undo tablespace.
   If the encryption info in the first page cannot be decrypted
   by the master key, this table cannot be opened. */
   err = srv_undo_tablespace_read_encryption(fh, file_name, space);
 
+    /* 关闭文件句柄 */
   /* The file handle will no longer be needed. */
   success = os_file_close(fh);
   ut_ad(success);
@@ -621,6 +653,7 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     return (err);
   }
 
+    /* 根据表空间的状态，决定是否立即打开它 */
   /* Now that space and node exist, make sure this undo tablespace
   is open so that it stays open until shutdown.
   But if it is under construction, we cannot open it until the
@@ -630,6 +663,7 @@ dberr_t srv_undo_tablespace_open(undo::Tablespace &undo_space) {
     ut_a(success);
   }
 
+    /* 如果该undo表空间被预留，则加入到预留的undo表空间列表中 */
   if (undo::is_reserved(space_id)) {
     undo::spaces->add(undo_space);
   }
@@ -672,10 +706,15 @@ static dberr_t srv_undo_tablespace_open_by_id(space_id_t space_id) {
 /** Open an undo tablespace with a specified undo number.
 @param[in]  space_num  undo tablespace number
 @return DB_SUCCESS or error code */
+/*打开某个undo表空间
+ * */
 static dberr_t srv_undo_tablespace_open_by_num(space_id_t space_num) {
+    /* 默认为未知空间ID */
   space_id_t space_id = SPACE_UNKNOWN;
+    /* 用于存储扫描到的文件名 */
   std::string scanned_name;
 
+    /* 根据空间编号查找对应的文件，如果找不到则返回错误 */
   /* Search for a file that is using any of the space IDs assigned to this
   undo number. The directory scan assured that there are no duplicate files
   with the same space_id or with the same undo space number. */
@@ -683,6 +722,7 @@ static dberr_t srv_undo_tablespace_open_by_num(space_id_t space_num) {
     return (DB_CANNOT_OPEN_FILE);
   }
 
+    /* 判断是否为默认的undo表空间（编号小于等于2） */
   /* The first 2 undo space numbers must be implicit. */
   bool is_default = (space_num <= FSP_IMPLICIT_UNDO_TABLESPACES);
 
@@ -690,8 +730,11 @@ static dberr_t srv_undo_tablespace_open_by_num(space_id_t space_num) {
   spaces so there may be more than 2 implicit undo tablespaces.  They
   must match the default undo filename and must be found in
   srv_undo_directory. */
+    /* 创建undo表空间对象 */
   undo::Tablespace undo_space(space_id);
+    /* 检查扫描到的文件名是否与默认的undo文件名匹配 */
   if (!Fil_path::is_same_as(undo_space.file_name(), scanned_name.c_str())) {
+      /* 如果是默认的undo表空间，且文件名不匹配，则记录日志并返回错误 */
     if (is_default) {
       ib::info(ER_IB_MSG_1080, undo_space.file_name(), scanned_name.c_str(),
                ulong{space_id});
@@ -699,6 +742,7 @@ static dberr_t srv_undo_tablespace_open_by_num(space_id_t space_num) {
       return (DB_WRONG_FILE_NAME);
     }
 
+      /* 如果不是默认的undo表空间，检查文件名是否以'.ibu'结尾 */
     /* Explicit undo tablespaces must end with the suffix '.ibu'. */
     if (!Fil_path::has_suffix(IBU, scanned_name)) {
       ib::info(ER_IB_MSG_NOT_END_WITH_IBU, scanned_name.c_str());
@@ -706,17 +750,22 @@ static dberr_t srv_undo_tablespace_open_by_num(space_id_t space_num) {
       return (DB_WRONG_FILE_NAME);
     }
 
+      /* 更新undo表空间对象的文件名 */
     /* Use the file name found in the scan. */
     undo_space.set_file_name(scanned_name.c_str());
   }
 
+    /* 标记该undo表空间ID为正在使用 */
   /* Mark the space_id for this undo tablespace number as in-use. */
   undo::use_space_id(space_id);
 
+    /* 记录日志，表示使用了指定的undo表空间 */
   ib::info(ER_IB_MSG_USING_UNDO_SPACE, scanned_name.c_str());
 
+    /* 尝试打开undo表空间 */
   dberr_t err = srv_undo_tablespace_open(undo_space);
 
+    /* 如果打开成功，设置undo表空间的大小 */
   if (err == DB_SUCCESS) {
     fil_space_set_undo_size(space_id, false);
   }
@@ -729,28 +778,45 @@ If we are making a new database, these have been created.
 If doing recovery, these should exist and may be needed for recovery.
 If we fail to open any of these it is a fatal error.
 @return DB_SUCCESS or error code */
+/*
+ * 打开现有的undo表空间，直到target_undo_tablespace中的数字。
+ * 如果我们正在创建一个新数据库，则已经创建了这些。
+ * 如果进行恢复，这些应该存在并且可能是恢复所需要的。
+ * 如果我们不能打开其中任何一个，这将是一个致命错误。
+ * */
 static dberr_t srv_undo_tablespaces_open() {
   dberr_t err;
 
-  /* If upgrading from 5.7, build a list of existing undo tablespaces
-  from the references in the TRX_SYS page. (not including the system
-  tablespace) */
+    /* 获取当前系统中已存在的undo表空间数量 */
+    /* 如果从5.7版本升级，根据TRX_SYS页面中的引用构建现有的undo表空间列表（不包括系统表空间） */
+    /* If upgrading from 5.7, build a list of existing undo tablespaces
+    from the references in the TRX_SYS page. (not including the system
+    tablespace) */
   trx_rseg_get_n_undo_tablespaces(trx_sys_undo_spaces);
 
-  /* If undo tablespaces are being tracked in trx_sys then these
-  will need to be replaced by independent undo tablespaces with
-  reserved space_ids and RSEG_ARRAY pages. */
+    /* 如果trx_sys_undo_spaces中存在undo表空间 */
+    /* 如果undo tablespaces在trx_sys中被跟踪，
+     * 则这些将需要被具有预留space_ids和RSEG_ARRAY页面的独立undo tablespaces替换。 */
+    /* If undo tablespaces are being tracked in trx_sys then these
+    will need to be replaced by independent undo tablespaces with
+    reserved space_ids and RSEG_ARRAY pages. */
   if (trx_sys_undo_spaces->size() > 0) {
+      /* 遍历每个undo表空间 */
+      /* 打开trx_sys中跟踪的每个undo表空间。 */
     /* Open each undo tablespace tracked in TRX_SYS. */
     for (const auto space_id : *trx_sys_undo_spaces) {
+        /* 更新最大的space_id */
       fil_set_max_space_id_if_bigger(space_id);
 
-      /* Check if this undo tablespace was in the process of being truncated.
-      If so, just delete the file since it will be replaced. */
+        /* 检查该undo表空间是否在被截断的过程中，如果是，则删除文件因为它将被替换 */
+        /* 检查这个undo表空间是否在被截断的过程中。如果是，只需删除文件，因为它将被替换。 */
+        /* Check if this undo tablespace was in the process of being truncated.
+        If so, just delete the file since it will be replaced. */
       if (DB_TABLESPACE_DELETED == srv_undo_tablespace_fixup_57(space_id)) {
         continue;
       }
 
+        /* 尝试打开指定的undo表空间 */
       err = srv_undo_tablespace_open_by_id(space_id);
       if (err != DB_SUCCESS) {
         ib::error(ER_IB_MSG_CANNOT_OPEN_57_UNDO, ulong{space_id});
@@ -759,13 +825,21 @@ static dberr_t srv_undo_tablespaces_open() {
     }
   }
 
-  /* Open all existing implicit and explicit undo tablespaces.
-  The tablespace scan has completed and the undo::space_id_bank has been
-  filled with the space Ids that were found. */
+    /* 加锁以确保对undo::spaces的并发访问安全 */
+    /* 打开所有存在的隐式和显式undo表空间。表空间扫描已完成，
+     * undo::space_id_bank已被填充找到的space Ids。 */
+    /* Open all existing implicit and explicit undo tablespaces.
+    The tablespace scan has completed and the undo::space_id_bank has been
+    filled with the space Ids that were found. */
   undo::spaces->x_lock();
   ut_ad(undo::spaces->size() == 0);
 
+    /* 遍历所有可能的undo表空间ID */
   for (space_id_t num = 1; num <= FSP_MAX_UNDO_TABLESPACES; ++num) {
+      /* 修复表空间编号为num的undo表空间
+       * 在系统崩溃后修复undo表空间，如果它被截断的话。
+       * 继续完成undo表空间的截断操作
+       * */
     /* Check if this undo tablespace was in the process of being truncated.
     If so, recreate it and add it to the construction list. */
     dberr_t err = srv_undo_tablespace_fixup_num(num);
@@ -774,17 +848,21 @@ static dberr_t srv_undo_tablespaces_open() {
       return (err);
     }
 
+      /* 尝试根据表空间编号打开undo表空间 */
     err = srv_undo_tablespace_open_by_num(num);
     switch (err) {
       case DB_WRONG_FILE_NAME:
+            /* 找到了映射文件所述的Undo表空间，但现在有了不同的文件名。无法启动。 */
         /* An Undo tablespace was found where the mapping
         file said it was.  Now we have a different filename
         for it. The undo directory must have changed and
         the the files were not moved. Cannot startup. */
       case DB_READ_ONLY:
+            /* 找到了应该在的位置的Undo表空间，但无法以读写模式打开。 */
         /* The undo tablespace was found where it should be
         but it cannot be opened in read/write mode. */
       default:
+          /* 找到了应该在的位置的Undo表空间，但无法使用。 */
         /* The undo tablespace was found where it should be
         but it cannot be used. */
         undo::spaces->x_unlock();
@@ -798,10 +876,12 @@ static dberr_t srv_undo_tablespaces_open() {
     }
   }
 
+    /* 记录新找到的和旧的undo表空间数量 */
   ulint n_found_new = undo::spaces->size();
   ulint n_found_old = trx_sys_undo_spaces->size();
   undo::spaces->x_unlock();
 
+    /* 如果找到了旧的undo表空间或新的undo表空间数量小于隐式undo表空间的数量，则记录信息 */
   if (n_found_old != 0 || n_found_new < FSP_IMPLICIT_UNDO_TABLESPACES) {
     std::ostringstream msg;
 
@@ -818,6 +898,7 @@ static dberr_t srv_undo_tablespaces_open() {
     ib::info(ER_IB_MSG_1215) << msg.str();
   }
 
+    /* 如果找到了新的和旧的undo表空间，记录总数 */
   if (n_found_new + n_found_old) {
     ib::info(ER_IB_MSG_1085, ulonglong{n_found_new + n_found_old});
   }
@@ -913,6 +994,7 @@ static dberr_t srv_undo_tablespaces_create() {
 /** Finish building an undo tablespace. So far these tablespace files in
 the construction list should be created and filled with zeros.
 @return DB_SUCCESS or error code */
+/*构建undo表空间*/
 static dberr_t srv_undo_tablespaces_construct() {
   mtr_t mtr;
 
@@ -920,15 +1002,19 @@ static dberr_t srv_undo_tablespaces_construct() {
     return (DB_SUCCESS);
   }
 
+    /* 确保不是只读模式且不处于强制恢复状态 */
   ut_a(!srv_read_only_mode);
   ut_a(!srv_force_recovery);
 
+    /* 如果开启了undo日志加密且密钥管理服务不可用，则返回错误 */
   if (srv_undo_log_encrypt && Encryption::check_keyring() == false) {
     my_error(ER_CANNOT_FIND_KEY_IN_KEYRING, MYF(0));
     return (DB_ERROR);
   }
 
+    /* 遍历所有正在构建的undo表空间 */
   for (auto space_id : undo::s_under_construction) {
+      /* 如果开启了undo日志加密，则为表空间启用加密 */
     /* Enable undo log encryption if it's ON. */
     if (srv_undo_log_encrypt) {
       dberr_t err = srv_undo_tablespace_enable_encryption(space_id);
@@ -940,12 +1026,16 @@ static dberr_t srv_undo_tablespaces_construct() {
       }
     }
 
+      /* 检查日志空间是否足够 */
     log_free_check();
 
+      /* 开始一个mini事务 */
     mtr_start(&mtr);
 
+      /* 获取表空间的 latch，并以排他模式锁定 */
     mtr_x_lock(fil_space_get_latch(space_id), &mtr, UT_LOCATION_HERE);
 
+      /* 初始化表空间头信息 */
     if (!fsp_header_init(space_id, UNDO_INITIAL_SIZE_IN_PAGES, &mtr)) {
       ib::error(ER_IB_MSG_1093, ulong{undo::id2num(space_id)});
 
@@ -953,6 +1043,7 @@ static dberr_t srv_undo_tablespaces_construct() {
       return (DB_ERROR);
     }
 
+      /* 创建回滚段数组 */
     /* Add the RSEG_ARRAY page. */
     trx_rseg_array_create(space_id, &mtr);
 
@@ -962,6 +1053,7 @@ static dberr_t srv_undo_tablespaces_construct() {
     trx_rseg_add_rollback_segments(). */
   }
 
+    /* 如果开启了undo日志加密，确保加密功能已启用 */
   if (srv_undo_log_encrypt) {
     ut_d(bool ret =) srv_enable_undo_encryption(nullptr);
     ut_ad(!ret);
@@ -972,22 +1064,30 @@ static dberr_t srv_undo_tablespaces_construct() {
 
 /** Mark the point in which the undo tablespaces in the construction list
 are fully constructed and ready to use. */
+/*标记构造列表中的undo表空间已经完全构造好并可以使用的位置*/
 static void srv_undo_tablespaces_mark_construction_done() {
+    /* 遍历正在构造中的回滚段空间列表 */
   /* Remove the truncate log files if they exist. */
   for (auto space_id : undo::s_under_construction) {
+      /* 创建一个Flush_observer实例，用于后续的页面刷新操作 */
     /* Flush these pages to disk since they were not redo logged. */
     auto flush_observer = ut::new_withkey<Flush_observer>(
         UT_NEW_THIS_FILE_PSI_KEY, space_id, nullptr, nullptr);
 
+      /* 调用flush方法，将页面刷新到磁盘 */
     flush_observer->flush();
     ut::delete_(flush_observer);
 
+      /* 将空间ID转换为空间编号 */
     space_id_t space_num = undo::id2num(space_id);
+      /* 检查是否存在活跃的截断日志 */
     if (undo::is_active_truncate_log_present(space_num)) {
+        /* 如果存在，标记该空间的截断日志处理完成 */
       undo::done_logging(space_num);
     }
   }
 
+    /* 清空正在构造中的回滚段空间列表 */
   undo::clear_construction_list();
 }
 
@@ -1175,9 +1275,12 @@ void undo_spaces_deinit() {
 /** Open the configured number of implicit undo tablespaces.
 @param[in]      create_new_db   true if new db being created
 @return DB_SUCCESS or error code */
+/*完成未完成的截断操作，读取存在的undo表空间，并且补齐undo表空间*/
 static dberr_t srv_undo_tablespaces_init(bool create_new_db) {
   dberr_t err = DB_SUCCESS;
 
+  /*打开配置的undo tablespaces*/
+  /*如果发现未完成的截断操作，继续完成操作。也就是删除undo表空间*/
   /* Open any existing implicit undo tablespaces. */
   if (!create_new_db) {
     err = srv_undo_tablespaces_open();
@@ -1186,16 +1289,21 @@ static dberr_t srv_undo_tablespaces_init(bool create_new_db) {
     }
   }
 
+    /* 获取对DDL互斥锁的访问，以控制对回滚表空间的创建操作 */
   /* If this is opening an existing database, create and open any
   undo tablespaces that are still needed. For a new DB, create
   them all. */
   mutex_enter(&undo::ddl_mutex);
+    /* 创建任何还需要的回滚表空间 */
   err = srv_undo_tablespaces_create();
   if (err != DB_SUCCESS) {
     mutex_exit(&undo::ddl_mutex);
     return (err);
   }
 
+    /* 通过添加完成任何undo表空间的构建头页、rseg_array页和回滚段。
+     * 然后删除任何撤销截断日志文件和清除构造列表。
+     * 该列表包括所有新创建或修改的表空间 */
   /* Finish building any undo tablespaces just created by adding
   header pages, rseg_array pages, and rollback segments. Then delete
   any undo truncation log files and clear the construction list.
@@ -1206,6 +1314,7 @@ static dberr_t srv_undo_tablespaces_init(bool create_new_db) {
     return (err);
   }
 
+    /* 创建和构建完成后，释放DDL互斥锁 */
   mutex_exit(&undo::ddl_mutex);
   return (DB_SUCCESS);
 }
@@ -1609,7 +1718,9 @@ static dberr_t srv_sys_enable_encryption(bool create_new_db) {
 
   return (err);
 }
-
+/*
+ * innodb 在数据库启动时，会调用该函数
+ * */
 dberr_t srv_start(bool create_new_db) {
   page_no_t sum_of_data_file_sizes;
   page_no_t tablespace_size_in_header;
@@ -1810,6 +1921,7 @@ dberr_t srv_start(bool create_new_db) {
     }
   }
 
+    /* 初始化AIO模块 */
   if (!os_aio_init(srv_n_read_io_threads, srv_n_write_io_threads)) {
     ib::error(ER_IB_MSG_1129);
 
@@ -1819,6 +1931,7 @@ dberr_t srv_start(bool create_new_db) {
   double size;
   char unit;
 
+    /* 初始化缓冲池参数 */
   if (srv_buf_pool_size >= 1024 * 1024 * 1024) {
     size = ((double)srv_buf_pool_size) / (1024 * 1024 * 1024);
     unit = 'G';
@@ -1841,6 +1954,7 @@ dberr_t srv_start(bool create_new_db) {
   ib::info(ER_IB_MSG_1130, size, unit, srv_buf_pool_instances, chunk_size,
            chunk_unit);
 
+  /*初始化buffer pool*/
   err = buf_pool_init(srv_buf_pool_size, static_cast<bool>(srv_numa_interleave),
                       srv_buf_pool_instances);
 
@@ -1852,6 +1966,7 @@ dberr_t srv_start(bool create_new_db) {
 
   ib::info(ER_IB_MSG_1132);
 
+    /* 仅在调试模式下检查缓冲池大小 */
 #ifdef UNIV_DEBUG
   /* We have observed deadlocks with a 5MB buffer pool but
   the actual lower limit could very well be a little higher. */
@@ -1861,17 +1976,26 @@ dberr_t srv_start(bool create_new_db) {
   }
 #endif /* UNIV_DEBUG */
 
+    /* 初始化其他系统组件 */
+    /*初始化文件系统参数*/
   fsp_init();
+  /*初始化解析器模块*/
   pars_init();
 
+  /*创建恢复系统*/
   recv_sys_create();
+  /*初始化接收系统*/
   recv_sys_init();
+  /*初始化事务系统*/
   trx_sys_create();
+  /*初始化锁系统*/
   lock_sys_create(srv_lock_table_size);
 
+    /* 启动AIO线程 */
   /* Create i/o-handler threads: */
   os_aio_start_threads();
 
+    /* 初始化页面清洗线程 */
   /* Even in read-only mode there could be flush job generated by
   intrinsic table operations. */
   buf_flush_page_cleaner_init();
@@ -1888,9 +2012,13 @@ dberr_t srv_start(bool create_new_db) {
   page_no_t sum_of_new_sizes;
   lsn_t flushed_lsn;
 
+    /* 打开或创建数据文件 */
+    /* todo 打开什么文件？flushed_lsn是什么？*/
   err = srv_sys_space.open_or_create(false, create_new_db, &sum_of_new_sizes,
                                      &flushed_lsn);
 
+    /* 如果数据文件的flush LSN小于日志起始LSN，表示数据目录未初始化或损坏 */
+    /* ToDo LOG_START_LSN 是什么？*/
   if (flushed_lsn < LOG_START_LSN) {
     ut_ad(!create_new_db);
     /* Data directory hasn't been initialized yet. */
@@ -1898,10 +2026,12 @@ dberr_t srv_start(bool create_new_db) {
     return DB_ERROR;
   }
 
+    /* 初始化系统表空间 */
   /* FIXME: This can be done earlier, but we now have to wait for
   checking of system tablespace. */
   dict_persist_init();
 
+    /* 根据打开或创建数据文件的结果，进行不同的处理 */
   switch (err) {
     case DB_SUCCESS:
       err = srv_sys_enable_encryption(create_new_db);
@@ -1926,6 +2056,7 @@ dberr_t srv_start(bool create_new_db) {
 
   lsn_t new_files_lsn;
 
+    /* 初始化redo日志系统 */
   err = log_sys_init(create_new_db, flushed_lsn, new_files_lsn);
 
   if (err != DB_SUCCESS) {
@@ -1938,7 +2069,9 @@ dberr_t srv_start(bool create_new_db) {
 
   bool srv_monitor_thread_created = false;
 
+    /* 根据是否是新数据库，执行不同的初始化流程 */
   if (create_new_db) {
+      /* 校验缓冲池列表是否为空 */
     ut_a(buf_are_flush_lists_empty_validate());
 
     ut_a(!srv_read_only_mode);
@@ -1956,12 +2089,14 @@ dberr_t srv_start(bool create_new_db) {
 
     log_start_background_threads(*log_sys);
 
+    /*完成未完成的截断操作，读取存在的undo表空间，并且补齐undo表空间*/
     err = srv_undo_tablespaces_init(true);
 
     if (err != DB_SUCCESS) {
       return (srv_init_abort(err));
     }
 
+      /* 初始化系统表空间 */
     mtr_start(&mtr);
 
     bool ret = fsp_header_init(0, sum_of_new_sizes, &mtr);
@@ -1972,14 +2107,19 @@ dberr_t srv_start(bool create_new_db) {
       return (srv_init_abort(DB_ERROR));
     }
 
+      /* 创建第一个rollback segment */
     /* To maintain backward compatibility we create only
     the first rollback segment before the double write buffer.
     All the remaining rollback segments will be created later,
     after the double write buffers haves been created. */
     trx_sys_create_sys_pages();
 
+      /* 初始化purge系统 */
     trx_purge_sys_mem_create();
 
+    /*初始化事务系统
+     * 从undo表空间中构建事务列表，主要提取active&prepare状态的事务
+     * */
     purge_queue = trx_sys_init_at_db_start();
 
     /* The purge system needs to create the purge view and
@@ -1987,6 +2127,7 @@ dberr_t srv_start(bool create_new_db) {
 
     trx_purge_sys_initialize(srv_threads.m_purge_workers_n, purge_queue);
 
+      /* 创建数据字典 */
     err = dict_create();
 
     if (err != DB_SUCCESS) {
@@ -1995,6 +2136,7 @@ dberr_t srv_start(bool create_new_db) {
 
     srv_create_sdi_indexes();
 
+      /* 创建legacy double write buffer */
     /* We always create the legacy double write buffer to preserve the
     expected page ordering of the system tablespace.
     FIXME: Try and remove this requirement. */
@@ -2005,6 +2147,7 @@ dberr_t srv_start(bool create_new_db) {
     }
 
   } else {
+      /* 加载预留的double write buffer边界 */
     /* Load the reserved boundaries of the legacy dblwr buffer, this is
     required to check for stray reads and writes trying to access this
     reserved region in the sys tablespace.
@@ -2015,6 +2158,7 @@ dberr_t srv_start(bool create_new_db) {
       return srv_init_abort(err);
     }
 
+      /* 重新读取page，确保buffer pool被清空 */
     /* Invalidate the buffer pool to ensure that we reread
     the page that we read above, during recovery.
     Note that this is not as heavy weight as it seems. At
@@ -2022,6 +2166,7 @@ dberr_t srv_start(bool create_new_db) {
     and there must be no page in the buf_flush list. */
     buf_pool_invalidate();
 
+      /* 创建监视线程 */
     /* Start monitor thread early enough so that e.g. crash recovery failing to
     find free pages in the buffer pool is diagnosed. */
     if (!srv_read_only_mode) {
@@ -2032,10 +2177,12 @@ dberr_t srv_start(bool create_new_db) {
       srv_monitor_thread_created = true;
     }
 
+      /* 打开系统表空间文件 */
     /* Open all data files in the system tablespace:
     we keep them open until database shutdown. */
     fil_open_system_tablespace_files();
 
+      /* 开始恢复流程 */
     /* We always try to do a recovery, even if the database had
     been shut down normally: this is the normal startup path */
     RECOVERY_CRASH(1);
@@ -2071,6 +2218,8 @@ dberr_t srv_start(bool create_new_db) {
       }
     }
 
+    //从checkpoint检查点开始恢复
+    //redo 应用
     err = recv_recovery_from_checkpoint_start(*log_sys, flushed_lsn);
     if (err != DB_SUCCESS) {
       return srv_init_abort(err);
@@ -2093,12 +2242,18 @@ dberr_t srv_start(bool create_new_db) {
       return (srv_init_abort(err));
     }
 
+    /*ToDo ？？*/
     ut_ad(clone_check_recovery_crashpoint(recv_sys->is_cloned_db));
 
     const bool redo_writes_allowed = !srv_read_only_mode;
 
     ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO || !redo_writes_allowed);
 
+    /*
+     * 我们现在需要启动日志线程，因为恢复可能导致执行ibuf合并。这些合并可能导致新的重做记录。
+     * 在只读模式下我们不需要日志线程，因为我们不允许新的重做以这种模式记录。
+     * 如果是强制升级，或者数据目录被克隆后，我们将启动重做线程。
+     * */
     if (redo_writes_allowed) {
       /* We need to start log threads now, because recovery
       could result in execution of ibuf merges. These merges
@@ -2150,7 +2305,7 @@ dberr_t srv_start(bool create_new_db) {
 
     /* We have gone through the redo log, now check if all the
     tablespaces were found and recovered. */
-
+/*检查是否所有的表空间都被找到，并且已经应用完redo*/
     if (srv_force_recovery == 0 && fil_check_missing_tablespaces()) {
       ib::error(ER_IB_MSG_1139);
       RECOVERY_CRASH(3);
@@ -2190,6 +2345,10 @@ dberr_t srv_start(bool create_new_db) {
     objects are not fully initialized at this point, the usual mechanism to
     persist dynamic metadata at checkpoint wouldn't work. */
 
+    /*
+     * 我们需要将重做日志中收集到的动态元数据保存到DD缓冲表中。这是为了确保动态元数据不是在未来的任何检查站丢失。
+     * 因为DD和数据字典在内存中对象此时还没有完全初始化，通常的机制是在检查点持久化动态元数据不起作用
+     * */
     DBUG_EXECUTE_IF("log_first_rec_group_test", {
       const lsn_t end_lsn = mtr_commit_mlog_test();
       log_write_up_to(*log_sys, end_lsn, true);
@@ -2202,7 +2361,10 @@ dberr_t srv_start(bool create_new_db) {
       /* Open this table in case dict_metadata should be applied to this
       table before checkpoint. And because DD is not fully up yet, the table
       can be opened by internal APIs. */
-
+/*
+ * 打开这个表，以防在检查点之前对这个表应用dict_metadata。
+ * 而且因为DD还没有完全打开，所以表可以通过内部api打开。
+ * */
       fil_space_t *space =
           fil_space_acquire_silent(dict_sys_t::s_dict_space_id);
       if (space == nullptr) {
@@ -2272,15 +2434,19 @@ dberr_t srv_start(bool create_new_db) {
 
       log_buffer_flush_to_disk(*log_sys);
     }
-
+/*完成未完成的截断操作，读取存在的undo表空间，并且补齐undo表空间*/
     err = srv_undo_tablespaces_init(false);
 
     if (err != DB_SUCCESS && srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) {
       return (srv_init_abort(err));
     }
 
+    /*初始化purge_sys*/
     trx_purge_sys_mem_create();
 
+    /*初始化事务系统
+     * 从undo表空间中构建事务列表，主要提取active&prepare状态的事务
+     * */
     /* The purge system needs to create the purge view and
     therefore requires that the trx_sys is inited. */
     purge_queue = trx_sys_init_at_db_start();
@@ -2302,12 +2468,14 @@ dberr_t srv_start(bool create_new_db) {
 
     DBUG_EXECUTE_IF("check_no_undo", ut_ad(purge_queue->empty()););
 
+    /*初始化purge_sys,包括read view等结构*/
     /* The purge system needs to create the purge view and
     therefore requires that the trx_sys and trx lists were
     initialized in trx_sys_init_at_db_start(). */
     trx_purge_sys_initialize(srv_threads.m_purge_workers_n, purge_queue);
   }
 
+    /* 打开临时表空间 */
   /* Open temp-tablespace and keep it open until shutdown. */
   err = srv_open_tmp_tablespace(create_new_db, &srv_tmp_space);
   if (err != DB_SUCCESS) {
@@ -2319,6 +2487,15 @@ dberr_t srv_start(bool create_new_db) {
     return (srv_init_abort(err));
   }
 
+  /*
+   * 这里已经创建了双写缓冲区，因此任何新的回滚段都将在double之后分配写缓冲区。
+   * default段应该已经存在。只有当它是一个新的数据库或者数据库被干净地关闭了
+   *
+   * 注意:在升级过程中创建额外的回滚段时我们违反了锁存顺序，即使更改缓冲区是空的。
+   * 我们在sync0sync中做了一个例外。检查srv_is_being_started因为那个违规。
+   * 它不能创造死锁，因为我们是静止的本质上以单线程模式运行。
+   * 只有IO线程应该在这个阶段运行。
+   * */
   /* Here the double write buffer has already been created and so
   any new rollback segments will be allocated after the double
   write buffer. The default segment should already exist.
@@ -2335,6 +2512,11 @@ dberr_t srv_start(bool create_new_db) {
   ut_a(srv_rollback_segments > 0);
   ut_a(srv_rollback_segments <= TRX_SYS_N_RSEGS);
 
+  /*根据目标回滚段数量调整回滚段
+   *
+   * 确保每个表空间中有足够的回滚段，并且每个回滚段具有关联的内存对象。
+   * 如果其中任何回滚段包含undo日志，则将其加载到清除队列
+   * */
   /* Make sure there are enough rollback segments in each tablespace
   and that each rollback segment has an associated memory object.
   If any of these rollback segments contain undo logs, load them into
@@ -2343,6 +2525,10 @@ dberr_t srv_start(bool create_new_db) {
     return (srv_init_abort(DB_ERROR));
   }
 
+  /*
+   * 任何正在构建的undo表空间现在都已经用所有需要的rseg完全构建好了。
+   * 删除trunc.log文件，清除构造列表
+   * */
   /* Any undo tablespaces under construction are now fully built
   with all needed rsegs. Delete the trunc.log files and clear the
   construction list. */
@@ -2449,6 +2635,7 @@ dberr_t srv_start(bool create_new_db) {
                   "option innodb_pass_corrupt_table doesn't make sense.";
   }
 
+  /*恢复克隆数据库文件的操作*/
   /* Finish clone files recovery. This call is idempotent and is no op
   if it is already done before creating new log files. */
   clone_files_recovery(true);

@@ -215,42 +215,66 @@ static que_t *trx_purge_graph_build(trx_t *trx, ulint n_purge_threads) {
   return (fork);
 }
 
+/*初始化purge_sys*/
+/* 初始化purge_sys结构体，并为其成员分配内存及初始化。 */
+/* 这个函数负责设置purge_sys的初始状态，包括分配内存、初始化事件、迭代器、 */
+/* 以及相关的数据结构。此外，还设置了purge_sys的互斥锁和内存堆。 */
 void trx_purge_sys_mem_create() {
+    /* 分配purge_sys结构体的内存，并使用特定的内存池键进行分配。 */
   purge_sys = static_cast<trx_purge_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*purge_sys)));
 
+    /* 初始化purge_sys的状态为PURGE_STATE_INIT。 */
   purge_sys->state = PURGE_STATE_INIT;
+    /* 创建一个事件，用于在purge操作中进行同步。 */
   purge_sys->event = os_event_create();
 
+    /* 使用placement new在purge_sys结构体内部构造purge_iter_t对象。 */
   new (&purge_sys->iter) purge_iter_t;
   new (&purge_sys->limit) purge_iter_t;
+    /* 构造undo::Truncate对象，用于purge操作中对undo日志的截断。 */
   new (&purge_sys->undo_trunc) undo::Truncate;
+    /* 构造一个线程集合，用于存储参与purge操作的线程。 */
   new (&purge_sys->thds) ut::unordered_set<THD *>;
+    /* 创建一个队列，用于存储需要进行purge的回滚段。 */
   new (&purge_sys->rsegs_queue) std::vector<trx_rseg_t *>;
+    /* 在调试模式下，构造一个用于标记purge操作已完成的迭代器。 */
 #ifdef UNIV_DEBUG
   new (&purge_sys->done) purge_iter_t;
 #endif /* UNIV_DEBUG */
 
+    /* 创建一个读写锁，用于保护purge_sys的latch成员。 */
   rw_lock_create(trx_purge_latch_key, &purge_sys->latch, LATCH_ID_TRX_PURGE);
 
+    /* 创建一个互斥锁，用于保护purge_sys的优先队列。 */
   mutex_create(LATCH_ID_PURGE_SYS_PQ, &purge_sys->pq_mutex);
 
+    /* 创建一个内存堆，用于purge操作中临时数据的存储。 */
   purge_sys->heap = mem_heap_create(8 * 1024, UT_LOCATION_HERE);
 }
 
+/* @param n_purge_threads 清理线程的数量 */
+/* @param purge_queue 清理队列，用于存储待清理的事务 */
+/* 初始化purge_sys*/
 void trx_purge_sys_initialize(uint32_t n_purge_threads,
                               purge_pq_t *purge_queue) {
+    /* 设置清理队列 */
   /* Take ownership of purge_queue, we are responsible for freeing it. */
   purge_sys->purge_queue = purge_queue;
 
+    /* 确保清理线程数量大于0 */
   ut_a(n_purge_threads > 0);
 
+    /* 打开一个会话，并将其关联到purge系统 */
   purge_sys->sess = sess_open();
 
+    /* 获取会话中的事务对象 */
   purge_sys->trx = purge_sys->sess->trx;
 
+    /* 验证事务对象和会话对象的关联性 */
   ut_a(purge_sys->trx->sess == purge_sys->sess);
 
+    /* 初始化事务属性，由于purge事务不是真正的事务，因此赋予特定的标识 */
   /* A purge transaction is not a real transaction, we use a transaction
   here only because the query threads code requires it. It is otherwise
   quite unnecessary. We should get rid of it eventually. */
@@ -261,14 +285,19 @@ void trx_purge_sys_initialize(uint32_t n_purge_threads,
   purge_sys->trx->op_info = "purge trx";
   purge_sys->trx->purge_sys_trx = true;
 
+    /* 构建清理图，用于指导清理操作 */
   purge_sys->query = trx_purge_graph_build(purge_sys->trx, n_purge_threads);
 
+    /* 初始化读视图，用于MVCC多版本控制 */
   new (&purge_sys->view) ReadView();
 
+    /* 克隆最老的读视图，以确保清理操作不会看到未提交的数据 */
   trx_sys->mvcc->clone_oldest_view(&purge_sys->view);
 
+    /* 标记当前视图为活动状态 */
   purge_sys->view_active = true;
 
+    /* 创建事务回滚段迭代器，用于遍历和清理回滚段 */
   purge_sys->rseg_iter = ut::new_withkey<TrxUndoRsegsIterator>(
       UT_NEW_THIS_FILE_PSI_KEY, purge_sys);
 }

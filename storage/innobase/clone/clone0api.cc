@@ -1542,17 +1542,21 @@ bool clone_check_recovery_crashpoint(bool is_cloned_db) {
 }
 #endif
 
+/*恢复克隆数据库文件的操作*/
 void clone_files_recovery(bool finished) {
+    /* 定义错误文件名 */
   /* Clone error file is present in case of error. */
   std::string file_name;
   file_name.assign(CLONE_INNODB_ERROR_FILE);
 
+    /* 如果错误文件存在，表示克隆过程中有错误，执行错误处理并返回 */
   if (file_exists(file_name)) {
     ut_ad(!finished);
     clone_files_error();
     return;
   }
 
+    /* 如果克隆未完成，则检查是否有需要替换的文件和旧的文件 */
   /* if replace file is not present, remove old file. */
   if (!finished) {
     std::string replace_files(CLONE_INNODB_REPLACED_FILES);
@@ -1563,6 +1567,7 @@ void clone_files_recovery(bool finished) {
     }
   }
 
+    /* 根据克隆是否完成，确定旧文件的处理状态 */
   /* Open files to get all old files to be saved or removed. Must handle
   the old files before cloned files. This is because during old file
   processing we need to skip the common files based on cloned state. If
@@ -1570,10 +1575,12 @@ void clone_files_recovery(bool finished) {
   files and removed. */
   int end_state = finished ? FILE_STATE_NONE : FILE_STATE_SAVED;
 
+    /* 定义处理旧文件的lambda函数 */
   auto old_file_handler = [end_state](const std::string &fname) {
     old_file_roll_forward(fname, end_state);
   };
 
+    /* 遍历并处理旧文件，如果成功，根据克隆是否完成，决定是否删除旧文件 */
   if (clone_files_for_each_file(CLONE_INNODB_OLD_FILES, old_file_handler)) {
     /* Remove clone file after successful recovery. */
     if (finished) {
@@ -1582,6 +1589,7 @@ void clone_files_recovery(bool finished) {
     }
   }
 
+    /* 处理需要替换的文件 */
   /* Open file to get all files to be replaced. */
   end_state = finished ? FILE_STATE_NORMAL : FILE_STATE_REPLACED;
 
@@ -1589,6 +1597,7 @@ void clone_files_recovery(bool finished) {
 
   files.open(CLONE_INNODB_REPLACED_FILES);
 
+    /* 如果替换文件打开成功，处理每个文件的替换操作 */
   if (files.is_open()) {
     int prev_state = FILE_STATE_NORMAL;
     /* If file is empty, it is not replace. */
@@ -1602,6 +1611,7 @@ void clone_files_recovery(bool finished) {
 
     files.close();
 
+      /* 根据克隆状态和是否进行过替换操作，更新克隆恢复状态 */
     if (finished) {
       /* Update recovery status file at the end of clone recovery. We don't
       remove the replace file here. It would be removed only after updating
@@ -1616,6 +1626,7 @@ void clone_files_recovery(bool finished) {
     }
   }
 
+    /* 检查新文件是否存在，如果存在且克隆已完成，则删除新文件 */
   file_name.assign(CLONE_INNODB_NEW_FILES);
   auto exists = file_exists(file_name);
 

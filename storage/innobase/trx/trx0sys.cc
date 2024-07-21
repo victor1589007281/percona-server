@@ -467,37 +467,51 @@ const uint32_t max_rseg_init_threads = 4;
 /** Creates and initializes the central memory structures for the transaction
  system. This is called when the database is started.
  @return min binary heap of rsegs to purge */
+ /*创建并初始化事务的中心内存结构系统。这在数据库启动时调用。*/
 purge_pq_t *trx_sys_init_at_db_start(void) {
+     /* 初始化清除队列。 */
   purge_pq_t *purge_queue;
+     /* 初始化系统头部结构。 */
   trx_sysf_t *sys_header;
+     /* 用于记录需回滚的行数。 */
   uint64_t rows_to_undo = 0;
+     /* 单位用于显示回滚行数。 */
   const char *unit = "";
 
+     /* 创建并初始化清除队列。
+      * 我们在这里创建最小二叉堆，并在初始化purge子系统时将所有权传递给purge。Purge负责释放二进制堆
+      * */
   /* We create the min binary heap here and pass ownership to
   purge when we init the purge sub-system. Purge is responsible
   for freeing the binary heap. */
   purge_queue = ut::new_withkey<purge_pq_t>(UT_NEW_THIS_FILE_PSI_KEY);
   ut_a(purge_queue != nullptr);
 
+     /* 根据恢复设置初始化回滚段。 */
   if (srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) {
     /* Create the memory objects for all the rollback segments
     referred to in the TRX_SYS page or any undo tablespace
     RSEG_ARRAY page. */
+      /* 设置初始化回滚段的线程数量。 */
     srv_rseg_init_threads =
         std::min(std::thread::hardware_concurrency(), max_rseg_init_threads);
 
+      /* 单线程初始化回滚段的测试钩子。 */
     /* Test hook to initialize the rollback segments using a single
     thread. */
     DBUG_EXECUTE_IF("rseg_init_single_thread", srv_rseg_init_threads = 1;);
 
+      /* 记录初始化开始时间。 */
     using Clock = std::chrono::high_resolution_clock;
     using Clock_point = std::chrono::time_point<Clock>;
     Clock_point start = Clock::now();
+      /* 根据线程数量选择初始化方式。 */
     if (srv_rseg_init_threads > 1) {
       trx_rsegs_parallel_init(purge_queue);
     } else {
       trx_rsegs_init(purge_queue);
     }
+      /* 记录初始化结束时间并计算耗时。 */
     Clock_point end = Clock::now();
     const auto time_diff =
         std::chrono::duration_cast<std::chrono::microseconds>(end - start)
@@ -506,14 +520,28 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
              (uint32_t)time_diff);
   }
 
+     /* 开始一个mini事务用于后续的系统头部操作。 */
   mtr_t mtr;
   mtr.start();
 
+     /* 获取系统头部结构。 */
   sys_header = trx_sysf_get(&mtr);
 
+     /* 读取系统头部的最大事务ID。 */
   const trx_id_t max_trx_id =
       mach_read_from_8(sys_header + TRX_SYS_TRX_ID_STORE);
 
+     /* 设置下一个事务ID，确保不与历史ID冲突。 */
+     /*
+      * 非常重要:数据库启动后，next_trx_id_or_no值需要设置一个比最大值更高的值用于trx->id或trx->no。
+      * 在这之后，需要编写它在第一次使用之前，为trx->id或trx->no分配一个新值。
+      * 这样，当数据库反复崩溃并重新启动时，trx id值就不会重叠!
+      * 请注意，2 * TRX_SYS_TRX_ID_WRITE_MARGIN中的因子2是必需的，
+      * 因为next_trx_id_or_no可能在两个线程中并发地增加:
+      * -一个已经获得了trx_sys_mutex，
+      * -另一个获得了trx_sys_serialisation_mutex。
+      * 如果你减少因子2，测试innodb。Max_trx_id应该失败。
+      * */
   /* VERY important: after the database is started, next_trx_id_or_no value
   needs to be set to a higher value than the maximum of values that have ever
   been used for either trx->id or trx->no. After that, it needs to be written
@@ -528,6 +556,7 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
     - and one that has acquired the trx_sys_serialisation_mutex.
   If you decreased the factor 2, the test innodb.max_trx_id should fail. */
 
+     /* 初始化序列化最小事务号。 */
   trx_sys->next_trx_id_or_no.store(max_trx_id +
                                    2 * trx_sys_get_trx_id_write_margin());
 
@@ -535,6 +564,7 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
 
   mtr.commit();
 
+     /* 在调试模式下，初始化最大事务号。 */
 #ifdef UNIV_DEBUG
   /* max_trx_id is the next transaction ID to assign. Initialize maximum
   transaction number to one less if all transactions are already purged. */
@@ -543,21 +573,31 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
   }
 #endif /* UNIV_DEBUG */
 
+     /* 获取事务系统互斥锁。 */
   trx_sys_mutex_enter();
+     /* 写入最大事务ID到系统头部。 */
   trx_sys_write_max_trx_id();
+     /* 释放事务系统互斥锁。 */
   trx_sys_mutex_exit();
 
+     /* 初始化一个虚拟会话用于后续的事务列表操作。 */
   trx_dummy_sess = sess_open();
 
+     /* 初始化事务列表。
+      * 从undo表空间中构建事务列表，主要提取active&prepare状态的事务
+      * */
   trx_lists_init_at_db_start();
 
   /* This mutex is not strictly required, it is here only to satisfy
   the debug code (assertions). We are still running in single threaded
   bootstrap mode. */
 
+     /* 再次获取事务系统互斥锁。 */
   trx_sys_mutex_enter();
 
+     /* 检查是否有需要回滚的事务。 */
   if (UT_LIST_GET_LEN(trx_sys->rw_trx_list) > 0) {
+      /* 计算需回滚的总行数。 */
     for (auto trx : trx_sys->rw_trx_list) {
       ut_ad(trx->is_recovered);
       assert_trx_in_rw_list(trx);
@@ -567,11 +607,13 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
       }
     }
 
+      /* 根据行数选择合适的单位。 */
     if (rows_to_undo > 1000000000) {
       unit = "M";
       rows_to_undo = rows_to_undo / 1000000;
     }
 
+      /* 输出需回滚事务的信息。 */
     ib::info(ER_IB_MSG_1198)
         << UT_LIST_GET_LEN(trx_sys->rw_trx_list)
         << " transaction(s) which must be rolled back or"
@@ -582,43 +624,59 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
         << "Trx id counter is " << trx_sys_get_next_trx_id_or_no();
   }
 
+     /* 设置系统中是否发现准备事务的标志。 */
   trx_sys->found_prepared_trx = trx_sys->n_prepared_trx > 0;
 
   trx_sys_mutex_exit();
 
+     /* 返回清除队列。 */
   return (purge_queue);
 }
 
 /** Creates the trx_sys instance and initializes purge_queue and mutex. */
+/*初始化事务系统*/
 void trx_sys_create(void) {
+    /* 确保trx_sys尚未被初始化 */
   ut_ad(trx_sys == nullptr);
 
+    /* 分配并初始化trx_sys结构体 */
   trx_sys = static_cast<trx_sys_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*trx_sys)));
 
+    /* 创建互斥锁以保护trx_sys结构体及其成员 */
   mutex_create(LATCH_ID_TRX_SYS, &trx_sys->mutex);
   mutex_create(LATCH_ID_TRX_SYS_SERIALISATION, &trx_sys->serialisation_mutex);
 
+    /* 初始化事务序列化列表 */
   UT_LIST_INIT(trx_sys->serialisation_list);
+    /* 初始化读写事务列表 */
   UT_LIST_INIT(trx_sys->rw_trx_list);
+    /* 初始化MySQL事务列表 */
   UT_LIST_INIT(trx_sys->mysql_trx_list);
 
+    /* 创建并初始化MVCC对象 */
   trx_sys->mvcc = ut::new_withkey<MVCC>(UT_NEW_THIS_FILE_PSI_KEY, 1024);
 
+    /* 初始化事务序列化最小事务号 */
   trx_sys->serialisation_min_trx_no.store(0);
 
+    /* 用于调试目的，初始化读写最大事务号 */
   ut_d(trx_sys->rw_max_trx_no = 0);
 
+    /* 使用placement new初始化读写事务ID数组 */
   new (&trx_sys->rw_trx_ids)
       trx_ids_t(ut::allocator<trx_id_t>(mem_key_trx_sys_t_rw_trx_ids));
 
+    /* 对事务片进行初始化 */
   for (auto &shard : trx_sys->shards) {
     new (&shard) Trx_shard{};
   }
 
+    /* 初始化临时事务段 */
   new (&trx_sys->rsegs) Rsegs();
   trx_sys->rsegs.set_empty();
 
+    /* 初始化事务段 */
   new (&trx_sys->tmp_rsegs) Rsegs();
   trx_sys->tmp_rsegs.set_empty();
 }

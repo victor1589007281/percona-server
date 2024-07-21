@@ -310,16 +310,22 @@ byte *MetadataRecover::parseMetadataLog(table_id_t id, uint64_t version,
 }
 
 /** Creates the recovery system. */
+/*创建恢复系统*/
 void recv_sys_create() {
+    /* 如果恢复系统已经初始化，则直接返回 */
   if (recv_sys != nullptr) {
     return;
   }
 
+    /* 使用特定的内存分配器为恢复系统分配内存，并确保内存初始化为0 */
   recv_sys = static_cast<recv_sys_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*recv_sys)));
+    /* 断言恢复系统的last_block_first_mtr_boundary字段初始值为0 */
   ut_a(recv_sys->last_block_first_mtr_boundary == 0);
+    /* 创建互斥锁以保护恢复系统的访问 */
   mutex_create(LATCH_ID_RECV_SYS, &recv_sys->mutex);
 
+    /* 初始化恢复系统的spaces字段为nullptr */
   recv_sys->spaces = nullptr;
 }
 
@@ -500,13 +506,20 @@ static bool recv_report_corrupt_log(const byte *ptr, int type, space_id_t space,
   return true;
 }
 
+/* 初始化接收系统。 */
+/* 这个函数初始化用于恢复数据库的接收系统。它确保在系统已经初始化过的情况下不重复执行初始化步骤， */
+/* 并根据是否处于只读模式或备份模式，配置不同的事件和标志。此外，它还分配必要的缓冲区和数据结构， */
+/* 用于处理日志解析和数据库恢复过程。 */
 void recv_sys_init() {
+    /* 如果接收系统的spaces已经初始化，则直接返回，避免重复初始化。 */
   if (recv_sys->spaces != nullptr) {
     return;
   }
 
+    /* 获取接收系统互斥锁，以确保线程安全地访问和修改接收系统的状态。 */
   mutex_enter(&recv_sys->mutex);
 
+    /* 非只读模式下，创建用于控制flush开始和结束的事件。在只读模式或备份模式下不创建。 */
 #ifndef UNIV_HOTBACKUP
   if (!srv_read_only_mode) {
     recv_sys->flush_start = os_event_create();
@@ -517,44 +530,60 @@ void recv_sys_init() {
   recv_sys->apply_file_operations = false;
 #endif /* !UNIV_HOTBACKUP */
 
-  recv_sys->buf_len =
+    /* 根据日志缓冲区大小，初始化解析缓冲区的大小，并分配内存。 */
+    /* 这保证了缓冲区大小不会超过预定义的最大值，同时利用了服务器配置的日志缓冲区大小。 */
+    recv_sys->buf_len =
       std::min<unsigned long>(RECV_PARSING_BUF_SIZE, srv_log_buffer_size);
+    /* 使用特定的内存键分配内存，以便于内存跟踪和管理。 */
   recv_sys->buf = static_cast<byte *>(
       ut::malloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, recv_sys->buf_len));
 
+    /* 初始化接收系统中各种变量的初始状态。 */
   recv_sys->len = 0;
   recv_sys->recovered_offset = 0;
 
+    /* 使用工厂方法创建并初始化spaces对象，用于管理恢复过程中涉及的空间信息。 */
   using Spaces = recv_sys_t::Spaces;
 
   recv_sys->spaces = ut::new_withkey<Spaces>(
       ut::make_psi_memory_key(mem_log_recv_space_hash_key));
 
+    /* 初始化用于跟踪已处理地址和其他状态变量的计数器。 */
   recv_sys->n_addrs = 0;
 
+    /* 初始化与日志记录应用相关的标志和配置。 */
   recv_sys->apply_log_recs = false;
   recv_sys->apply_batch_on = false;
   recv_sys->is_cloned_db = false;
 
+    /* 初始化用于检测日志和文件系统损坏的标志。 */
   recv_sys->found_corrupt_log = false;
   recv_sys->found_corrupt_fs = false;
 
+    /* 初始化用于跟踪页面最大LSN的变量。 */
   recv_max_page_lsn = 0;
 
+    /* 创建并初始化用于双写缓冲区(DBLWR)的实例。 */
   recv_sys->dblwr =
       ut::new_withkey<dblwr::recv::DBLWR>(UT_NEW_THIS_FILE_PSI_KEY);
 
+    /* 使用placement new初始化用于管理已删除页面ID的容器。 */
   new (&recv_sys->deleted) recv_sys_t::Missing_Ids();
 
+    /* 使用placement new初始化用于管理丢失页面ID的容器。 */
   new (&recv_sys->missing_ids) recv_sys_t::Missing_Ids();
 
+    /* 使用placement new初始化用于保存日志记录的容器。 */
   new (&recv_sys->saved_recs) recv_sys_t::Mlog_records();
 
+    /* 预先分配足够的空间以存储最大数量的保存的日志记录。 */
   recv_sys->saved_recs.resize(recv_sys_t::MAX_SAVED_MLOG_RECS);
 
+    /* 创建并初始化用于元数据恢复的实例。 */
   recv_sys->metadata_recover =
       ut::new_withkey<MetadataRecover>(UT_NEW_THIS_FILE_PSI_KEY);
 
+    /* 释放接收系统互斥锁。 */
   mutex_exit(&recv_sys->mutex);
 }
 
@@ -863,15 +892,21 @@ struct Log_checkpoint_location {
 @param[in]      file_handle     handle for the opened redo log file
 @param[out]     checkpoint      the latest checkpoint found (if any)
 @return true iff any checkpoint has been found */
+/*
+ * 扫描最新的检查点
+ * ToDo 扫描谁？？
+ * */
 [[nodiscard]] static bool recv_find_max_checkpoint(
     log_t &, Log_file_handle &file_handle,
     Log_checkpoint_location &checkpoint) {
   bool found = false;
   checkpoint = {};
 
+    /* 遍历两种可能的检查点头部，以寻找最新的检查点 */
   for (auto checkpoint_header_no : {Log_checkpoint_header_no::HEADER_1,
                                     Log_checkpoint_header_no::HEADER_2}) {
     Log_checkpoint_header checkpoint_header;
+      /* 读取指定头部编号的日志检查点头信息 */
     const dberr_t err = log_checkpoint_header_read(
         file_handle, checkpoint_header_no, checkpoint_header);
     if (err != DB_SUCCESS) {
@@ -880,22 +915,28 @@ struct Log_checkpoint_location {
       continue;
     }
 
+      /* 获取检查点的LSN（日志序列号） */
     const lsn_t checkpoint_lsn = checkpoint_header.m_checkpoint_lsn;
+      /* 如果检查点LSN为0，表示该头部不包含有效检查点，跳过 */
     if (checkpoint_lsn == 0) {
       continue;
     }
 
     DBUG_PRINT("ib_log", ("checkpoint at " LSN_PF, checkpoint_lsn));
 
+      /* 如果还未找到检查点，或当前检查点LSN大于已找到的检查点LSN，则更新检查点位置 */
     if (!found || checkpoint_lsn > checkpoint.m_checkpoint_lsn) {
+        /* 确保当前检查点LSN有效 */
       ut_a(checkpoint_lsn >= LOG_START_LSN);
       found = true;
+        /* 更新检查点位置信息 */
       checkpoint.m_checkpoint_file_id = file_handle.file_id();
       checkpoint.m_checkpoint_header_no = checkpoint_header_no;
       checkpoint.m_checkpoint_lsn = checkpoint_lsn;
     }
   }
 
+    /* 返回是否找到有效检查点 */
   return found;
 }
 
@@ -3585,53 +3626,70 @@ Parses and hashes the log records if new data found.
                                         already applied to tablespace files)
                                         until which all redo log has been
                                         scanned */
+/*
+ * 初始化接收系统（recv_sys）的参数，开始日志恢复过程。
+ * */
 static dberr_t recv_recovery_begin(log_t &log, const lsn_t checkpoint_lsn) {
+    /* 获取recv_sys的互斥锁 */
   mutex_enter(&recv_sys->mutex);
 
+    /* 重置recv_sys的相关参数 */
   recv_sys->len = 0;
   recv_sys->recovered_offset = 0;
   recv_sys->n_addrs = 0;
   recv_sys_empty_hash();
 
+    /* 初始化日志解析的起始点 */
   /* Since 8.0, we can start recovery at checkpoint_lsn which points
   to the middle of log record. In such case we first to need to find
   the beginning of the first group of log records, which is at lsn
   greater than the checkpoint_lsn. */
   recv_sys->parse_start_lsn = 0;
 
+    /* 初始化需要忽略的字节数，用于处理checkpoint_lsn位于日志记录中间的情况 */
   /* This is updated when we find value for parse_start_lsn. */
   recv_sys->bytes_to_ignore_before_checkpoint = 0;
 
+    /* 设置检查点相关的LSN */
   recv_sys->checkpoint_lsn = checkpoint_lsn;
   recv_sys->scanned_lsn = checkpoint_lsn;
   recv_sys->recovered_lsn = checkpoint_lsn;
 
+    /* 设置上一个恢复的LSN，用于跟踪恢复的进度 */
   /* We have to trust that the first_rec_group in the first block is
   correct as we can't start parsing earlier to check it ourselves. */
   recv_sys->previous_recovered_lsn = checkpoint_lsn;
   recv_sys->last_block_first_mtr_boundary = 0;
 
+    /* 重置与日志解析相关的参数 */
   recv_sys->scanned_epoch_no = 0;
   recv_previous_parsed_rec_type = MLOG_SINGLE_REC_FLAG;
   recv_previous_parsed_rec_offset = 0;
   recv_previous_parsed_rec_is_multi = 0;
   ut_ad(recv_max_page_lsn == 0);
 
+    /* 释放recv_sys的互斥锁 */
   mutex_exit(&recv_sys->mutex);
 
+    /* 计算最大内存使用量，用于日志扫描过程 */
   ulint max_mem =
       UNIV_PAGE_SIZE * (buf_pool_get_n_pages() -
                         (recv_n_pool_free_frames * srv_buf_pool_instances));
 
+    /* 对检查点LSN进行对齐，确保从日志段的起始位置开始读取 */
   lsn_t start_lsn =
       ut_uint64_align_down(checkpoint_lsn, OS_FILE_LOG_BLOCK_SIZE);
 
+    /* 标记是否完成日志扫描 */
   bool finished = false;
 
+    /* 循环读取并扫描日志段，直到完成日志恢复 */
   while (!finished) {
+      /* 读取指定范围的日志段 */
     const lsn_t end_lsn =
         recv_read_log_seg(log, log.buf, start_lsn, start_lsn + RECV_SCAN_SIZE);
 
+      /* 如果读取的日志段与上一次相同，说明已经读取完所有日志，退出循环 */
     if (end_lsn == start_lsn) {
       /* This could happen if we crashed just after completing file,
       and before next file has been successfully created. */
@@ -3640,6 +3698,7 @@ static dberr_t recv_recovery_begin(log_t &log, const lsn_t checkpoint_lsn) {
 
     dberr_t err;
 
+      /* 扫描日志记录，并更新相关参数 */
     finished = recv_scan_log_recs(log, max_mem, log.buf, end_lsn - start_lsn,
                                   start_lsn, &log.m_scanned_lsn, err);
 
@@ -3647,6 +3706,7 @@ static dberr_t recv_recovery_begin(log_t &log, const lsn_t checkpoint_lsn) {
       return err;
     }
 
+      /* 更新下一次扫描的起始LSN */
     start_lsn = end_lsn;
   }
 
@@ -3670,12 +3730,16 @@ static dberr_t recv_init_crash_recovery() {
 #endif /* !UNIV_HOTBACKUP */
 
 #ifndef UNIV_HOTBACKUP
-
+/*
+ * 从指定LSN开始恢复
+ * */
 dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
+    /* 初始化刷新红黑树，用于在恢复过程中快速插入到刷新列表。 */
   /* Initialize red-black tree for fast insertions into the
   flush_list during recovery process. */
   buf_flush_init_flush_rbt();
 
+    /* 如果强制恢复级别足够高，不执行日志重做。 */
   if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
     ib::info(ER_IB_MSG_728);
 
@@ -3686,10 +3750,13 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
     return DB_SUCCESS;
   }
 
+    /* 开始接收恢复。 */
   recv_recovery_on = true;
 
+    /* 确认日志格式为当前格式。 */
   ut_a(log.m_format == Log_format::CURRENT);
 
+    /* 查找最新的检查点。 */
   /* Look for the latest checkpoint */
   Log_checkpoint_location checkpoint;
   if (!recv_find_max_checkpoint(log, checkpoint)) {
@@ -3697,6 +3764,7 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
     return DB_ERROR;
   }
 
+    /* 获取检查点所在的日志文件。 */
   const auto checkpoint_file = log.m_files.find(checkpoint.m_checkpoint_lsn);
 
   /* When reading checkpoints from redo log files, error would be reported
@@ -3710,21 +3778,25 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
     ut_o(return DB_ERROR);
   }
 
+    /* 记录最后的检查点LSN。 */
   log.last_checkpoint_lsn.store(checkpoint.m_checkpoint_lsn);
 
   const auto file_path = log_file_path(log.m_files_ctx, checkpoint_file->m_id);
   ib::info(ER_IB_MSG_LOG_CHECKPOINT_FOUND,
            ulonglong{checkpoint.m_checkpoint_lsn}, file_path.c_str());
 
+    /* 读取检查点头部信息。 */
   Log_checkpoint_header checkpoint_header;
 
   auto checkpoint_file_handle =
       checkpoint_file->open(Log_file_access_mode::READ_ONLY);
 
+    /* 打开检查点文件。 */
   if (!checkpoint_file_handle.is_open()) {
     return DB_CANNOT_OPEN_FILE;
   }
 
+    /* 读取检查点头部信息。 */
   dberr_t err = log_checkpoint_header_read(checkpoint_file_handle,
                                            checkpoint.m_checkpoint_header_no,
                                            checkpoint_header);
@@ -3734,32 +3806,40 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
 
   checkpoint_file_handle.close();
 
+    /* 确认检查点LSN与头部信息一致。 */
   const lsn_t checkpoint_lsn = checkpoint.m_checkpoint_lsn;
 
   ut_a(checkpoint_lsn == checkpoint_header.m_checkpoint_lsn);
 
+    /* 读取加密头部信息。 */
   /* Read the encryption header to get the encryption information. */
   err = log_encryption_read(log);
   if (err != DB_SUCCESS) {
     return DB_ERROR;
   }
 
+    /* 从检查点LSN开始进行日志恢复。 */
   /* Start reading the log from the checkpoint LSN up. */
 
+    /* 确保扫描大小不超过日志缓冲区大小。 */
   ut_ad(RECV_SCAN_SIZE <= log.buf_size);
 
+    /* 确保接收系统地址列表为空。 */
   ut_ad(recv_sys->n_addrs == 0);
 
   /* NOTE: we always do a 'recovery' at startup, but only if
   there is something wrong we will print a message to the
   user about recovery: */
 
+    /* 如果检查点LSN不等于最后刷新LSN，则可能需要恢复。 */
   if (checkpoint_lsn != flush_lsn) {
+      /* 如果检查点LSN小于最后刷新LSN，发出警告。 */
     if (checkpoint_lsn < flush_lsn) {
       ib::warn(ER_IB_MSG_RECOVERY_CHECKPOINT_FROM_BEFORE_CLEAN_SHUTDOWN,
                ulonglong{checkpoint_lsn}, ulonglong{flush_lsn});
     }
 
+      /* 如果不需要恢复，但最后刷新LSN和检查点LSN不一致，进行初始化恢复。 */
     if (!recv_needed_recovery) {
       ib::info(ER_IB_MSG_RECOVERY_IS_NEEDED, ulonglong{flush_lsn},
                ulonglong{checkpoint_lsn});
@@ -3770,6 +3850,7 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
         return DB_ERROR;
       }
 
+        /* 初始化崩溃恢复。 */
       err = recv_init_crash_recovery();
       if (err != DB_SUCCESS) {
         return err;
@@ -3777,11 +3858,13 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
     }
   }
 
+    /* 开始实际的恢复过程。 */
   err = recv_recovery_begin(log, checkpoint_lsn);
   if (err != DB_SUCCESS) {
     return err;
   }
 
+    /* 如果服务器以只读模式运行，并且已扫描的LSN超过了检查点LSN，返回错误。 */
   if (srv_read_only_mode && log.m_scanned_lsn > checkpoint_lsn) {
     ib::error(ER_IB_MSG_RECOVERY_IN_READ_ONLY);
     return DB_ERROR;
@@ -3789,23 +3872,29 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
 
   lsn_t recovered_lsn;
 
+    /* 确认恢复的LSN与预期一致。 */
   recovered_lsn = recv_sys->recovered_lsn;
 
   ut_a(recv_needed_recovery || checkpoint_lsn == recovered_lsn);
 
+    /* 确保在只读模式下不进行恢复操作，并且恢复的LSN与检查点LSN一致。 */
   ut_a(!srv_read_only_mode || !recv_needed_recovery);
   ut_a(!srv_read_only_mode || checkpoint_lsn == recovered_lsn);
 
+    /* 更新日志系统的已恢复LSN。 */
   log.recovered_lsn = recovered_lsn;
 
+    /* 确保已恢复的LSN存在于日志文件中。 */
   ut_a(log.m_files.find(recovered_lsn) != log.m_files.end());
 
+    /* 检查已扫描的LSN是否合理。 */
   /* If it is at block boundary, add header size. */
   auto check_scanned_lsn = log.m_scanned_lsn;
   if (check_scanned_lsn % OS_FILE_LOG_BLOCK_SIZE == 0) {
     check_scanned_lsn += LOG_BLOCK_HDR_SIZE;
   }
 
+    /* 如果已恢复的LSN小于检查点LSN，返回错误。 */
   if (check_scanned_lsn < checkpoint_lsn ||
       check_scanned_lsn < recv_max_page_lsn) {
     ib::error(ER_IB_MSG_737, ulonglong{log.m_scanned_lsn},
@@ -3821,11 +3910,13 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
     return DB_ERROR;
   }
 
+    /* 如果发现日志或文件系统损坏，返回错误。 */
   if ((recv_sys->found_corrupt_log && srv_force_recovery == 0) ||
       recv_sys->found_corrupt_fs) {
     return DB_ERROR;
   }
 
+    /* 开始日志系统，并设置已恢复和检查点LSN。 */
   /* Disallow checkpoints until recovery is finished, and changes gathered
   in recv_sys->metadata_recover (dict_metadata) are transferred to
   dict_table_t objects (happens in srv0start.cc). */
@@ -3840,6 +3931,7 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
   will have the same checkpoint_lsn. This is an extra protection in case next
   checkpoint write will become corrupted because of crash during the write. */
 
+    /* 如果不在只读模式下，更新下一个检查点头部信息和日志文件中的检查点信息。 */
   if (!srv_read_only_mode) {
     log.next_checkpoint_header_no =
         log_next_checkpoint_header(checkpoint.m_checkpoint_header_no);
@@ -3850,10 +3942,12 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
     }
   }
 
+    /* 允许应用日志记录。 */
   mutex_enter(&recv_sys->mutex);
   recv_sys->apply_log_recs = true;
   mutex_exit(&recv_sys->mutex);
 
+    /* 恢复操作准备就绪，可以开始正常处理用户事务。 */
   /* The database is now ready to start almost normal processing of user
   transactions: transaction rollbacks and the application of the log
   records in the hash table can be run in background. */

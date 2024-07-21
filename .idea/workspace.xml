@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakeReloadState">
+    <option name="reloaded" value="true" />
+  </component>
+  <component name="CMakeRunConfigurationManager">
+    <generated />
+  </component>
+  <component name="CMakeSettings">
+    <configurations>
+      <configuration PROFILE_NAME="mysqld" ENABLED="true" TOOLCHAIN_NAME="Default" GENERATION_OPTIONS="-DDOWNLOAD_BOOST=1 -DWITH_BOOST=/Users/victor/mysql/percona_8.0.33/boost_1_77_0 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/Users/victor/mysql/percona_8.0.33 -DMYSQL_DATADIR=/Users/victor/mysql/percona_8.0.33/data -DSYSCONFDIR=/Users/victor/mysql/percona_8.0.33 -DMYSQL_UNIX_ADDR=/Users/victor/mysql/percona_8.0.33/data/mysql.sock -DMYSQL_MAINTAINER_MODE=false -DWITH_SSL=/usr/local/Cellar/openssl@1.1/1.1.1t" NO_GENERATOR="true" />
+    </configurations>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="3005c597-37da-4467-be97-971dcf9c8ac9" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/storage/innobase/clone/clone0api.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/clone/clone0api.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/fsp/fsp0fsp.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/fsp/fsp0fsp.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/lock/lock0lock.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/lock/lock0lock.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/log/log0log.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/log/log0log.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/log/log0recv.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/log/log0recv.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/pars/pars0pars.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/pars/pars0pars.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/srv/srv0start.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/srv/srv0start.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/trx/trx0purge.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/trx/trx0purge.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/trx/trx0rseg.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/trx/trx0rseg.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/trx/trx0sys.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/trx/trx0sys.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/storage/innobase/trx/trx0trx.cc" beforeDir="false" afterPath="$PROJECT_DIR$/storage/innobase/trx/trx0trx.cc" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="5.7" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
+  <component name="ProjectApplicationVersion">
+    <option name="ide" value="CLion" />
+    <option name="majorVersion" value="2022" />
+    <option name="minorVersion" value="1.2" />
+  </component>
+  <component name="ProjectId" id="2VnZZftokpQZsGeXzJZnf2RDOIB" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "RunOnceActivity.CodyAccountHistoryMigration": "true",
+    "RunOnceActivity.CodyConvertUrlToCodebaseName": "true",
+    "RunOnceActivity.CodyHistoryLlmMigration": "true",
+    "RunOnceActivity.CodyProjectSettingsMigration": "true",
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.cidr.known.project.marker": "true",
+    "WebServerToolWindowFactoryState": "false",
+    "cf.advertisement.text.has.clang-format": "true",
+    "cf.advertisement.text.overridden": "true",
+    "cf.first.check.clang-format": "false",
+    "cidr.known.project.marker": "true",
+    "last_opened_file_path": "/Users/victor/mysql/percona-server",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "CMakeSettings",
+    "structure.view.defaults.are.configured": "true"
+  }
+}]]></component>
+  <component name="RunManager">
+    <configuration default="true" type="CLionExternalRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true">
+      <method v="2">
+        <option name="CLION.EXTERNAL.BUILD" enabled="true" />
+      </method>
+    </configuration>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="3005c597-37da-4467-be97-971dcf9c8ac9" name="Changes" comment="" />
+      <created>1695473862378</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1695473862378</updated>
+      <workItem from="1695473864291" duration="7363000" />
+      <workItem from="1695549365812" duration="741000" />
+      <workItem from="1721470844868" duration="2938000" />
+      <workItem from="1721477391575" duration="4671000" />
+      <workItem from="1721486607329" duration="705000" />
+      <workItem from="1721487402877" duration="17916000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="5.7" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

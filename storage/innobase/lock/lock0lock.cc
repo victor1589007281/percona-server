@@ -295,32 +295,45 @@ bool lock_sec_rec_cons_read_sees(
 }
 
 /** Creates the lock system at database start. */
+/*初始化锁系统*/
 void lock_sys_create(
     ulint n_cells) /*!< in: number of slots in lock hash table */
 {
+    /* 计算锁系统的总大小，包括锁结构本身和每个线程的插槽大小 */
   ulint lock_sys_sz;
 
   lock_sys_sz = sizeof(*lock_sys) + srv_max_n_threads * sizeof(srv_slot_t);
 
+    /* 动态分配锁系统内存，并初始化为零 */
   lock_sys = static_cast<lock_sys_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, lock_sys_sz));
 
+    /* 使用placement new在分配的内存上初始化lock_sys_t对象 */
   new (lock_sys) lock_sys_t{};
 
+    /* 指向等待线程插槽的指针 */
   void *ptr = &lock_sys[1];
 
+    /* 初始化等待线程的插槽数组 */
   lock_sys->waiting_threads = static_cast<srv_slot_t *>(ptr);
 
+    /* 设置初始等待线程插槽指针 */
   lock_sys->last_slot = lock_sys->waiting_threads;
 
+    /* 创建用于锁等待的互斥锁 */
   mutex_create(LATCH_ID_LOCK_SYS_WAIT, &lock_sys->wait_mutex);
 
+    /* 创建用于超时等待事件的事件对象 */
   lock_sys->timeout_event = os_event_create();
 
+    /* 初始化记录锁的哈希表 */
   lock_sys->rec_hash = ut::new_<hash_table_t>(n_cells);
+    /* 初始化预定义事务锁的哈希表 */
   lock_sys->prdt_hash = ut::new_<hash_table_t>(n_cells);
+    /* 初始化预定义页面锁的哈希表 */
   lock_sys->prdt_page_hash = ut::new_<hash_table_t>(n_cells);
 
+    /* 如果不在只读模式下，创建用于记录锁错误信息的临时文件 */
   if (!srv_read_only_mode) {
     lock_latest_err_file = os_file_create_tmpfile();
     ut_a(lock_latest_err_file);
