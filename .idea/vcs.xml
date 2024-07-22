@@ -2,5 +2,12 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/extra/coredumper" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/extra/libkmip" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/extra/libzbd" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/plugin/tokudb-backup-plugin/Percona-TokuBackup" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/storage/rocksdb/rocksdb" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/storage/rocksdb/rocksdb_plugins/zenfs" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/storage/tokudb/PerconaFT" vcs="Git" />
   </component>
 </project>

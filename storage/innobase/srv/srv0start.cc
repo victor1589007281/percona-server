@@ -1094,6 +1094,7 @@ static void srv_undo_tablespaces_mark_construction_done() {
 /** Upgrade undo tablespaces by deleting the old undo tablespaces
 referenced by the TRX_SYS page.
 @return error code */
+/*升级undo表空间*/
 dberr_t srv_undo_tablespaces_upgrade() {
   if (trx_sys_undo_spaces->empty()) {
     goto cleanup;
@@ -1103,6 +1104,8 @@ dberr_t srv_undo_tablespaces_upgrade() {
   rsegs and undo tablespaces they are in from being deleted.
   These transactions must be either committed or rolled back by
   the mysql server.*/
+  /*处于准备状态的恢复事务防止它们所在的旧rseg和undo表空间被删除。
+   * 这些事务必须由mysql服务器提交或回滚*/
   if (trx_sys->n_prepared_trx > 0) {
     ib::warn(ER_IB_MSG_1094);
     return (DB_SUCCESS);
@@ -1114,11 +1117,16 @@ dberr_t srv_undo_tablespaces_upgrade() {
   /* All Undo Tablespaces found in the TRX_SYS page need to be
   deleted. The new independent undo tablespaces were created in
   in srv_undo_tablespaces_create() */
+  /*在TRX_SYS页中找到的所有Undo表空间都需要删除。
+   * 新的独立undo表空间在srv_undo_tablespaces_create()中创建。*/
+    /* 遍历undo表空间列表，关闭并删除每个表空间 */
   for (const auto space_id : *trx_sys_undo_spaces) {
     undo::Tablespace undo_space(space_id);
 
+      /* 关闭表空间 */
     fil_space_close(undo_space.id());
 
+      /* 删除表空间，如果失败则记录警告 */
     auto err = fil_delete_tablespace(undo_space.id(), BUF_REMOVE_ALL_NO_WRITE);
 
     if (err != DB_SUCCESS) {
@@ -1129,18 +1137,22 @@ dberr_t srv_undo_tablespaces_upgrade() {
   /* All pages should be removed from the spaces we deleted. We just collect
   them now, so that the space_id -> shard mapping is correct - it will be
   changed the second the trx_sys_undo_spaces is cleared.*/
+    /* 清理已删除的表空间的页面 */
   fil_purge();
 
   /* Remove the tracking of these undo tablespaces from TRX_SYS page and
   trx_sys->rsegs. */
+    /* 从TRX_SYS页面和trx_sys->rsegs向量中升级undo表空间的追踪 */
   trx_rseg_upgrade_undo_tablespaces();
 
   /* Since we now have new format undo tablespaces, we will no longer
   look for undo tablespaces or rollback segments in the TRX_SYS page
   or the trx_sys->rsegs vector. */
+    /* 清空undo表空间列表，表示已完成升级 */
   trx_sys_undo_spaces->clear();
 
 cleanup:
+    /* 清空旧undo表空间的回滚段列表 */
   /* Post 5.7 undo tablespaces track their own rsegs.
   Clear the list of rsegs in old undo tablespaces. */
   trx_sys->rsegs.clear();
@@ -2220,6 +2232,7 @@ dberr_t srv_start(bool create_new_db) {
 
     //从checkpoint检查点开始恢复
     //redo 应用
+    //包括使用Double write buffer恢复损坏的数据页
     err = recv_recovery_from_checkpoint_start(*log_sys, flushed_lsn);
     if (err != DB_SUCCESS) {
       return srv_init_abort(err);
@@ -2463,6 +2476,8 @@ dberr_t srv_start(bool create_new_db) {
       /* New undo tablespaces have been created.
       Delete the old undo tablespaces and the references
       to them in the TRX_SYS page. */
+      /*删除旧的undo表空间以及TRX_SYS页中对它们的引用。*/
+      /*升级undo表空间*/
       srv_undo_tablespaces_upgrade();
     }
 
@@ -2482,6 +2497,7 @@ dberr_t srv_start(bool create_new_db) {
     return (srv_init_abort(err));
   }
 
+  //初始化表空间池
   err = ibt::open_or_create(create_new_db);
   if (err != DB_SUCCESS) {
     return (srv_init_abort(err));

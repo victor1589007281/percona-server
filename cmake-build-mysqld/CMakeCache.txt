@@ -1189,6 +1189,21 @@ ZSTD_LEGACY_SUPPORT:BOOL=OFF
 ZSTD_MULTITHREAD_SUPPORT:BOOL=OFF
 
 //Value Computed by CMake
+kmip_BINARY_DIR:STATIC=/Users/victor/mysql/percona-server/cmake-build-mysqld/extra/libkmip
+
+//Value Computed by CMake
+kmip_IS_TOP_LEVEL:STATIC=OFF
+
+//Dependencies for the target
+kmip_LIB_DEPENDS:STATIC=general;/usr/local/Cellar/openssl@1.1/1.1.1t/lib/libssl.dylib;general;/usr/local/Cellar/openssl@1.1/1.1.1t/lib/libcrypto.dylib;
+
+//Value Computed by CMake
+kmip_SOURCE_DIR:STATIC=/Users/victor/mysql/percona-server/extra/libkmip
+
+//Dependencies for the target
+kmippp_LIB_DEPENDS:STATIC=general;kmip;
+
+//Value Computed by CMake
 libcbor_BINARY_DIR:STATIC=/Users/victor/mysql/percona-server/cmake-build-mysqld/extra/libcbor
 
 //Value Computed by CMake
@@ -1420,7 +1435,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=227
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=229
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP

@@ -708,6 +708,15 @@ static void log_fix_first_rec_group(lsn_t block_lsn,
   }
 }
 
+/**
+ * 开始日志系统，设定日志的开始位置和检查点位置。
+ *
+ * @param log 日志系统对象。
+ * @param checkpoint_lsn 上一个检查点的LSN（日志序列号）。
+ * @param start_lsn 开始恢复的LSN。
+ * @param allow_checkpoints 是否允许在此过程中创建检查点。
+ * @return 返回操作的结果，通常为DB_SUCCESS表示成功。
+ */
 dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
                   bool allow_checkpoints) {
   ut_a(log_sys != nullptr);
@@ -716,18 +725,23 @@ dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
   ut_a(start_lsn >= checkpoint_lsn);
   ut_a(arch_log_sys == nullptr || !arch_log_sys->is_active());
 
+    /* 重置日志相关的统计信息和状态 */
   log.write_to_file_requests_total.store(0);
   log.write_to_file_requests_interval.store(std::chrono::seconds::zero());
 
+    /* 设置日志恢复相关的LSN */
   log.recovered_lsn = start_lsn;
   log.last_checkpoint_lsn = checkpoint_lsn;
   log.available_for_checkpoint_lsn = checkpoint_lsn;
   log.m_allow_checkpoints.store(allow_checkpoints);
 
+    /* 确保SN未被锁定 */
   ut_a((log.sn.load(std::memory_order_acquire) & SN_LOCKED) == 0);
+    /* 设置SN和SN锁定值 */
   log.sn = log_translate_lsn_to_sn(log.recovered_lsn);
   log.sn_locked = log_translate_lsn_to_sn(log.recovered_lsn);
 
+    /* 调整start_lsn以确保它在日志块的正确位置 */
   if ((start_lsn + LOG_BLOCK_TRL_SIZE) % OS_FILE_LOG_BLOCK_SIZE == 0) {
     start_lsn += LOG_BLOCK_TRL_SIZE + LOG_BLOCK_HDR_SIZE;
   } else if (start_lsn % OS_FILE_LOG_BLOCK_SIZE == 0) {
@@ -735,32 +749,39 @@ dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
   }
   ut_a(start_lsn > LOG_START_LSN);
 
+    /* 初始化最近写入和最近关闭的日志链表 */
   log.recent_written.add_link(0, start_lsn);
   log.recent_written.advance_tail();
   ut_a(log_buffer_ready_for_write_lsn(log) == start_lsn);
 
+    /* 设置当前和已刷新到磁盘的LSN */
   log.recent_closed.add_link(0, start_lsn);
   log.recent_closed.advance_tail();
   ut_a(log_buffer_dirty_pages_added_up_to_lsn(log) == start_lsn);
 
+    /* 初始化写入超前结束偏移量 */
   log.write_lsn = start_lsn;
   log.flushed_to_disk_lsn = start_lsn;
 
   log.write_ahead_end_offset = 0;
 
+    /* 处理日志块 */
   lsn_t block_lsn;
   byte *block;
 
   block_lsn = ut_uint64_align_down(start_lsn, OS_FILE_LOG_BLOCK_SIZE);
 
+    /* 确保日志块位于缓冲区的有效范围内 */
   ut_a(block_lsn % log.buf_size + OS_FILE_LOG_BLOCK_SIZE <= log.buf_size);
 
   block = static_cast<byte *>(log.buf) + block_lsn % log.buf_size;
 
   Log_data_block_header block_header;
 
+    /* 根据日志格式，处理日志块的内容 */
   if (log.m_format == Log_format::CURRENT) {
     {
+        /* 从磁盘读取日志块 */
       auto file = log.m_files.find(block_lsn);
       ut_a(file != log.m_files.end());
       auto file_handle = file->open(Log_file_access_mode::READ_ONLY);
@@ -777,11 +798,13 @@ dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
     /* FOLLOWING IS NOT NEEDED IF WE DON'T ALLOW DISABLING crc32 checksum */
     log_fix_first_rec_group(block_lsn, block_header, start_lsn);
   } else {
+      /* 初始化旧格式的日志块 */
     ut_a(start_lsn % OS_FILE_LOG_BLOCK_SIZE == LOG_BLOCK_HDR_SIZE);
     std::memset(block, 0x00, OS_FILE_LOG_BLOCK_SIZE);
     block_header.m_first_rec_group = LOG_BLOCK_HDR_SIZE;
   }
 
+    /* 设置日志块的LSN和数据长度 */
   block_header.set_lsn(block_lsn);
   /* The last mtr in the block might have been incomplete, thus we trim the
   block to the start_lsn which is the end of the last mtr found in recovery */
@@ -789,12 +812,16 @@ dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
   ut_ad(LOG_BLOCK_HDR_SIZE <= block_header.m_first_rec_group);
   ut_ad(block_header.m_first_rec_group <= block_header.m_data_len);
 
+    /* 序列化日志块头 */
   log_data_block_header_serialize(block_header, block);
 
+    /* 更新日志缓冲区的限制 */
   log_update_buf_limit(log, start_lsn);
 
+    /* 启动日志文件 */
   const dberr_t err = log_files_start(log);
 
+    /* 确保操作的顺序性 */
   /* Do not reorder writes above, below this line. For x86 this
   protects only from unlikely compile-time reordering. */
   std::atomic_thread_fence(std::memory_order_release);

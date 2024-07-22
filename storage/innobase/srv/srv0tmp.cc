@@ -306,32 +306,51 @@ void Tablespace_pool::free_ts(Tablespace *ts) {
   release();
 }
 
+/c++
+/**
+ * 初始化表空间池。
+ *
+ * @param create_new_db 是否创建新的数据库。这个参数影响是否删除旧的表空间池。
+ * @return 初始化结果，成功返回DB_SUCCESS，内存不足返回DB_OUT_OF_MEMORY。
+ */
 dberr_t Tablespace_pool::initialize(bool create_new_db) {
+  // 如果池已经初始化过，直接返回成功
   if (m_pool_initialized) {
     return (DB_SUCCESS);
   }
 
+  // 断言当前活动池和空闲池都为空
   ut_ad(m_active == nullptr && m_free == nullptr);
 
+  // 创建新的活动池
   m_active = ut::new_withkey<Pool>(UT_NEW_THIS_FILE_PSI_KEY);
+  // 如果创建失败，返回内存不足错误
   if (m_active == nullptr) {
     return (DB_OUT_OF_MEMORY);
   }
 
+  // 创建新的空闲池
   m_free = ut::new_withkey<Pool>(UT_NEW_THIS_FILE_PSI_KEY);
+  // 如果创建失败，返回内存不足错误
   if (m_free == nullptr) {
     return (DB_OUT_OF_MEMORY);
   }
 
+  // 根据create_new_db参数决定是否删除旧的表空间池
   delete_old_pool(create_new_db);
+  // 扩展池的大小到初始化大小
   dberr_t err = expand(m_init_size);
+  // 如果扩展失败，返回错误码
   if (err != DB_SUCCESS) {
     return (err);
   }
 
+  // 标记池为已初始化
   m_pool_initialized = true;
+  // 返回成功
   return (DB_SUCCESS);
 }
+
 
 dberr_t Tablespace_pool::expand(size_t size) {
   ut_ad(!m_pool_initialized || mutex_own(&m_mutex));
@@ -420,19 +439,31 @@ static dberr_t create_temp_dir() {
 
   return (DB_SUCCESS);
 }
-
+/**
+ * @brief 根据参数决定打开现有数据库或创建新数据库。
+ *
+ * 此函数首先尝试创建临时目录，如果成功，则初始化一个表空间池。如果创建临时目录失败，
+ * 或者初始化表空间池时出现内存不足的情况，函数将返回相应的错误代码。
+ *
+ * @param create_new_db 指示是否应创建新数据库的布尔值。如果为真，则尝试创建新数据库；
+ *                      如果为假，则尝试打开现有数据库。
+ * @return dberr_t 返回一个表示操作结果的错误代码。成功时返回DB_SUCCESS，否则返回
+ *                 其他表示失败的错误代码。
+ */
 dberr_t open_or_create(bool create_new_db) {
   dberr_t err = create_temp_dir();
   if (err != DB_SUCCESS) {
     return (err);
   }
 
+    // 使用指定的键和初始大小创建一个新的表空间池对象。
   tbsp_pool =
       ut::new_withkey<Tablespace_pool>(UT_NEW_THIS_FILE_PSI_KEY, INIT_SIZE);
   if (tbsp_pool == nullptr) {
     return (DB_OUT_OF_MEMORY);
   }
 
+    // 初始化表空间池，参数指示是否应创建新数据库。
   err = tbsp_pool->initialize(create_new_db);
 
   return (err);

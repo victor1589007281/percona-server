@@ -3716,15 +3716,22 @@ static dberr_t recv_recovery_begin(log_t &log, const lsn_t checkpoint_lsn) {
 
 /** Initialize crash recovery environment. Can be called iff
 recv_needed_recovery == false. */
+/*使用Double Write文件恢复损坏的数据页*/
 static dberr_t recv_init_crash_recovery() {
+    /* 确保服务器不在只读模式下 */
   ut_ad(!srv_read_only_mode);
+    /* 确保需要恢复，这个标志位在之前应该已经被设置 */
   ut_a(!recv_needed_recovery);
 
+    /* 设置恢复需要的标志位 */
   recv_needed_recovery = true;
 
+    /* 输出日志信息，表示开始进行双写缓冲区的恢复 */
   ib::info(ER_IB_MSG_726);
+    /* 输出日志信息，提供关于恢复进程的详细说明 */
   ib::info(ER_IB_MSG_727);
 
+    /* 调用双写缓冲区的恢复函数，返回恢复结果 */
   return recv_sys->dblwr->recover();
 }
 #endif /* !UNIV_HOTBACKUP */
@@ -3850,7 +3857,7 @@ dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
         return DB_ERROR;
       }
 
-        /* 初始化崩溃恢复。 */
+        /* 使用Double Write文件恢复损坏的数据页。 */
       err = recv_init_crash_recovery();
       if (err != DB_SUCCESS) {
         return err;
