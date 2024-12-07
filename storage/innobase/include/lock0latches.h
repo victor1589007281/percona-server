@@ -161,7 +161,6 @@ class Latches {
   /** Number of page shards, and also number of table shards.
   Must be a power of two */
   static constexpr size_t SHARDS_COUNT = 512;
-
   /*
   Functions related to sharding by page (containing records to lock).
 
@@ -173,12 +172,19 @@ class Latches {
   class Page_shards {
     /** Each shard is protected by a separate mutex. Mutexes are padded to avoid
     false sharing issues with cache. */
+    /** 每个分片由一个独立的互斥锁保护，互斥锁进行了填充以避免缓存中的伪共享问题。 */
     Padded_mutex mutexes[SHARDS_COUNT];
+
     /**
     Identifies the page shard which contains record locks for records from the
     given page.
     @param[in]    page_id    The space_id and page_no of the page
     @return Integer in the range [0..lock_sys_t::SHARDS_COUNT)
+    */
+    /**
+    根据给定页面确定包含其记录锁的页面分片。
+    @param[in]    page_id    页面的空间ID和页面编号
+    @return 返回在范围 [0..lock_sys_t::SHARDS_COUNT) 内的整数
     */
     static size_t get_shard(const page_id_t &page_id);
 
@@ -192,6 +198,11 @@ class Latches {
     @param[in]    page_id    The space_id and page_no of the page
     @return The mutex responsible for the shard containing the page
     */
+    /**
+    返回与全局闩锁一起保护包含来自给定页面的记录锁的页面分片的互斥锁。
+    @param[in]    page_id    页面的空间ID和页面编号
+    @return 负责包含页面的分片的互斥锁
+    */
     const Lock_mutex &get_mutex(const page_id_t &page_id) const;
 
     /**
@@ -200,20 +211,36 @@ class Latches {
     @param[in]    page_id    The space_id and page_no of the page
     @return The mutex responsible for the shard containing the page
     */
+    /**
+    返回与全局闩锁一起保护包含来自给定页面的记录锁的页面分片的互斥锁。
+    @param[in]    page_id    页面的空间ID和页面编号
+    @return 负责包含页面的分片的互斥锁
+    */
     Lock_mutex &get_mutex(const page_id_t &page_id);
   };
 
   /*
   Functions related to sharding by table
 
+  我们通过表的ID来识别表。每个表都有自己的锁队列，因此我们只需将几个这样的队列组合成一个分片。
+
   We identify tables by their id. Each table has its own lock queue, so we
   simply group several such queues into single shard.
   */
   class Table_shards {
-    /** Each shard is protected by a separate mutex. Mutexes are padded to avoid
-    false sharing issues with cache. */
-    Padded_mutex mutexes[SHARDS_COUNT];
     /**
+    每个分片由一个单独的互斥锁保护。互斥锁被填充以避免与缓存相关的伪共享问题。
+
+    Each shard is protected by a separate mutex. Mutexes are padded to avoid
+    false sharing issues with cache.
+    */
+    Padded_mutex mutexes[SHARDS_COUNT];
+
+    /**
+    根据给定的表确定包含该表锁的表分片。
+    @param[in]    table_id    表的唯一标识符
+    @return 返回表示分片索引的整数值，在范围 [0, SHARDS_COUNT) 内。
+
     Identifies the table shard which contains locks for the given table.
     @param[in]    table_id    The id of the table
     @return Integer in the range [0..lock_sys_t::SHARDS_COUNT)
@@ -221,30 +248,57 @@ class Latches {
     static size_t get_shard(const table_id_t table_id);
 
    public:
+    /**
+    Table_shards 类的构造函数。初始化每个分片的互斥锁数组。
+
+    Constructor for Table_shards class. Initializes the mutex array for each shard.
+    */
     Table_shards();
+
+    /**
+    Table_shards 类的析构函数。
+
+    Destructor for Table_shards class.
+    */
     ~Table_shards();
 
-    /** Returns the mutex which (together with the global latch) protects the
+    /**
+    获取保护指定表分片的互斥锁。
+    @param[in]    table_id    表的唯一标识符
+    @return 返回负责指定分片的互斥锁引用。
+
+    Returns the mutex which (together with the global latch) protects the
     table shard which contains table locks for the given table.
     @param[in]    table_id    The id of the table
     @return The mutex responsible for the shard containing the table
     */
     Lock_mutex &get_mutex(const table_id_t table_id);
 
-    /** Returns the mutex which (together with the global latch) protects the
+    /**
+    获取保护指定表分片的常量互斥锁引用。
+    @param[in]    table_id    表的唯一标识符
+    @return 返回负责指定分片的常量互斥锁引用。
+
+    Returns the mutex which (together with the global latch) protects the
     table shard which contains table locks for the given table.
     @param[in]    table_id    The id of the table
     @return The mutex responsible for the shard containing the table
     */
     const Lock_mutex &get_mutex(const table_id_t table_id) const;
 
-    /** Returns the mutex which (together with the global latch) protects the
+    /**
+    获取保护指定表分片的常量互斥锁引用。
+    @param[in]    table    字典表对象的常量引用
+    @return 返回负责指定分片的常量互斥锁引用。
+
+    Returns the mutex which (together with the global latch) protects the
     table shard which contains table locks for the given table.
     @param[in]    table    The table
     @return The mutex responsible for the shard containing the table
     */
     const Lock_mutex &get_mutex(const dict_table_t &table) const;
   };
+
 
   /** padding to prevent other memory update hotspots from residing on the same
   memory cache line */

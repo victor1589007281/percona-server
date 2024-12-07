@@ -904,17 +904,29 @@ Encryption::Progress fsp_header_encryption_op_type_in_progress(
 @param[in]      rotate_encryption       If it is called during key rotation
 @param[in,out]  mtr                     Mini-transaction
 @return true if success. */
+/**
+ * 将加密信息写入空间头。
+ *
+ * @param[in]      space_id                表空间ID
+ * @param[in]      space_flags             表空间标志
+ * @param[in]      encrypt_info            用于重新加密密钥的缓冲区
+ * @param[in]      update_fsp_flags        是否需要更新表空间标志
+ * @param[in]      rotate_encryption       是否在密钥轮换期间被调用
+ * @param[in,out]  mtr                     微事务
+ * @return true     如果成功
+ */
 bool fsp_header_write_encryption(space_id_t space_id, uint32_t space_flags,
                                  byte *encrypt_info, bool update_fsp_flags,
                                  bool rotate_encryption, mtr_t *mtr) {
-  buf_block_t *block;
-  ulint offset;
-  page_t *page;
-  uint32_t master_key_id;
+    buf_block_t *block;                  // 缓冲块指针
+    ulint offset;                        // 加密信息偏移量
+    page_t *page;                        // 页面指针
+    uint32_t master_key_id;              // 主密钥ID
 
-  const page_size_t page_size(space_flags);
+  const page_size_t page_size(space_flags); // 根据表空间标志获取页面大小
 
   /* Save the encryption info to the page 0. */
+    // 获取表空间第一页的缓冲块
   block = buf_page_get(page_id_t(space_id, 0), page_size, RW_SX_LATCH,
                        UT_LOCATION_HERE, mtr);
   if (block == nullptr) {
@@ -922,26 +934,35 @@ bool fsp_header_write_encryption(space_id_t space_id, uint32_t space_flags,
   }
 
   /* suspected as a causer of bug#31073853 */
+    // 确保服务关闭状态不超过冲洗阶段
   ut_ad(srv_shutdown_state.load() < SRV_SHUTDOWN_FLUSH_PHASE);
 
   buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
+    // 确保块的框架中的空间ID与输入的空间ID匹配
   ut_ad(space_id == page_get_space_id(buf_block_get_frame(block)));
 
+    // 获取加密信息的偏移量
   offset = fsp_header_get_encryption_offset(page_size);
+    // 确保偏移量有效
   ut_ad(offset != 0 && offset < UNIV_PAGE_SIZE);
 
+    // 获取加密信息所在的页面
   page = buf_block_get_frame(block);
 
   /* Write the new fsp flags into the header if needed */
+    // 如果需要，将新的fsp标志写入头部
   if (update_fsp_flags) {
     mlog_write_ulint(page + FSP_HEADER_OFFSET + FSP_SPACE_FLAGS, space_flags,
                      MLOG_4BYTES, mtr);
   }
 
+    // 如果在密钥轮换期间被调用，跳过所有已更新master_key_id的表空间
   if (rotate_encryption) {
     /* If called during recovery, skip all tablespaces which have updated
     master_key_id. */
+      // 从页面读取并处理主密钥ID
     master_key_id = mach_read_from_4(page + offset + Encryption::MAGIC_SIZE);
+      // 如果服务正在启动且主密钥ID匹配，则无需进一步操作
     if (srv_is_being_started &&
         master_key_id == Encryption::get_master_key_id()) {
       ut_ad(Encryption::is_encrypted(page + offset));
@@ -950,6 +971,7 @@ bool fsp_header_write_encryption(space_id_t space_id, uint32_t space_flags,
   }
 
   /* Write encryption info passed */
+    // 写入传递的加密信息
   mlog_write_string(page + offset, encrypt_info, Encryption::INFO_SIZE, mtr);
 
   return (true);
@@ -960,19 +982,33 @@ bool fsp_header_write_encryption(space_id_t space_id, uint32_t space_flags,
 @param[in]      encrypt_info    Buffer for re-encrypt key.
 @param[in,out]  mtr             Mini-transaction
 @return true if success. */
+/**
+ * @brief 更新空间头部的加密信息。
+ *
+ * 此函数用于在表空间头部旋转加密信息。
+ *
+ * @param[in]      space           表空间
+ * @param[in]      encrypt_info    用于重新加密密钥的缓冲区。
+ * @param[in,out]  mtr             微事务
+ * @return         返回true表示成功，否则返回false。
+ */
 bool fsp_header_rotate_encryption(fil_space_t *space, byte *encrypt_info,
                                   mtr_t *mtr) {
+    // 断言微事务存在且表空间支持加密
   ut_ad(mtr);
   ut_ad(space->can_encrypt());
 
   DBUG_EXECUTE_IF("fsp_header_rotate_encryption_failure", return (false););
 
   /* Fill encryption info. */
+    /* 填充加密信息。 */
   if (!Encryption::fill_encryption_info(space->m_encryption_metadata, true,
                                         encrypt_info)) {
     return (false);
   }
 
+    /* 将加密信息写入空间头部。 */
+    // 调用fsp_header_write_encryption函数完成加密信息的写入
   /* Write encryption info into space header. */
   return (fsp_header_write_encryption(space->id, space->flags, encrypt_info,
                                       false, true, mtr));

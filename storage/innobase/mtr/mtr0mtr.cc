@@ -573,22 +573,38 @@ struct mtr_write_log_t {
 thread_local ut::unordered_set<const mtr_t *> mtr_t::s_my_thread_active_mtrs;
 #endif
 
+/**
+ * 开始一个新的事务回滚段。
+ * 
+ * 此函数初始化事务回滚段（mtr）对象，为其在内存中的状态分配和设置初始值。
+ * 它还根据参数sync确定在提交事务时是否将更改同步到磁盘。
+ * 
+ * @param sync 如果为true，则在提交事务时将更改同步到磁盘；否则，更改将在事务提交后的一段时间内同步。
+ */
 void mtr_t::start(bool sync) {
+  // 确保mtr对象处于初始化或已提交的状态，以便重新开始。
   ut_ad(m_impl.m_state == MTR_STATE_INIT ||
         m_impl.m_state == MTR_STATE_COMMITTED);
 
+  // 初始化当前对象的内存区域，以避免未初始化的内存访问。
   UNIV_MEM_INVALID(this, sizeof(*this));
+  // 在调试模式下，额外验证某个成员变量的内存状态。
   IF_DEBUG(UNIV_MEM_VALID(&m_restart_count, sizeof(m_restart_count)););
 
+  // 初始化m_impl成员的内存区域，以避免未初始化的访问。
   UNIV_MEM_INVALID(&m_impl, sizeof(m_impl));
 
+  // 设置是否在事务提交时进行同步。
   m_sync = sync;
 
+  // 初始化日志序列号为0。
   m_commit_lsn = 0;
 
+  // 在m_impl对象中初始化日志缓冲区和备忘录缓冲区。
   new (&m_impl.m_log) mtr_buf_t();
   new (&m_impl.m_memo) mtr_buf_t();
 
+  // 设置m_impl的成员变量，为后续操作做准备。
   m_impl.m_mtr = this;
   m_impl.m_log_mode = MTR_LOG_ALL;
   m_impl.m_inside_ibuf = false;
@@ -599,19 +615,24 @@ void mtr_t::start(bool sync) {
   m_impl.m_flush_observer = nullptr;
   m_impl.m_marked_nolog = false;
 
+  // 在非热备份模式下，检查和标记不需要记录日志的操作。
 #ifndef UNIV_HOTBACKUP
   check_nolog_and_mark();
 #endif /* !UNIV_HOTBACKUP */
+
+  // 在调试模式下，设置一个魔法数字，用于检测对象的完整性。
   ut_d(m_impl.m_magic_n = MTR_MAGIC_N);
 
 #ifdef UNIV_DEBUG
+  // 在线程本地上下文中插入当前的mtr对象，以跟踪其使用情况。
   auto res = s_my_thread_active_mtrs.insert(this);
-  /* Assert there are no collisions in thread local context - it would mean
-  reusing MTR without committing or destructing it. */
+  // 断言没有在同一个线程中重复使用同一个mtr对象。
   ut_a(res.second);
+  // 增加重启计数器，用于跟踪mtr对象的重用次数。
   m_restart_count++;
 #endif /* UNIV_DEBUG */
 }
+
 
 #ifndef UNIV_HOTBACKUP
 void mtr_t::check_nolog_and_mark() {
@@ -670,6 +691,18 @@ void mtr_t::Command::release_resources() {
   m_impl = nullptr;
 }
 
+/**
+ * 提交一个迷你事务。
+ * 
+ * 该函数负责提交当前的迷你事务，确保所有的修改和日志记录都已正确完成。
+ * 它主要包含以下几个步骤：
+ * 1. 验证事务状态是否处于活动状态。
+ * 2. 确保当前不在ibuf（插入缓冲区）内部进行操作。
+ * 3. 校验魔法值以确保操作合法性。
+ * 4. 执行命令或释放资源，具体取决于是否有日志记录以及操作模式。
+ * 5. 在非热备份模式下，检查无需日志记录的情况并取消标记。
+ * 6. 最后，在调试模式下，从调试列表中移除当前事务。
+ */
 /** Commit a mini-transaction. */
 void mtr_t::commit() {
   ut_ad(is_active());
@@ -697,6 +730,7 @@ void mtr_t::commit() {
   ut_d(remove_from_debug_list());
 }
 
+
 #ifdef UNIV_DEBUG
 void mtr_t::remove_from_debug_list() const {
   auto it = s_my_thread_active_mtrs.find(this);
@@ -717,15 +751,23 @@ void mtr_t::check_is_not_latching() const {
 #ifndef UNIV_HOTBACKUP
 
 /** Acquire a tablespace X-latch.
-NOTE: use mtr_x_lock_space().
-@param[in]      space           tablespace instance
-@param[in]      location        location from where called */
+ * 使用X-latch锁定表空间，确保在操作过程中数据的一致性和完整性。
+ * 
+ * NOTE: 实际操作由 `mtr_x_lock_space()` 函数完成。
+ * 
+ * @param[in]      space           tablespace instance     要锁定的表空间实例
+ * @param[in]      location        location from where called     调用位置，用于调试和跟踪
+ */
 void mtr_t::x_lock_space(fil_space_t *space, ut::Location location) {
+  // 确保当前事务是通过正确的魔术数字初始化的
   ut_ad(m_impl.m_magic_n == MTR_MAGIC_N);
+  // 确保当前事务是活跃的
   ut_ad(is_active());
 
+  // 调用通用锁定机制来锁定表空间的X-latch
   x_lock(&space->latch, location);
 }
+
 
 /** Release an object in the memo stack. */
 void mtr_t::memo_release(const void *object, ulint type) {

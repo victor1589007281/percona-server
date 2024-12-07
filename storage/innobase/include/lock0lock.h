@@ -1015,46 +1015,98 @@ struct lock_op_t {
 
 typedef ib_mutex_t Lock_mutex;
 
+/**
+ * 锁系统结构体，用于管理InnoDB存储引擎的行级和表级锁。
+ */
 /** The lock system struct */
 struct lock_sys_t {
+  /**
+   * 用于保护记录锁和表锁队列的闩锁。
+   * 使用locksys::Latches类型，提供更细粒度的锁控制。
+   */
   /** The latches protecting queues of record and table locks */
   locksys::Latches latches;
 
+  /**
+   * 记录锁(LOCK_REC)的哈希表，不包括谓词锁(LOCK_PREDICATE)
+   * 和谓词页锁(LOCK_PRDT_PAGE)。
+   * 用于快速查找和管理行级锁。
+   */
   /** The hash table of the record (LOCK_REC) locks, except for predicate
   (LOCK_PREDICATE) and predicate page (LOCK_PRDT_PAGE) locks */
   hash_table_t *rec_hash;
 
+  /**
+   * 谓词锁(LOCK_PREDICATE)的哈希表。
+   * 用于存储和管理基于谓词条件的锁。
+   */
   /** The hash table of predicate (LOCK_PREDICATE) locks */
   hash_table_t *prdt_hash;
 
+  /**
+   * 谓词页锁(LOCK_PRD_PAGE)的哈希表。
+   * 用于管理针对整个页面的谓词锁。
+   */
   /** The hash table of the predicate page (LOCK_PRD_PAGE) locks */
   hash_table_t *prdt_page_hash;
 
+  /**
+   * 填充字段，用于避免wait_mutex字段的假共享。
+   * 假共享发生在不同线程访问相邻的缓存行时，可能导致不必要的性能开销。
+   */
   /** Padding to avoid false sharing of wait_mutex field */
   char pad2[ut::INNODB_CACHE_LINE_SIZE];
 
+  /**
+   * 保护waiting_threads和last_slot字段的互斥体。
+   * 当线程等待锁时，使用这个互斥体来协调访问。
+   */
   /** The mutex protecting the next two fields */
   Lock_mutex wait_mutex;
 
+  /**
+   * 正在等待锁的用户线程数组。
+   * 每个等待锁的线程都会在这个数组中占据一个槽位。
+   */
   /** Array of user threads suspended while waiting for locks within InnoDB.
   Protected by the lock_sys->wait_mutex. */
   srv_slot_t *waiting_threads;
 
+  /**
+   * waiting_threads数组中最后一个使用的槽位的指针。
+   * 用于管理等待线程的数组。
+   */
   /** The highest slot ever used in the waiting_threads array.
   Protected by lock_sys->wait_mutex. */
   srv_slot_t *last_slot;
 
+  /**
+   * 标志位，表示所有恢复的事务是否已完成回滚。
+   * 这个标志用于在系统启动期间的恢复过程中控制锁的处理。
+   */
   /** true if rollback of all recovered transactions is complete.
   Protected by exclusive global lock_sys latch. */
   bool rollback_complete;
 
+  /**
+   * 观察到的最大锁等待时间，用于性能监控和报告。
+   * 用于监控系统的锁等待行为，帮助调优。
+   */
   /** Max lock wait time observed, for innodb_row_lock_time_max reporting. */
   std::chrono::steady_clock::duration n_lock_max_wait_time;
 
+  /**
+   * 锁等待监控线程创建的事件。
+   * 当有线程等待锁超过指定时间时，用于触发超时检查。
+   */
   /** Set to the event that is created in the lock wait monitor thread. A value
   of 0 means the thread is not active */
   os_event_t timeout_event;
 
+  /**
+   * 用于调试目的的锁时间戳计数器。
+   * 在创建锁时用于分配序列号，帮助追踪锁的生命周期。
+   */
 #ifdef UNIV_DEBUG
   /** Lock timestamp counter, used to assign lock->m_seq on creation. */
   std::atomic<uint64_t> m_seq;

@@ -1661,6 +1661,14 @@ static int64 get_sequence_number(Log_event *ev) {
   @return 0 success
          -1 got killed or an error happened during applying
 */
+/**
+ * MTS工作线程主程序。
+ * 工作线程循环等待事件，执行事件并更新统计计数器。
+ *
+ * @param ev 要执行的日志事件
+ * @return 0 表示成功
+ *         -1 表示线程被终止或事件应用过程中发生错误
+ */
 int Slave_worker::slave_worker_exec_event(Log_event *ev) {
   Relay_log_info *rli = c_rli;
   THD *thd = info_thd;
@@ -1668,16 +1676,23 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
 
   DBUG_TRACE;
 
+  // 设置线程的服务器ID和未掩码服务器ID，并更新当前时间
   thd->server_id = ev->server_id;
   thd->unmasked_server_id = ev->common_header->unmasked_server_id;
   thd->set_time();
   thd->lex->set_current_query_block(nullptr);
+
+  // 如果事件时间未设置，则设置为当前时间
   if (!ev->common_header->when.tv_sec)
     ev->common_header->when.tv_sec = static_cast<long>(time(nullptr));
-  ev->thd = thd;  // todo: assert because up to this point, ev->thd == 0
+
+  // 将线程和工作器指针设置到事件中
+  ev->thd = thd;
   ev->worker = this;
 
+  // 在调试模式下进行检查
 #ifndef NDEBUG
+  // 检查在非分区数据库中执行的第一个事务是否满足时间戳条件
   if (!is_mts_db_partitioned(rli) && may_have_timestamp(ev) &&
       !curr_group_seen_sequence_number) {
     curr_group_seen_sequence_number = true;
@@ -1695,13 +1710,15 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
       must have been satisfied by Coordinator.
       The first scheduled transaction does not have to wait for anybody.
     */
-    assert(rli->gaq->entry == ev->mts_group_idx ||
+      // 确保协调器已经满足了提交时间戳等待条件
+      assert(rli->gaq->entry == ev->mts_group_idx ||
            Mts_submode_logical_clock::clock_leq(last_committed, lwm_estimate));
     assert(lwm_estimate != SEQ_UNINIT || rli->gaq->entry == ev->mts_group_idx);
     /*
       The current transaction's timestamp can't be less that lwm.
     */
-    assert(sequence_number == SEQ_UNINIT ||
+      // 当前事务的时间戳不能小于lwm
+      assert(sequence_number == SEQ_UNINIT ||
            !Mts_submode_logical_clock::clock_leq(
                sequence_number, static_cast<Mts_submode_logical_clock *>(
                                     rli->current_mts_submode)
@@ -1710,7 +1727,9 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
 #endif
 
   // Address partitioning only in database mode
-  if (!is_gtid_event(ev) && is_mts_db_partitioned(rli)) {
+    // 在数据库模式下处理分区
+    if (!is_gtid_event(ev) && is_mts_db_partitioned(rli)) {
+    // 如果事件包含分区信息，则更新当前组的执行分区
     if (ev->contains_partition_info(end_group_sets_max_dbs)) {
       uint num_dbs = ev->mts_number_dbs();
 
@@ -1721,9 +1740,11 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
       for (uint k = 0; k < num_dbs; k++) {
         bool found = false;
 
+        // 在当前组的执行分区列表中查找当前分区
         for (size_t i = 0; i < curr_group_exec_parts.size() && !found; i++) {
           found = curr_group_exec_parts[i] == ev->mts_assigned_partitions[k];
         }
+        // 如果未找到，则添加到列表中
         if (!found) {
           /*
             notice, can't assert
@@ -1737,11 +1758,15 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
     }
   }
 
+  // 更新未来事件的中继日志位置、主日志位置和全局可用队列索引
   set_future_event_relay_log_pos(ev->future_event_relay_log_pos);
   set_master_log_pos(static_cast<ulong>(ev->common_header->log_pos));
   set_gaq_index(ev->mts_group_idx);
+
+  // 执行事件，并返回结果
   ret = ev->do_apply_event_worker(this);
 
+  // 如果设置了调试条件，在执行写入行事件后发送信号
   DBUG_EXECUTE_IF("after_executed_write_rows_event", {
     if (ev->get_type_code() == binary_log::WRITE_ROWS_EVENT) {
       static constexpr char act[] = "now signal executed";
@@ -1752,6 +1777,7 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
 
   return ret;
 }
+
 
 /**
   Sleep for a given amount of seconds or until killed.

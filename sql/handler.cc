@@ -1907,18 +1907,31 @@ end:
                    True by default, otherwise, does not execute
                    the after_commit hook in the function.
 */
+/**
+  提交会话或语句级事务。
 
+  @param thd 会话句柄。
+  @param all 如果为真，则提交会话级事务；如果为假，则提交语句级事务。
+  @param run_after_commit 如果为真，并且钩子已注册，则执行after_commit钩子。
+  
+  @return 返回0表示成功，否则返回1。
+*/
 int ha_commit_low(THD *thd, bool all, bool run_after_commit) {
   int error = 0;
+  // 获取当前会话的事务上下文
   Transaction_ctx *trn_ctx = thd->get_transaction();
+  // 根据all参数确定事务范围
   Transaction_ctx::enum_trx_scope trx_scope =
       all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;
+  // 获取相应事务范围的HA事务信息列表
   auto ha_list = trn_ctx->ha_trx_info(trx_scope);
 
   DBUG_TRACE;
 
+  // 遍历HA事务信息列表
   if (ha_list) {
     bool restore_backup_ha_data = false;
+    // 如果是全局提交，并且引擎的HA数据被分离，则准备恢复备份的HA数据
     /*
       At execution of XA COMMIT ONE PHASE binlog or slave applier
       reattaches the engine ha_data to THD, previously saved at XA START.
@@ -1933,7 +1946,7 @@ int ha_commit_low(THD *thd, bool all, bool run_after_commit) {
     }
 
     bool is_applier_wait_enabled = false;
-
+    // 如果需要按照提交顺序执行，或者回滚状态指示有回滚操作，则等待提交顺序管理器
     if (is_ha_commit_low_invoking_commit_order(thd, all) ||
         Commit_order_manager::get_rollback_status(thd)) {
       if (Commit_order_manager::wait(thd)) {
@@ -1948,6 +1961,7 @@ int ha_commit_low(THD *thd, bool all, bool run_after_commit) {
       is_applier_wait_enabled = true;
     }
 
+    // 遍历HA列表，提交每个存储引擎的事务
     for (auto &ha_info : ha_list) {
       int err;
       auto ht = ha_info.ht();
@@ -1961,17 +1975,20 @@ int ha_commit_low(THD *thd, bool all, bool run_after_commit) {
       thd->status_var.ha_commit_count++;
       ha_info.reset(); /* keep it conveniently zero-filled */
     }
+    // 如果需要，恢复备份的HA数据
     if (restore_backup_ha_data) thd->rpl_reattach_engine_ha_data();
+    // 重置事务上下文的事务范围
     trn_ctx->reset_scope(trx_scope);
 
-    /*
-      After ensuring externalization order for applier thread, remove it
-      from waiting (Commit Order Queue) and allow next applier thread to
-      be ordered.
-
-      Note: the calls to Commit_order_manager::wait_and_finish() will be
-            no-op for threads other than replication applier threads.
-    */
+      // 如果是应用线程，并且启用了提交顺序管理，则完成提交顺序管理
+      /*
+        After ensuring externalization order for applier thread, remove it
+        from waiting (Commit Order Queue) and allow next applier thread to
+        be ordered.
+  
+        Note: the calls to Commit_order_manager::wait_and_finish() will be
+              no-op for threads other than replication applier threads.
+      */
     if (is_applier_wait_enabled) {
       if (error != 0 && error_from_deferred_processing_se(thd)) {
         // Don't schedule next applier thread directly, the error need to be
@@ -1983,14 +2000,17 @@ int ha_commit_low(THD *thd, bool all, bool run_after_commit) {
   }
 
 err:
-  /* Free resources and perform other cleanup even for 'empty' transactions. */
+    // 清理会话级事务资源
+    /* Free resources and perform other cleanup even for 'empty' transactions. */
   if (all) trn_ctx->cleanup();
+  // 重置事务提交标志
   /*
     When the transaction has been committed, we clear the commit_low
     flag. This allow other parts of the system to check if commit_low
     was called.
   */
   trn_ctx->m_flags.commit_low = false;
+  // 如果需要，并且钩子已注册，则执行after_commit钩子
   if (run_after_commit && thd->get_transaction()->m_flags.run_hooks) {
     /*
        If commit succeeded, we call the after_commit hook.
@@ -6127,18 +6147,32 @@ static bool binlog_func_list(THD *, plugin_ref plugin, void *arg) {
   return false;
 }
 
+/**
+ * 遍历所有二进制日志函数插件，并执行相应的二进制日志函数。
+ * 
+ * 此函数主要用于在给定的事务和二进制日志函数描述符之间，
+ * 遍历和执行所有注册的二进制日志函数插件。它提供了一种机制，
+ * 使得每个插件都可以对传入的事务和二进制日志函数进行处理。
+ * 
+ * @param thd 指向线程内存的指针，用于处理事务。
+ * @param bfn 指向包含二进制日志函数信息的结构体的指针。
+ * @return 总是返回false，表示遍历过程中没有发生中断。
+ */
 static bool binlog_func_foreach(THD *thd, binlog_func_st *bfn) {
-  hton_list_st hton_list;
-  uint i, sz;
+  hton_list_st hton_list;  // 初始化用于存储插件信息的结构体
+  uint i, sz;  // i用于循环迭代，sz用于存储插件数量
 
-  hton_list.sz = 0;
+  hton_list.sz = 0;  // 初始化插件列表大小为0
   plugin_foreach(thd, binlog_func_list, MYSQL_STORAGE_ENGINE_PLUGIN,
-                 &hton_list);
+                 &hton_list);  // 遍历并收集所有二进制日志函数插件
 
   for (i = 0, sz = hton_list.sz; i < sz; i++)
     hton_list.hton[i]->binlog_func(hton_list.hton[i], thd, bfn->fn, bfn->arg);
-  return false;
+  // 对每个插件，调用其二进制日志函数，传入当前事务和二进制日志函数描述符
+
+  return false;  // 表示处理过程中没有发生需要中断的情况
 }
+
 
 int ha_reset_logs(THD *thd) {
   binlog_func_st bfn = {BFN_RESET_LOGS, nullptr};

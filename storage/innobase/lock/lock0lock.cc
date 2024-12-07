@@ -1244,42 +1244,81 @@ lock_t *RecLock::lock_alloc(trx_t *trx, dict_index_t *index, ulint mode,
   return (lock);
 }
 
+/**
+ * 将锁记录插入到等待锁队列的尾部。
+ *
+ * @param[in,out]  lock_hash       包含锁的哈希表指针。
+ * @param[in,out]  lock            要插入的锁结构体指针。
+ * @param[in]      rec_id          正在锁定的记录标识符。
+ *
+ * 此函数用于将锁记录插入到等待队列中。在插入之前，它会验证锁处于等待状态，
+ * 记录ID与锁匹配，并且锁系统拥有页面分片的所有权，以确保操作的正确性和安全性。
+ *
+ * /
 /** Insert lock record to the tail of the queue where the WAITING locks reside.
-@param[in,out]  lock_hash       Hash table containing the locks
-@param[in,out]  lock            Record lock instance to insert
-@param[in]      rec_id          Record being locked */
+ * @param[in,out]  lock_hash       Hash table containing the locks
+ * @param[in,out]  lock            Record lock instance to insert
+ * @param[in]      rec_id          Record being locked */
 static void lock_rec_insert_to_waiting(hash_table_t *lock_hash, lock_t *lock,
                                        const RecID &rec_id) {
+  // 验证锁处于等待状态
   ut_ad(lock->is_waiting());
+  // 验证记录ID与锁匹配
   ut_ad(rec_id.matches(lock));
+  // 验证锁系统拥有锁的页面分片，确保安全
   ut_ad(locksys::owns_page_shard(lock->rec_lock.page_id));
+  // 验证锁系统拥有记录ID的页面分片，确保安全
   ut_ad(locksys::owns_page_shard(rec_id.get_page_id()));
 
+  // 使用记录ID的哈希值将锁记录插入到哈希表中
   HASH_INSERT(lock_t, hash, lock_hash, rec_id.hash_value(), lock);
 }
 
-/** Insert lock record to the head of the queue where the GRANTED locks reside.
-@param[in,out]  lock_hash       Hash table containing the locks
-@param[in,out]  lock            Record lock instance to insert
-@param[in]      rec_id          Record being locked */
+
+/**
+ * 将记录锁插入到已授予锁队列的头部。
+ *
+ * @param[in,out] lock_hash 指向包含锁的哈希表的指针。
+ * @param[in,out] lock 要插入的锁结构的指针。
+ * @param[in] rec_id 正在锁定的记录的标识符。
+ *
+ * /
+ /** Insert a record lock into the head of the granted lock queue.
+ */
 static void lock_rec_insert_to_granted(hash_table_t *lock_hash, lock_t *lock,
                                        const RecID &rec_id) {
+  // 断言记录锁与rec_id匹配，并且锁位于由锁系统拥有的页面上。
   ut_ad(rec_id.matches(lock));
   ut_ad(locksys::owns_page_shard(lock->rec_lock.page_id));
   ut_ad(locksys::owns_page_shard(rec_id.get_page_id()));
+  // 断言锁不在等待状态中。
   ut_ad(!lock->is_waiting());
 
-  /* Move the target lock to the head of the list. */
+  // 获取锁应插入的哈希表链中的第一个节点。
+  // 将目标锁移动到列表的头部。
   auto &first_node = hash_get_first(
       lock_hash, hash_calc_cell_id(rec_id.hash_value(), lock_hash));
 
+  // 断言要插入的锁不是链中的第一个节点。
   ut_ad(lock != first_node);
 
+  // 在锁结构中存储下一个节点以进行后续链接。
   auto next = reinterpret_cast<lock_t *>(first_node);
 
+  // 将锁插入到链的头部。
   first_node = lock;
+  // 更新锁的hash链接，使其指向原始的第一个节点。
   lock->hash = next;
+
+  // Original English Comment:
+  // /* Move the target lock to the head of the list. */
+  // /* Get the first node of the hash table chain where the lock should be inserted. */
+  // /* Assert that the lock to be inserted is not already the first node in the chain. */
+  // /* Store the next node in the lock structure for subsequent linking. */
+  // /* Insert the lock into the head of the chain. */
+  // /* Update the hash link of the lock to point to the original first node. */
 }
+
 namespace locksys {
 /**
 Adds the lock to the list of trx's locks.
@@ -1311,26 +1350,43 @@ static void remove_from_trx_locks(lock_t *lock) {
   lock->trx->lock.trx_locks_version++;
 }
 }  // namespace locksys
-
+/**
+ * @brief 添加记录锁到锁系统。
+ *
+ * 此函数用于将记录锁（无论是等待锁还是已授予锁）根据锁的状态插入到锁哈希表中。
+ * 同时更新对应表的锁计数，并处理与性能模式相关的操作。
+ *
+ * @param lock 指向要添加的锁结构的指针。
+ */
 void RecLock::lock_add(lock_t *lock) {
+  // 断言锁类型与当前锁模式一致。
   ut_ad((lock->type_mode | LOCK_REC) == (m_mode | LOCK_REC));
+  // 断言锁的记录标识符与当前锁的标识符匹配。
   ut_ad(m_rec_id.matches(lock));
+  // 断言锁的页面碎片由锁系统拥有。
   ut_ad(locksys::owns_page_shard(m_rec_id.get_page_id()));
+  // 断言锁的页面碎片由锁系统拥有。
   ut_ad(locksys::owns_page_shard(lock->rec_lock.page_id));
+  // 断言与锁关联的事务互斥量被持有。
   ut_ad(trx_mutex_own(lock->trx));
 
+  // 判断锁是否处于等待状态。
   bool wait = m_mode & LOCK_WAIT;
 
+  // 根据锁的模式获取适当的哈希表。
   hash_table_t *lock_hash = lock_hash_get(m_mode);
 
+  // 增加表上的记录锁数量（松散内存顺序）。
   lock->index->table->n_rec_locks.fetch_add(1, std::memory_order_relaxed);
 
+  // 将锁插入到已授予队列或等待队列。
   if (!wait) {
     lock_rec_insert_to_granted(lock_hash, lock, m_rec_id);
   } else {
     lock_rec_insert_to_waiting(lock_hash, lock, m_rec_id);
   }
 
+  // 性能模式相关操作，设置线程和事件ID。
 #ifdef HAVE_PSI_THREAD_INTERFACE
 #ifdef HAVE_PSI_DATA_LOCK_INTERFACE
   /* The performance schema THREAD_ID and EVENT_ID are used only
@@ -1340,12 +1396,26 @@ void RecLock::lock_add(lock_t *lock) {
 #endif /* HAVE_PSI_DATA_LOCK_INTERFACE */
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
+  // 将锁添加到事务的锁列表中。
   locksys::add_to_trx_locks(lock);
 
+  // 如果锁处于等待状态，设置锁和事务等待状态。
   if (wait) {
     lock_set_lock_and_trx_wait(lock);
   }
 }
+
+/**
+ * 创建一个事务锁并初始化它。
+ *
+ * @param[in, out] trx 指向请求新锁的事务的指针。
+ * @param[in] prdt 指向谓词锁信息的指针（可选）。
+ * @return 新创建的锁实例的指针。
+ *
+ * 此函数负责为事务创建锁实例，并根据特定参数初始化它。
+ * 它通过验证互斥量所有权确保锁分配和初始化在一致状态下正确执行。
+ * 此外，如果指定，它会处理谓词锁，并最终将锁添加到系统中。
+ */
 
 /**
 Create a lock for a transaction and initialise it.
@@ -1355,23 +1425,21 @@ Create a lock for a transaction and initialise it.
 lock_t *RecLock::create(trx_t *trx, const lock_prdt_t *prdt) {
   ut_ad(locksys::owns_page_shard(m_rec_id.get_page_id()));
 
-  /* Ensure that another transaction doesn't access the trx
-  lock state and lock data structures while we are adding the
-  lock and changing the transaction state to LOCK_WAIT.
-  In particular it protects the lock_alloc which uses trx's private pool of
-  lock structures.
-  It might be the case that we already hold trx->mutex because we got here from:
-    - lock_rec_convert_impl_to_expl_for_trx
-    - add_to_waitq
-  */
+  /* 确保在我们添加锁并更改事务状态为LOCK_WAIT时，
+   * 另一个事务不会访问trx锁状态和锁数据结构。
+   * 特别是它保护了使用trx的私有池的lock_alloc。
+   * 我们可能已经持有trx->mutex，因为我们从以下位置到达这里：
+   *   - lock_rec_convert_impl_to_expl_for_trx
+   *   - add_to_waitq
+   */
   ut_ad(trx_mutex_own(trx));
 
-  /* Create the explicit lock instance and initialise it. */
+  /* 创建显式锁实例并初始化它。 */
 
   lock_t *lock = lock_alloc(trx, m_index, m_mode, m_rec_id, m_size);
 
 #ifdef UNIV_DEBUG
-  /* GAP lock shouldn't be taken on DD tables with some exceptions */
+  /* 在调试模式下，检查GAP锁是否设置在DD表上，但排除一些特殊情况。 */
   if (m_index->table->is_dd_table &&
       strstr(m_index->table->name.m_name,
              "mysql/st_spatial_reference_systems") == nullptr &&
@@ -1701,82 +1769,108 @@ static void lock_rec_add_to_queue(ulint type_mode, const buf_block_t *block,
   }
 }
 
-/** This is a fast routine for locking a record in the most common cases:
- there are no explicit locks on the page, or there is just one lock, owned
- by this transaction, and of the right type_mode. This is a low-level function
- which does NOT look at implicit locks! Checks lock compatibility within
- explicit locks. This function sets a normal next-key lock, or in the case of
- a page supremum record, a gap type lock.
- @return whether the locking succeeded LOCK_REC_SUCCESS,
- LOCK_REC_SUCCESS_CREATED, LOCK_REC_FAIL */
+/**
+ * 快速尝试锁定一个记录。
+ * 在最常见的情况下，页面上没有显式锁，或者有一个锁，且该锁由当前事务拥有，并且类型与mode匹配。
+ * 此函数不考虑隐式锁！只检查显式锁的兼容性。
+ * 该函数设置一个正常的next-key锁，或者在页面最大记录的情况下，设置一个间隙类型锁。
+ *
+ * @param impl 如果为true，则表示如果没有等待的必要，调用者将设置一个隐式锁。
+ * @param mode 锁模式：LOCK_X或LOCK_S，可能与LOCK_GAP或LOCK_REC_NOT_GAP之一组合。
+ * @param block 包含记录的缓冲区块。
+ * @param heap_no 记录的堆编号。
+ * @param index 记录的索引。
+ * @param thr 查询线程。
+ * @return 锁定操作的状态，可能为LOCK_REC_SUCCESS、LOCK_REC_SUCCESS_CREATED或LOCK_REC_FAIL。
+ */
 static inline lock_rec_req_status lock_rec_lock_fast(
-    bool impl,                /*!< in: if true, no lock is set
-                              if no wait is necessary: we
-                              assume that the caller will
-                              set an implicit lock */
-    ulint mode,               /*!< in: lock mode: LOCK_X or
-                              LOCK_S possibly ORed to either
-                              LOCK_GAP or LOCK_REC_NOT_GAP */
-    const buf_block_t *block, /*!< in: buffer block containing
-                              the record */
-    ulint heap_no,            /*!< in: heap number of record */
-    dict_index_t *index,      /*!< in: index of record */
-    que_thr_t *thr)           /*!< in: query thread */
+    bool impl,                /*!< in: 如果为真，则表示没有设置锁，
+                              如果不需要等待，调用者将设置一个隐式锁 */
+    ulint mode,               /*!< in: 锁模式：LOCK_X或LOCK_S，可能与LOCK_GAP或LOCK_REC_NOT_GAP组合 */
+    const buf_block_t *block, /*!< in: 包含记录的缓冲区块 */
+    ulint heap_no,            /*!< in: 记录的堆编号 */
+    dict_index_t *index,      /*!< in: 记录的索引 */
+    que_thr_t *thr)           /*!< in: 查询线程 */
 {
+  /* 确保当前线程拥有该页面的共享或排他锁 */
   ut_ad(locksys::owns_page_shard(block->get_page_id()));
+  /* 确保不在只读模式下 */
   ut_ad(!srv_read_only_mode);
+  /* 确保对于LOCK_S模式，事务拥有IS锁 */
   ut_ad((LOCK_MODE_MASK & mode) != LOCK_S ||
         lock_table_has(thr_get_trx(thr), index->table, LOCK_IS));
+  /* 确保对于LOCK_X模式，事务拥有IX锁，或者在只读模式下 */
   ut_ad((LOCK_MODE_MASK & mode) != LOCK_X ||
         lock_table_has(thr_get_trx(thr), index->table, LOCK_IX) ||
         srv_read_only_mode);
+  /* 确保mode是LOCK_S或LOCK_X */
   ut_ad((LOCK_MODE_MASK & mode) == LOCK_S || (LOCK_MODE_MASK & mode) == LOCK_X);
+  /* 确保mode的附加标志是LOCK_GAP、0或LOCK_REC_NOT_GAP */
   ut_ad(mode - (LOCK_MODE_MASK & mode) == LOCK_GAP ||
         mode - (LOCK_MODE_MASK & mode) == 0 ||
         mode - (LOCK_MODE_MASK & mode) == LOCK_REC_NOT_GAP);
+  /* 确保非聚簇索引不在在线DDL模式下 */
   ut_ad(index->is_clustered() || !dict_index_is_online_ddl(index));
+  /* 确保mode不包含predicate锁或page predicate锁 */
   ut_ad(!(mode & LOCK_PREDICATE));
   ut_ad(!(mode & LOCK_PRDT_PAGE));
+
+  /* 如果启用了特定的调试条件，则直接返回LOCK_REC_FAIL以模拟死锁 */
   DBUG_EXECUTE_IF("innodb_report_deadlock", return (LOCK_REC_FAIL););
 
+  /* 尝试获取页面上第一个记录锁
+   * 如果rec_hash中已经存在对应的记录锁，则直接读取，不用重新申请
+   * */
   lock_t *lock = lock_rec_get_first_on_page(lock_sys->rec_hash, block);
 
+  /* 获取当前事务 */
   trx_t *trx = thr_get_trx(thr);
+  /* 确保当前事务没有持有互斥锁 */
   ut_ad(!trx_mutex_own(trx));
 
+  /* 默认状态为成功 */
   lock_rec_req_status status = LOCK_REC_SUCCESS;
 
+  /* 如果没有找到锁，且当前不是设置隐式锁的情况 */
   if (lock == nullptr) {
     if (!impl) {
+      /* 创建一个记录锁对象 */
       RecLock rec_lock(index, block, heap_no, mode);
 
+      /* 获取事务互斥锁，创建记录锁，然后释放互斥锁 */
       trx_mutex_enter(trx);
       rec_lock.create(trx);
       trx_mutex_exit(trx);
 
+      /* 状态设置为成功创建 */
       status = LOCK_REC_SUCCESS_CREATED;
     }
   } else {
+    /* 获取事务互斥锁 */
     trx_mutex_enter(trx);
 
+    /* 如果存在下一个页面锁，或者锁的事务不是当前事务，
+       或者锁的类型与mode不匹配，或者锁的位数小于等于heap_no */
     if (lock_rec_get_next_on_page(lock) != nullptr || lock->trx != trx ||
         lock->type_mode != (mode | LOCK_REC) ||
         lock_rec_get_n_bits(lock) <= heap_no) {
+      /* 锁定失败 */
       status = LOCK_REC_FAIL;
     } else if (!impl) {
-      /* If the nth bit of the record lock is already set
-      then we do not set a new lock bit, otherwise we do
-      set */
+      /* 如果记录锁的对应位未被设置，则设置该位，并将状态设置为成功创建 */
       if (!lock_rec_get_nth_bit(lock, heap_no)) {
         lock_rec_set_nth_bit(lock, heap_no);
         status = LOCK_REC_SUCCESS_CREATED;
       }
     }
 
+    /* 释放事务互斥锁 */
     trx_mutex_exit(trx);
   }
+  /* 确保返回的状态是合法的 */
   ut_ad(status == LOCK_REC_SUCCESS || status == LOCK_REC_SUCCESS_CREATED ||
         status == LOCK_REC_FAIL);
+  /* 返回锁定操作的状态 */
   return (status);
 }
 
@@ -1930,6 +2024,23 @@ static dberr_t lock_rec_lock_slow(bool impl, select_mode sel_mode, ulint mode,
   }
   return (DB_SUCCESS);
 }
+/**
+ * 尝试以请求的模式锁定指定的记录。如果不能立即实现，
+ * 则排队等待锁请求。这是一个低级函数，不会查看隐式锁！
+ * 它在显式锁内检查锁兼容性。此函数设置一个正常的next-key锁，
+ * 或者在页面上界记录的情况下，设置一个gap类型的锁。
+ *
+ * @param[in] impl            如果为真，在没有等待必要时不会设置锁：
+ *                            我们假设调用者将会设置一个隐式锁。
+ * @param[in] sel_mode        选择模式：SELECT_ORDINARY，SELECT_SKIP_LOCKED，或SELECT_NO_WAIT。
+ * @param[in] mode            锁模式：LOCK_X或LOCK_S可能与LOCK_GAP或LOCK_REC_NOT_GAP进行OR操作。
+ * @param[in] block           包含记录的缓冲块。
+ * @param[in] heap_no         记录的堆号。
+ * @param[in] index           记录的索引。
+ * @param[in,out] thr         查询线程。
+ * @return DB_SUCCESS，DB_SUCCESS_LOCKED_REC，DB_LOCK_WAIT，DB_DEADLOCK，
+ * DB_SKIP_LOCKED，或DB_LOCK_NOWAIT。
+ */
 
 /** Tries to lock the specified record in the mode requested. If not immediately
 possible, enqueues a waiting lock request. This is a low-level function
@@ -5566,13 +5677,29 @@ void lock_rec_convert_impl_to_expl(const buf_block_t *block, const rec_t *rec,
   }
 }
 
-/** Checks if locks of other transactions prevent an immediate modify (update,
- delete mark, or delete unmark) of a clustered index record. If they do,
- first tests if the query thread should anyway be suspended for some
- reason; if not, then puts the transaction and the query thread to the
- lock wait state and inserts a waiting request for a record x-lock to the
- lock queue.
- @return DB_SUCCESS, DB_LOCK_WAIT, or DB_DEADLOCK */
+/**
+ * 检查其它事务的锁是否阻止了对聚集索引记录的即时修改（如更新、删除标记或删除取消标记）。
+ * 若存在阻止，先检测查询线程是否应因某些原因被挂起；若否，则将事务与查询线程置于锁等待状态，
+ * 并在锁队列中插入一个等待记录X锁的请求。
+ *
+ * @param flags 标志，若设置了BTR_NO_LOCKING_FLAG位，则不做任何操作。
+ * @param block 记录所属的缓冲区块。
+ * @param rec 需要修改的记录。
+ * @param index 聚集索引。
+ * @param offsets 通过rec_get_offsets(rec, index)获取的记录偏移量。
+ * @param thr 查询线程。
+ * @return 返回DB_SUCCESS、DB_LOCK_WAIT或DB_DEADLOCK。
+ */
+
+/**
+ * Checks if locks of other transactions prevent an immediate modify (update,
+ * delete mark, or delete unmark) of a clustered index record. If they do,
+ * first tests if the query thread should anyway be suspended for some
+ * reason; if not, then puts the transaction and the query thread to the
+ * lock wait state and inserts a waiting request for a record x-lock to the
+ * lock queue.
+ * @return DB_SUCCESS, DB_LOCK_WAIT, or DB_DEADLOCK
+ */
 dberr_t lock_clust_rec_modify_check_and_lock(
     ulint flags,              /*!< in: if BTR_NO_LOCKING_FLAG
                               bit is set, does nothing */
@@ -5586,41 +5713,55 @@ dberr_t lock_clust_rec_modify_check_and_lock(
   dberr_t err;
   ulint heap_no;
 
+  // 确认记录偏移量的有效性，以及索引为聚集索引。
   ut_ad(rec_offs_validate(rec, index, offsets));
   ut_ad(index->is_clustered());
+  // 确认记录在区块中的位置正确。
   ut_ad(block->frame == page_align(rec));
 
+  // 若BTR_NO_LOCKING_FLAG被设置，则直接返回成功。
   if (flags & BTR_NO_LOCKING_FLAG) {
     return (DB_SUCCESS);
   }
+  // 确认表不是临时表。
   ut_ad(!index->table->is_temporary());
 
+  // 获取记录在堆中的编号。
   heap_no = rec_offs_comp(offsets) ? rec_get_heap_no_new(rec)
                                    : rec_get_heap_no_old(rec);
 
-  /* If a transaction has no explicit x-lock set on the record, set one
-  for it */
-
+  // 若事务在记录上没有显式X锁，则设置一个。
   lock_rec_convert_impl_to_expl(block, rec, index, offsets);
 
   {
+    /*获取分片锁以保护锁系统的访问。
+     *通过构造函数的层层调用，占用锁数组的某个位置的锁
+     *申请数据库锁，需要有latch的保护
+     * */
     locksys::Shard_latch_guard guard{UT_LOCATION_HERE, block->get_page_id()};
+    // 确认事务对表持有IX锁。
     ut_ad(lock_table_has(thr_get_trx(thr), index->table, LOCK_IX));
 
+    // 尝试获取记录上的X锁，类型为记录锁，非间隙锁。
     err = lock_rec_lock(true, SELECT_ORDINARY, LOCK_X | LOCK_REC_NOT_GAP, block,
                         heap_no, index, thr);
 
+    // 监控记录锁请求的数量。
     MONITOR_INC(MONITOR_NUM_RECLOCK_REQ);
   }
 
+  // 调试用：验证锁队列状态。
   ut_d(locksys::rec_queue_latch_and_validate(block, rec, index, offsets));
 
+  // 若成功锁定记录，则将错误码转换为DB_SUCCESS。
   if (err == DB_SUCCESS_LOCKED_REC) {
     err = DB_SUCCESS;
   }
+  // 确认返回值为预期的三种情况之一。
   ut_ad(err == DB_SUCCESS || err == DB_LOCK_WAIT || err == DB_DEADLOCK);
   return (err);
 }
+
 
 /** Checks if locks of other transactions prevent an immediate modify (delete
  mark or delete unmark) of a secondary index record.

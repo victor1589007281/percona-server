@@ -134,7 +134,7 @@ bool trx_coordinator::rollback_detached_by_xid(THD *thd) {
   return plugin_foreach(thd, ::rollback_one_ht, MYSQL_STORAGE_ENGINE_PLUGIN,
                         const_cast<XID *>(xs->get_xid()));
 }
-
+//引擎层提交
 bool trx_coordinator::commit_in_engines(THD *thd, bool all,
                                         bool run_after_commit) {
   if (all) {

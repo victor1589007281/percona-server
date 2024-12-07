@@ -3941,6 +3941,7 @@ extern "C" void *signal_hand(void *arg [[maybe_unused]]) {
             printf("\nStatus information:\n\n");
             fflush(stdout);
           });
+          //重新加载/重置权限和各种缓存。
           handle_reload_request(
               nullptr,
               (REFRESH_LOG | REFRESH_TABLES | REFRESH_FAST | REFRESH_GRANT |
@@ -3953,6 +3954,7 @@ extern "C" void *signal_hand(void *arg [[maybe_unused]]) {
       case SIGUSR1:
         if (!connection_events_loop_aborted()) {
           int not_used;
+          //重新加载/重置权限和各种缓存。
           handle_reload_request(
               nullptr,
               (REFRESH_ERROR_LOG |   /**< Rotate only the error log */

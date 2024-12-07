@@ -1761,6 +1761,7 @@ static void copy_bind_parameter_values(THD *thd, PS_PARAM *parameters,
     1   request of thread shutdown, i. e. if command is
         COM_QUIT
 */
+// 连接命令处理
 bool dispatch_command(THD *thd, const COM_DATA *com_data,
                       enum enum_server_command command) {
   assert(thd->lex->m_IS_table_stats.is_valid() == false);
@@ -2403,12 +2404,14 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
         */
         bool res;
         current_thd = nullptr;
+        // 重新加载/重置权限和各种缓存。
         res = handle_reload_request(nullptr, options | REFRESH_FAST, nullptr,
                                     &not_used);
         current_thd = thd;
         if (res) break;
       } else
 #endif
+    // 重新加载/重置权限和各种缓存。
           if (handle_reload_request(thd, options, (Table_ref *)nullptr,
                                     &not_used))
         break;
@@ -4462,6 +4465,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
         handle_reload_request() will tell us if we are allowed to write to the
         binlog or not.
       */
+      // 重新加载/重置权限和各种缓存。
       if (!handle_reload_request(thd, lex->type, first_table,
                                  &write_to_binlog)) {
         /*

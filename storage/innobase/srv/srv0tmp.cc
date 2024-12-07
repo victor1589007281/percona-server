@@ -306,7 +306,7 @@ void Tablespace_pool::free_ts(Tablespace *ts) {
   release();
 }
 
-/c++
+
 /**
  * 初始化表空间池。
  *

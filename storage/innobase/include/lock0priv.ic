@@ -89,22 +89,37 @@ static inline lock_t *lock_rec_get_next_on_page(
   return ((lock_t *)lock_rec_get_next_on_page_const(lock));
 }
 
+/**
+ * 获取页面上第一个记录锁的地址。
+ *
+ * 此函数用于在给定的哈希表中查找并返回与指定页面相关联的第一个记录锁的地址。
+ * 它首先计算指定页面的哈希值，然后遍历哈希表直到找到匹配的锁或遍历结束。
+ *
+ * @param lock_hash 锁哈希表，存储了所有的锁信息。
+ * @param page_id 指定的页面ID，用于查找与之相关联的锁。
+ * @return 返回找到的锁的地址，如果没有找到则返回nullptr。
+ */
 static inline lock_t *lock_rec_get_first_on_page_addr(
     hash_table_t *lock_hash, const page_id_t &page_id) {
+  /* 确保当前线程拥有指定页面的锁片 */
   ut_ad(locksys::owns_page_shard(page_id));
 
+  /* 遍历哈希表，查找与指定页面ID匹配的第一个记录锁 */
   for (lock_t *lock = static_cast<lock_t *>(hash_get_first(
            lock_hash,
            hash_calc_cell_id(lock_rec_hash_value(page_id), lock_hash)));
        lock != nullptr;
        lock = static_cast<lock_t *>(HASH_GET_NEXT(hash, lock))) {
+    /* 如果找到匹配的页面ID，则返回当前锁的地址 */
     if (page_id == lock->rec_lock.page_id) {
       return (lock);
     }
   }
 
+  /* 如果遍历完成后没有找到匹配的锁，则返回nullptr */
   return (nullptr);
 }
+
 
 /** Gets the first record lock on a page, where the page is identified by a
  pointer to it.

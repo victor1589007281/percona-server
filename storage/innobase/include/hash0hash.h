@@ -372,6 +372,7 @@ void hash_unlock_x_all_but(hash_table_t *table, rw_lock_t *keep_lock);
 #endif /* !UNIV_HOTBACKUP */
 
 /* The hash table structure */
+/*哈希表结构体*/
 class hash_table_t {
  public:
   hash_table_t(size_t n) {

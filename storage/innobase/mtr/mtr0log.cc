@@ -321,49 +321,75 @@ void mlog_write_ull(byte *ptr,    /*!< in: pointer where to write */
 }
 
 #ifndef UNIV_HOTBACKUP
-/** Writes a string to a file page buffered in the buffer pool. Writes the
- corresponding log record to the mini-transaction log. */
-void mlog_write_string(byte *ptr,       /*!< in: pointer where to write */
-                       const byte *str, /*!< in: string to write */
-                       ulint len,       /*!< in: string length */
-                       mtr_t *mtr)      /*!< in: mini-transaction handle */
+/**
+ * 将字符串写入缓冲池中的文件页。
+ * 同时将相应的日志记录写入小型事务日志。
+ * 
+ * @param ptr 写入的起始位置指针
+ * @param str 要写入的字符串
+ * @param len 字符串的长度
+ * @param mtr 小型事务句柄
+ * 
+ * 该函数首先验证参数的有效性和字符串长度的合理性，
+ * 然后将字符串复制到指定位置，并记录操作日志。
+ */
+void mlog_write_string(byte *ptr,       /*!< 写入的起始位置指针 */
+                       const byte *str, /*!< 要写入的字符串 */
+                       ulint len,       /*!< 字符串的长度 */
+                       mtr_t *mtr)      /*!< 小型事务句柄 */
 {
-  ut_ad(ptr && mtr);
-  ut_a(len < UNIV_PAGE_SIZE);
+  ut_ad(ptr && mtr); // 断言指针和mtr非空
+  ut_a(len < UNIV_PAGE_SIZE); // 断言字符串长度小于页面大小
 
-  memcpy(ptr, str, len);
+  memcpy(ptr, str, len); // 复制字符串到指定位置
 
-  mlog_log_string(ptr, len, mtr);
+  mlog_log_string(ptr, len, mtr); // 记录写入操作的日志
 }
 
-/** Logs a write of a string to a file page buffered in the buffer pool.
- Writes the corresponding log record to the mini-transaction log. */
+
+/**
+ * 日志记录：将字符串写入缓冲池中文件页的过程。
+ * 同时将对应的日志记录写入到微事务日志中。
+ *
+ * @param ptr       指向被写入位置的指针
+ * @param len       字符串长度
+ * @param mtr       微事务句柄
+ */
+
 void mlog_log_string(byte *ptr,  /*!< in: pointer written to */
                      ulint len,  /*!< in: string length */
                      mtr_t *mtr) /*!< in: mini-transaction handle */
 {
-  byte *log_ptr = nullptr;
+    byte *log_ptr = nullptr;
 
-  ut_ad(ptr && mtr);
-  ut_ad(len <= UNIV_PAGE_SIZE);
+    /* 确保输入参数有效 */
+    ut_ad(ptr && mtr);
+    ut_ad(len <= UNIV_PAGE_SIZE);
 
-  /* If no logging is requested, we may return now */
-  if (!mlog_open(mtr, 30, log_ptr)) {
-    return;
-  }
+    /* 如果没有请求日志记录，现在可以返回 */
+    if (!mlog_open(mtr, 30, log_ptr)) {
+        return;
+    }
 
-  log_ptr =
-      mlog_write_initial_log_record_fast(ptr, MLOG_WRITE_STRING, log_ptr, mtr);
-  mach_write_to_2(log_ptr, page_offset(ptr));
-  log_ptr += 2;
+    /* 写入初始日志记录 */
+    log_ptr =
+            mlog_write_initial_log_record_fast(ptr, MLOG_WRITE_STRING, log_ptr, mtr);
 
-  mach_write_to_2(log_ptr, len);
-  log_ptr += 2;
+    /* 将指针偏移信息写入日志 */
+    mach_write_to_2(log_ptr, page_offset(ptr));
+    log_ptr += 2;
 
-  mlog_close(mtr, log_ptr);
+    /* 将字符串长度写入日志 */
+    mach_write_to_2(log_ptr, len);
+    log_ptr += 2;
 
-  mlog_catenate_string(mtr, ptr, len);
+    /* 关闭此操作的日志记录 */
+    mlog_close(mtr, log_ptr);
+
+    /* 将字符串附加到日志中 */
+    mlog_catenate_string(mtr, ptr, len);
 }
+
 #endif /* !UNIV_HOTBACKUP */
 
 /** Parses a log record written by mlog_write_string.

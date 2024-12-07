@@ -452,36 +452,46 @@ struct Trx_shard {
       active_rw_trxs;
 };
 
-/** The transaction system central memory data structure. */
+/** Transaction system central memory data structure. */
+/** 事务系统中心内存数据结构。*/
 struct trx_sys_t {
   /* Members protected by neither trx_sys_t::mutex nor serialisation_mutex. */
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad0[ut::INNODB_CACHE_LINE_SIZE];
 
   /** @{ */
 
-  /** Multi version concurrency control manager */
-
+  /** Multi-version Concurrency Control manager. */
+  /** 多版本并发控制管理器。*/
   MVCC *mvcc;
 
   /** Vector of pointers to rollback segments. These rsegs are iterated
   and added to the end under a read lock. They are deleted under a write
   lock while the vector is adjusted. They are created and destroyed in
   single-threaded mode. */
+  /** 回滚段指针的向量。这些回滚段在读锁下被迭代并添加到末尾。它们在向量调整时在写锁下被删除。
+  它们在单线程模式下创建和销毁。*/
   Rsegs rsegs;
 
   /** Vector of pointers to rollback segments within the temp tablespace;
   This vector is created and destroyed in single-threaded mode so it is not
   protected by any mutex because it is read-only during multi-threaded
   operation. */
+  /** 临时表空间内的回滚段指针向量；
+  这个向量在单线程模式下创建和销毁，因此不受任何互斥锁保护，因为在多线程操作期间它是只读的。*/
   Rsegs tmp_rsegs;
 
   /** Length of the TRX_RSEG_HISTORY list (update undo logs for committed
   transactions). */
+  /** TRX_RSEG_HISTORY 列表的长度（为已提交事务更新撤销日志）。*/
   std::atomic<uint64_t> rseg_history_len;
 
   /** @} */
 
   /* Members protected by either trx_sys_t::mutex or serialisation_mutex. */
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad1[ut::INNODB_CACHE_LINE_SIZE];
 
   /** @{ */
@@ -495,50 +505,73 @@ struct trx_sys_t {
   trx_sys_t::serialisation_mutex. Note: it might be in parallel
   used for both trx->id and trx->no assignments (for different
   trx_t objects). */
+  /** 尚未分配为事务ID或事务号的最小数字。之所以声明为原子类型，是因为在AC-NL-RO视图创建期间，
+  可以在不持有任何互斥锁的情况下访问它。当它用于分配trx->id时，由trx_sys_t::mutex同步。
+  当它用于分配trx->no时，由trx_sys_t::serialisation_mutex同步。注意：它可能并行用于trx->id和trx->no的分配
+  （对于不同的trx_t对象）。*/
   std::atomic<trx_id_t> next_trx_id_or_no;
 
   /** @} */
 
   /* Members protected by serialisation_mutex. */
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad2[ut::INNODB_CACHE_LINE_SIZE];
 
   /** @{ */
 
   /** Mutex to protect serialisation_list. */
+  /** 保护serialisation_list的互斥锁。*/
   TrxSysMutex serialisation_mutex;
 
   /** Tracks minimal transaction id which has received trx->no, but has
   not yet finished commit for the mtr writing the trx commit. Protected
   by the serialisation_mutex. Ordered on the trx->no field. */
+  /** 跟踪已接收trx->no但尚未完成对mtr写入trx提交的提交的最小事务ID。受serialisation_mutex保护。
+  按trx->no字段排序。*/
   UT_LIST_BASE_NODE_T(trx_t, no_list) serialisation_list;
 
 #ifdef UNIV_DEBUG
   /** Max trx number of read-write transactions added for purge. */
+  /** 为清除添加的读写事务的最大trx号。*/
   trx_id_t rw_max_trx_no;
 #endif /* UNIV_DEBUG */
 
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad3[ut::INNODB_CACHE_LINE_SIZE];
 
   /* The minimum trx->no inside the serialisation_list. Protected by
   the serialisation_mutex. Might be read without the mutex. */
+  /** serialisation_list中的最小trx->no。受serialisation_mutex保护。
+  可以在没有互斥锁的情况下读取。*/
   std::atomic<trx_id_t> serialisation_min_trx_no;
 
   /** @} */
 
   /* Members protected by the trx_sys_t::mutex. */
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad4[ut::INNODB_CACHE_LINE_SIZE];
 
   /** @{ */
 
   /** Mutex protecting most fields in this structure (the default one). */
+  /** 保护此结构中大多数字段的互斥锁（默认互斥锁）。*/
   TrxSysMutex mutex;
 
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad5[ut::INNODB_CACHE_LINE_SIZE];
 
   /** List of active and committed in memory read-write transactions, sorted
   on trx id, biggest first. Recovered transactions are always on this list. */
+  /** 活跃的和已提交的内存中读写事务的列表，按trx id排序，最大的首先。
+  恢复的事务总是在这个列表上。*/
   UT_LIST_BASE_NODE_T(trx_t, trx_list) rw_trx_list;
 
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad6[ut::INNODB_CACHE_LINE_SIZE];
 
   /** List of transactions created for MySQL. All user transactions are
@@ -546,32 +579,49 @@ struct trx_sys_t {
   recovered transactions that will not be in the mysql_trx_list.
   Additionally, mysql_trx_list may contain transactions that have not yet
   been started in InnoDB. */
+  /** 为MySQL创建的事务列表。所有用户事务都在mysql_trx_list上。
+  rw_trx_list可以包含系统事务和恢复的事务，这些事务不会在mysql_trx_list中。
+  此外，mysql_trx_list可能包含尚未在InnoDB中启动的事务。*/
   UT_LIST_BASE_NODE_T(trx_t, mysql_trx_list) mysql_trx_list;
 
   /** Array of Read write transaction IDs for MVCC snapshot. A ReadView would
   take a snapshot of these transactions whose changes are not visible to it.
   We should remove transactions from the list before committing in memory and
   releasing locks to ensure right order of removal and consistent snapshot. */
+  /** MVCC快照的读写事务ID数组。ReadView将对这些事务进行快照，其更改对其不可见。
+  我们应该在内存中提交并释放锁之前从列表中删除事务，以确保正确的删除顺序和一致的快照。*/
   trx_ids_t rw_trx_ids;
 
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad7[ut::INNODB_CACHE_LINE_SIZE];
 
   /** Mapping from transaction id to transaction instance. */
+  /** 从事务ID到事务实例的映射。*/
   Trx_shard shards[TRX_SHARDS_N];
 
   /** Number of transactions currently in the XA PREPARED state. */
+  /** 目前处于XA PREPARED状态的事务数量。*/
   ulint n_prepared_trx;
 
   /** True if XA PREPARED trxs are found. */
+  /** 如果找到XA PREPARED事务，则为true。*/
   bool found_prepared_trx;
 
   /** @} */
 
+  /** Cache line padding for thread safety. */
+  /** 用于线程安全的缓存行填充。*/
   char pad_after[ut::INNODB_CACHE_LINE_SIZE];
 
+  /** Returns the shard associated with the given transaction id. */
+  /** 根据事务ID返回关联的分片。*/
   Trx_shard &get_shard_by_trx_id(trx_id_t trx_id) {
     return trx_sys->shards[trx_get_shard_no(trx_id)];
   }
+  /** Latches on to the active read-write transaction identified by trx_id and
+  executes the given function, f. */
+  /** 锁定由trx_id标识的活跃读写事务，并执行给定的函数f。*/
   template <typename F>
   auto latch_and_execute_with_active_trx(trx_id_t trx_id, F &&f,
                                          const ut::Location &loc) {

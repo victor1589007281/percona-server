@@ -139,7 +139,22 @@ bool is_reload_request_denied(THD *thd, unsigned long op_type) {
     @retval 0 Ok
     @retval !=0  Error; thd->killed is set or thd->is_error() is true
 */
-
+/**
+ * 重新加载/重置权限和各种缓存。
+ *
+ * @param thd 线程处理器（可以为NULL！）
+ * @param options 需要重置/重新加载的内容（表、权限、从库等）
+ * @param tables 需要刷新的表（如果有）
+ * @param write_to_binlog <0表示在处理与二进制日志相关的错误时出现错误，0表示不应写入二进制日志，>0表示可以写入binlog。
+ *
+ * @note 根据'options'的不同，将查询写入binlog可能是非常糟糕的（例如FLUSH SLAVE）；
+ * 这是一个指针，handle_reload_request()将在认为我们真的不应该写入binlog时放入0。
+ * 否则，它会放入1。
+ *
+ * @return 错误状态码
+ *   @retval 0 成功
+ *   @retval !=0 错误；thd->killed被设置或thd->is_error()为true
+ */
 bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
                            int *write_to_binlog) {
   bool result = false;
@@ -154,6 +169,10 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
       If handle_reload_request() is called from SIGHUP handler we have to
       allocate temporary THD for execution of acl_reload()/grant_reload().
     */
+      /*
+    如果handle_reload_request()从SIGHUP处理程序调用，我们需要
+    分配一个临时的THD来执行acl_reload()/grant_reload()。
+  */
     if (!thd && (thd = (tmp_thd = new THD))) {
       thd->thread_stack = (char *)&tmp_thd;
       thd->store_globals();
@@ -169,6 +188,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
           When an error is returned, my_message may have not been called and
           the client will hang waiting for a response.
         */
+          /*
+    当返回错误时，可能没有调用my_message，客户端会挂起等待响应。
+  */
         my_error(ER_UNKNOWN_ERROR, MYF(0));
       }
     }
@@ -186,7 +208,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
       the slow query log, the relay log (if it exists) and the log
       tables.
     */
-
+      /*
+        刷新普通查询日志、更新日志、二进制日志、慢查询日志、中继日志（如果存在）和日志表。
+      */
     options |= REFRESH_BINARY_LOG;
     options |= REFRESH_RELAY_LOG;
     options |= REFRESH_SLOW_LOG;
@@ -195,18 +219,22 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
     options |= REFRESH_ERROR_LOG;
   }
 
+  //FLUSH ERROR LOGS
   if (options & REFRESH_ERROR_LOG) {
     if (reopen_error_log()) result = true;
   }
 
+  //FLUSH SLOW LOGS
   if ((options & REFRESH_SLOW_LOG) && opt_slow_log &&
       (log_output_options & LOG_FILE))
     if (query_logger.reopen_log_file(QUERY_LOG_SLOW)) result = true;
 
+  //FLUSH GENERAL LOGS
   if ((options & REFRESH_GENERAL_LOG) && opt_general_log &&
       (log_output_options & LOG_FILE))
     if (query_logger.reopen_log_file(QUERY_LOG_GENERAL)) result = true;
 
+  //FLUSH ENGINE LOGS
   if (options & REFRESH_ENGINE_LOG) {
     if (ha_flush_logs()) {
       result = true;
@@ -217,12 +245,17 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
       If handle_reload_request() is called from SIGHUP handler we have to
       allocate temporary THD for execution of binlog/relay log rotation.
      */
+      /*
+    如果handle_reload_request()从SIGHUP处理程序调用，我们需要
+    分配一个临时的THD来执行binlog/relay log的旋转。
+   */
     THD *tmp_thd = nullptr;
     if (!thd && (thd = (tmp_thd = new THD))) {
       thd->thread_stack = (char *)(&tmp_thd);
       thd->store_globals();
     }
 
+    //FLUSH BINARY LOGS
     if (options & REFRESH_BINARY_LOG) {
       /*
         Writing this command to the binlog may result in infinite loops
@@ -230,11 +263,16 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
         sense to log it automatically (would cause more trouble to users
         than it would help them)
        */
+        /*
+    将此命令写入binlog可能导致mysqlbinlog|mysql时出现无限循环，
+    无论如何，自动记录它并没有真正的意义（会给用户带来更多的麻烦）
+   */
       tmp_write_to_binlog = 0;
       if (mysql_bin_log.is_open()) {
         if (mysql_bin_log.rotate_and_purge(thd, true)) *write_to_binlog = -1;
       }
     }
+    //FLUSH RELAY LOGS
     if (options & REFRESH_RELAY_LOG) {
       if (flush_relay_logs_cmd(thd)) *write_to_binlog = -1;
     }
@@ -259,6 +297,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
     Note that if REFRESH_READ_LOCK bit is set then REFRESH_TABLES is set too
     (see sql_yacc.yy)
   */
+    /*
+    注意，如果设置了REFRESH_READ_LOCK位，则REFRESH_TABLES也会被设置（参见sql_yacc.yy）
+  */
   if (options & (REFRESH_TABLES | REFRESH_READ_LOCK)) {
     if ((options & REFRESH_READ_LOCK) && thd) {
       /*
@@ -267,6 +308,11 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
         if we have a write locked table as this would lead to a deadlock
         when trying to reopen (and re-lock) the table after the flush.
       */
+        /*
+    一方面我们需要对要刷新的表进行写锁，
+    另一方面，如果我们有一个写锁的表，则不能尝试获得全局读锁，
+    这样在尝试重新打开（并重新锁定）表后会导致死锁。
+  */
       if (thd->locked_tables_mode) {
         my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));
         return true;
@@ -275,6 +321,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
         Writing to the binlog could cause deadlocks, as we don't log
         UNLOCK TABLES
       */
+        /*
+    写入binlog可能会导致死锁，因为我们没有记录UNLOCK TABLES
+  */
       tmp_write_to_binlog = 0;
       if (thd->global_read_lock.lock_global_read_lock(thd))
         return true;  // Killed
@@ -285,6 +334,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
           NOTE: my_error() has been already called by reopen_tables() within
           close_cached_tables().
         */
+          /*
+    注意：my_error()已经在close_cached_tables()内的reopen_tables()中被调用。
+  */
         result = true;
       }
 
@@ -292,7 +344,8 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
               thd))  // Killed
       {
         /* Don't leave things in a half-locked state */
-        thd->global_read_lock.unlock_global_read_lock(thd);
+          /* 不要让事情处于半锁定状态 */
+          thd->global_read_lock.unlock_global_read_lock(thd);
         return true;
       }
     } else {
@@ -301,6 +354,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
           If we are under LOCK TABLES we should have a write
           lock on tables which we are going to flush.
         */
+          /*
+    如果我们在LOCK TABLES下，应该对要刷新的表有一个写锁。
+  */
         if (tables) {
           for (Table_ref *t = tables; t; t = t->next_local)
             if (!find_table_for_mdl_upgrade(thd, t->db, t->table_name, false))
@@ -312,6 +368,11 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
             these cases don't take a GLOBAL IX lock in order to be compatible
             with global read lock.
           */
+            /*
+    没有GLOBAL IX锁的情况下升级元数据锁是不安全的。
+    这适用于带有读锁的FLUSH TABLES <list>，因为在这种情况下，
+    为了与全局读锁兼容，我们不会采取GLOBAL IX锁。
+  */
           if (thd->open_tables &&
               !thd->mdl_context.owns_equal_or_stronger_lock(
                   MDL_key::GLOBAL, "", "", MDL_INTENTION_EXCLUSIVE)) {
@@ -337,6 +398,9 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
           NOTE: my_error() has been already called by reopen_tables() within
           close_cached_tables().
         */
+          /*
+    注意：my_error()已经在close_cached_tables()内的reopen_tables()中被调用。
+  */
         result = true;
       }
     }
@@ -356,9 +420,15 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
       REFRESH_READ_LOCK flag in this case), unlock the global read lock
       in reset_master().
     */
+      /*
+    RESET MASTER获取全局读锁（如果线程尚未获取），以确保在操作过程中不会执行任何事务提交。
+    如果（且仅在）REFRESH_READ_LOCK标志包含在options中，则在reset_master()中解锁全局读锁。
+  */
     if (reset_master(thd, options & REFRESH_READ_LOCK)) {
       /* NOTE: my_error() has been already called by reset_master(). */
-      result = true;
+        /* 注意：my_error()已经在reset_master()中被调用。 */
+
+        result = true;
     }
   }
   if (options & REFRESH_OPTIMIZER_COSTS) reload_optimizer_cost_constants();
@@ -372,7 +442,8 @@ bool handle_reload_request(THD *thd, unsigned long options, Table_ref *tables,
     tmp_write_to_binlog = 0;
     if (reset_slave_cmd(thd)) {
       /*NOTE: my_error() has been already called by reset_slave() */
-      result = true;
+        /*注意：my_error()已经在reset_slave()中被调用 */
+        result = true;
     }
   }
   if (options & REFRESH_USER_RESOURCES)

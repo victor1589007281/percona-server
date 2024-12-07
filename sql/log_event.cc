@@ -6179,19 +6179,29 @@ bool Xid_log_event::do_commit(THD *thd_arg) {
 
    @return zero as success or non-zero as an error
 */
+/**
+ * Worker提交Xid事务，并在其事务信息表中将当前组标记为已完成，
+ * 同时在Coordinator的组分配队列中更新状态。
+ * 
+ * @param w 指向Slave_worker的指针
+ * @return 返回0表示成功，非0表示错误
+ */
 int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
   DBUG_TRACE;
   int error = 0;
   bool skipped_commit_pos = true;
 
+  // 为下一个命令重置thd
   lex_start(thd);
   mysql_reset_thd_for_next_command(thd);
+  // 获取Coordinator的组分配队列
   Slave_committed_queue *coordinator_gaq = w->c_rli->gaq;
 
-  /* For a slave Xid_log_event is COMMIT */
+  // 打印COMMIT日志，因为对于从机来说，Xid_log_event就是COMMIT
   query_logger.general_log_print(thd, COM_QUERY,
                                  "COMMIT /* implicit, from Xid_log_event */");
 
+  // 打印调试信息，包括组和事件的源日志和中继日志信息
   DBUG_PRINT(
       "mta",
       ("do_apply group source %s %llu  group relay %s %llu event %s %llu.",
@@ -6199,17 +6209,21 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
        w->get_group_relay_log_name(), w->get_group_relay_log_pos(),
        w->get_event_relay_log_name(), w->get_event_relay_log_pos()));
 
+  // 模拟在更新位置之前崩溃
   DBUG_EXECUTE_IF("crash_before_update_pos",
                   sql_print_information("Crashing crash_before_update_pos.");
                   DBUG_SUICIDE(););
 
+  // 模拟提交失败
   DBUG_EXECUTE_IF("simulate_commit_failure", {
     thd->get_transaction()->xid_state()->set_state(XID_STATE::XA_IDLE);
   });
 
+  // 获取组索引和组指针
   ulong gaq_idx = mts_group_idx;
   Slave_job_group *ptr_group = coordinator_gaq->get_job_group(gaq_idx);
 
+  // 如果不是XA事务并且是事务性的，更新事务信息表
   if (!thd->get_transaction()->xid_state()->check_in_xa(false) &&
       w->is_transactional()) {
     /*
@@ -6220,10 +6234,12 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
             gets fixed.
     */
     skipped_commit_pos = false;
+    // 提交位置信息
     if ((error = w->commit_positions(this, ptr_group, w->is_transactional())))
       goto err;
   }
 
+  // 再次打印组和事件的日志信息
   DBUG_PRINT(
       "mta",
       ("do_apply group source %s %llu  group relay %s %llu event %s %llu.",
@@ -6231,11 +6247,13 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
        w->get_group_relay_log_name(), w->get_group_relay_log_pos(),
        w->get_event_relay_log_name(), w->get_event_relay_log_pos()));
 
+  // 模拟在更新位置之后但应用之前崩溃
   DBUG_EXECUTE_IF(
       "crash_after_update_pos_before_apply",
       sql_print_information("Crashing crash_after_update_pos_before_apply.");
       DBUG_SUICIDE(););
 
+  // 执行提交
   error = do_commit(thd);
   if (error) {
     if (!skipped_commit_pos) w->rollback_positions(ptr_group);
@@ -6245,7 +6263,8 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
         sql_print_information("Crashing "
                               "crash_after_commit_before_update_pos.");
         DBUG_SUICIDE(););
-    if (skipped_commit_pos)
+  // 如果之前跳过了提交位置，则现在提交
+  if (skipped_commit_pos)
       error = w->commit_positions(this, ptr_group, w->is_transactional());
   }
 err:

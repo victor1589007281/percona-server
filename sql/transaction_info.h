@@ -220,17 +220,40 @@ class Transaction_ctx {
 
   Transaction_ctx();
   virtual ~Transaction_ctx() { m_mem_root.Clear(); }
-
-  void cleanup() {
-    DBUG_TRACE;
-    m_savepoints = nullptr;
-    m_xid_state.cleanup();
-    m_rpl_transaction_ctx.cleanup();
-    m_transaction_write_set_ctx.reset_state();
-    trans_begin_hook_invoked = false;
-    m_mem_root.ClearForReuse();
-    return;
-  }
+  
+    /**
+     * 清理函数，用于重置事务上下文和内存池。
+     * 
+     * 该函数在事务结束或需要重置事务状态时被调用。它负责清理当前事务中使用的一些上下文结构，
+     * 重置内存池以供重新使用，并确保所有与当前事务相关的状态都被清除。
+     * 
+     * @note 该函数不接受任何参数，也不返回任何值。
+     */
+    void cleanup() {
+      // 启用调试跟踪
+      DBUG_TRACE;
+      
+      // 清空保存点指针，表示当前没有可用的保存点
+      m_savepoints = nullptr;
+      
+      // 清理事务状态，准备进行新的事务
+      m_xid_state.cleanup();
+      
+      // 清理复制事务上下文，确保与复制相关的状态被重置
+      m_rpl_transaction_ctx.cleanup();
+      
+      // 重置事务的写集上下文，清除与当前事务相关的写集信息
+      m_transaction_write_set_ctx.reset_state();
+      
+      // 标记事务开始钩子未被调用，用于指示新的事务开始
+      trans_begin_hook_invoked = false;
+      
+      // 清理并重置内存池，以便它可以被重新使用
+      m_mem_root.ClearForReuse();
+      
+      // 函数结束，没有返回值
+      return;
+    }
 
   bool is_active(enum_trx_scope scope) const {
     return m_scope_info[scope].m_ha_list != nullptr;
