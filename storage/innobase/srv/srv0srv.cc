@@ -1177,53 +1177,71 @@ static void srv_free_slot(srv_slot_t *slot) /*!< in/out: thread slot */
 }
 
 /** Initializes the server. */
+/** 初始化服务器 */
 static void srv_init(void) {
   ulint n_sys_threads = 0;
   ulint srv_sys_sz = sizeof(*srv_sys);
 
   /* Create mutex to protect encryption master_key_id. */
+  /* 创建互斥锁来保护加密主密钥ID */
   {
     /* This is defined in ha_innodb.cc and used during create_log_files(), which
     we call after calling srv_boot() which defines types of mutexes, so we have
     to create this mutex in between the two calls. */
+    /* 这个在ha_innodb.cc中定义,在create_log_files()期间使用,
+       我们在调用定义互斥锁类型的srv_boot()之后调用它,
+       所以必须在这两个调用之间创建这个互斥锁 */
     extern ib_mutex_t master_key_id_mutex;
 
     mutex_create(LATCH_ID_MASTER_KEY_ID_MUTEX, &master_key_id_mutex);
   }
 
+  // 创建InnoDB监视器互斥锁
   mutex_create(LATCH_ID_SRV_INNODB_MONITOR, &srv_innodb_monitor_mutex);
 
+  // 在调试模式下创建关闭清理事件
   ut_d(srv_threads.m_shutdown_cleanup_dbg = os_event_create());
 
+  // 创建主线程准备关闭数据字典的事件
   srv_threads.m_master_ready_for_dd_shutdown = os_event_create();
 
+  // 初始化清除协调器线程
   srv_threads.m_purge_coordinator = {};
 
+  // 设置清除工作线程数量
   srv_threads.m_purge_workers_n = srv_n_purge_threads;
 
+  // 为清除工作线程分配内存
   srv_threads.m_purge_workers = ut::new_arr_withkey<IB_thread>(
       UT_NEW_THIS_FILE_PSI_KEY, ut::Count{srv_threads.m_purge_workers_n});
 
   if (!srv_read_only_mode) {
     /* Number of purge threads + master thread */
+    /* 清除线程数量 + 主线程 */
     n_sys_threads = srv_n_purge_threads + 1;
 
     srv_sys_sz += n_sys_threads * sizeof(*srv_sys->sys_threads);
   }
 
+  // 初始化页面清理协调器线程
   srv_threads.m_page_cleaner_coordinator = {};
 
+  // 设置页面清理工作线程数量
   srv_threads.m_page_cleaner_workers_n = srv_n_page_cleaners;
 
+  // 为页面清理工作线程分配内存
   srv_threads.m_page_cleaner_workers = ut::new_arr_withkey<IB_thread>(
       UT_NEW_THIS_FILE_PSI_KEY,
       ut::Count{srv_threads.m_page_cleaner_workers_n});
 
+  // 设置LRU管理器数量为缓冲池实例数
   srv_threads.m_lru_managers_n = srv_buf_pool_instances;
 
+  // 为LRU管理器分配内存
   srv_threads.m_lru_managers = ut::new_arr_withkey<IB_thread>(
       UT_NEW_THIS_FILE_PSI_KEY, ut::Count{srv_threads.m_lru_managers_n});
 
+  // 为服务器系统结构分配内存并初始化为0
   srv_sys = static_cast<srv_sys_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, srv_sys_sz));
 
@@ -1231,13 +1249,19 @@ static void srv_init(void) {
 
   /* Even in read-only mode we flush pages related to intrinsic table
   and so mutex creation is needed. */
+  /* 即使在只读模式下,我们也需要刷新内部表相关的页面,
+     因此需要创建互斥锁 */
   {
+    // 创建服务器系统互斥锁
     mutex_create(LATCH_ID_SRV_SYS, &srv_sys->mutex);
 
+    // 创建服务器系统任务互斥锁
     mutex_create(LATCH_ID_SRV_SYS_TASKS, &srv_sys->tasks_mutex);
 
+    // 设置系统线程数组指针
     srv_sys->sys_threads = (srv_slot_t *)&srv_sys[1];
 
+    // 初始化每个系统线程槽位
     for (ulint i = 0; i < srv_sys->n_sys_threads; ++i) {
       srv_slot_t *slot = &srv_sys->sys_threads[i];
 
@@ -1248,6 +1272,7 @@ static void srv_init(void) {
       ut_a(slot->event);
     }
 
+    // 创建各种系统事件
     srv_error_event = os_event_create();
 
     srv_monitor_event = os_event_create();
@@ -1258,11 +1283,14 @@ static void srv_init(void) {
 
     buf_flush_tick_event = os_event_create();
 
+    // 初始化任务列表
     UT_LIST_INIT(srv_sys->tasks);
   }
 
+  // 创建缓冲池调整大小事件
   srv_buf_resize_event = os_event_create();
 
+  // 在调试模式下创建主线程禁用事件
   ut_d(srv_master_thread_disabled_event = os_event_create());
 
   /* page_zip_stat_per_index_mutex is acquired from:
@@ -1272,58 +1300,80 @@ static void srv_init(void) {
   4. innodb_cmp_per_index_update(), no other latches
   since we do not acquire any other latches while holding this mutex,
   it can have very low level. We pick SYNC_ANY_LATCH for it. */
+  /* 页面压缩统计互斥锁在以下情况下获取:
+  1. page_zip_compress() (在SYNC_FSP之后)
+  2. page_zip_decompress()
+  3. i_s_cmp_per_index_fill_low() (获取SYNC_DICT时)
+  4. innodb_cmp_per_index_update(), 无其他锁
+  由于持有此互斥锁时不获取其他锁,
+  因此它可以有很低的级别。我们为它选择SYNC_ANY_LATCH */
   mutex_create(LATCH_ID_PAGE_ZIP_STAT_PER_INDEX,
                &page_zip_stat_per_index_mutex);
 
   /* Create dummy indexes for infimum and supremum records */
 
+  // 为最小和最大记录创建虚拟索引
   dict_ind_init();
 
   /* Initialize some INFORMATION SCHEMA internal structures */
+  // 初始化INFORMATION SCHEMA内部结构
   trx_i_s_cache_init(trx_i_s_cache);
 
+  // 初始化CRC32
   ut_crc32_init();
 
+  // 初始化数据字典内存
   dict_mem_init();
 }
 
 /** Frees the data structures created in srv_init(). */
+/** 释放在srv_init()中创建的数据结构 */
 void srv_free(void) {
+  // 如果srv_sys为空则直接返回
   if (!srv_sys) return;
 
+  // 释放监控相关的互斥锁
   mutex_free(&srv_innodb_monitor_mutex);
   mutex_free(&page_zip_stat_per_index_mutex);
 
   {
+    // 释放srv_sys相关的互斥锁
     mutex_free(&srv_sys->mutex);
     mutex_free(&srv_sys->tasks_mutex);
 
+    // 释放系统线程槽位相关的事件对象
     for (ulint i = 0; i < srv_sys->n_sys_threads; ++i) {
       srv_slot_t *slot = &srv_sys->sys_threads[i];
 
       os_event_destroy(slot->event);
     }
 
+    // 释放各种系统事件对象
     os_event_destroy(srv_error_event);
-    os_event_destroy(srv_monitor_event);
+    os_event_destroy(srv_monitor_event); 
     os_event_destroy(srv_buf_dump_event);
     os_event_destroy(buf_flush_event);
     os_event_destroy(buf_flush_tick_event);
   }
 
+  // 释放缓冲池调整大小相关的事件对象
   os_event_destroy(srv_buf_resize_event);
 
 #ifdef UNIV_DEBUG
+  // 在调试模式下释放主线程禁用事件对象
   os_event_destroy(srv_master_thread_disabled_event);
   srv_master_thread_disabled_event = nullptr;
 #endif /* UNIV_DEBUG */
 
+  // 释放事务信息缓存
   trx_i_s_cache_free(trx_i_s_cache);
 
+  // 释放srv_sys结构
   ut::free(srv_sys);
 
   srv_sys = nullptr;
 
+  // 释放LRU管理器数组
   if (srv_threads.m_lru_managers != nullptr) {
     for (size_t i = 0; i < srv_threads.m_lru_managers_n; ++i) {
       srv_threads.m_lru_managers[i] = {};
@@ -1332,6 +1382,7 @@ void srv_free(void) {
     srv_threads.m_lru_managers = nullptr;
   }
 
+  // 释放页面清理工作线程数组
   if (srv_threads.m_page_cleaner_workers != nullptr) {
     for (size_t i = 0; i < srv_threads.m_page_cleaner_workers_n; ++i) {
       srv_threads.m_page_cleaner_workers[i] = {};
@@ -1340,6 +1391,7 @@ void srv_free(void) {
     srv_threads.m_page_cleaner_workers = nullptr;
   }
 
+  // 释放清除工作线程数组
   if (srv_threads.m_purge_workers != nullptr) {
     for (size_t i = 0; i < srv_threads.m_purge_workers_n; ++i) {
       srv_threads.m_purge_workers[i] = {};
@@ -1348,10 +1400,12 @@ void srv_free(void) {
     srv_threads.m_purge_workers = nullptr;
   }
 
+  // 释放主线程关闭相关的事件对象
   os_event_destroy(srv_threads.m_master_ready_for_dd_shutdown);
 
   ut_d(os_event_destroy(srv_threads.m_shutdown_cleanup_dbg));
 
+  // 重置srv_threads结构
   srv_threads = {};
 }
 

@@ -343,6 +343,7 @@ extern os_event_t srv_error_event;
 extern os_event_t srv_buf_dump_event;
 
 /** The buffer pool resize thread waits on this event. */
+/** 缓冲池调整大小线程等待此事件(全局变量,通过extern关键字声明,可以被其他源文件访问和使用) */
 extern os_event_t srv_buf_resize_event;
 #endif /* !UNIV_HOTBACKUP */
 

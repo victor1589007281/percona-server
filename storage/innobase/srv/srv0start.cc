@@ -1391,22 +1391,29 @@ struct Thread_to_stop {
   srv_shutdown_t m_wait_on_state;
 };
 
+/* 定义需要停止的线程数组,每个元素包含线程名称、线程句柄、通知函数和停止状态 */
 static const Thread_to_stop threads_to_stop[]{
+    /* 锁等待超时监控线程 */
     {"lock_wait_timeout", srv_threads.m_lock_wait_timeout,
      lock_set_timeout_event, SRV_SHUTDOWN_CLEANUP},
 
+    /* 错误监控线程 */
     {"error_monitor", srv_threads.m_error_monitor,
      []() { os_event_set(srv_error_event); }, SRV_SHUTDOWN_CLEANUP},
 
+    /* 监控线程,用于打印InnoDB监控信息 */
     {"monitor", srv_threads.m_monitor,
      []() { os_event_set(srv_monitor_event); }, SRV_SHUTDOWN_CLEANUP},
 
+    /* 缓冲池dump线程 */
     {"buf_dump", srv_threads.m_buf_dump,
      []() { os_event_set(srv_buf_dump_event); }, SRV_SHUTDOWN_CLEANUP},
 
+    /* 缓冲池大小调整线程 */
     {"buf_resize", srv_threads.m_buf_resize,
      []() { os_event_set(srv_buf_resize_event); }, SRV_SHUTDOWN_CLEANUP},
 
+    /* 主线程,负责协调其他线程的工作 */
     {"master", srv_threads.m_master, srv_wake_master_thread,
      SRV_SHUTDOWN_MASTER_STOP}};
 
@@ -2738,6 +2745,8 @@ void srv_start_purge_threads() {
 
 /** Start up the InnoDB service threads which are independent of DDL recovery
 @param[in]      bootstrap       True if this is in bootstrap */
+/** 启动独立于DDL恢复的InnoDB服务线程
+@param[in]      bootstrap       如果是引导启动则为True */
 void srv_start_threads(bool bootstrap) {
   if (!srv_read_only_mode) {
     /* Before 8.0, it was master thread that was doing periodical
@@ -2756,21 +2765,26 @@ void srv_start_threads(bool bootstrap) {
             - there are less possible flows - smaller risk of bug.
     Now we start allowing periodical checkpoints! Since now, it's
     hard to predict when checkpoints are written! */
+    
+    // 启用定期检查点
     log_limits_mutex_enter(*log_sys);
-    log_sys->periodical_checkpoints_enabled = true;
+    log_sys->periodical_checkpoints_enabled = true; 
     log_limits_mutex_exit(*log_sys);
   }
 
+  // 创建缓冲池大小调整线程
   srv_threads.m_buf_resize =
       os_thread_create(buf_resize_thread_key, 0, buf_resize_thread);
 
   srv_threads.m_buf_resize.start();
 
+  // 只读模式下禁用清除操作
   if (srv_read_only_mode) {
     purge_sys->state = PURGE_STATE_DISABLED;
     return;
   }
 
+  // 如果需要回滚恢复的事务,创建事务恢复回滚线程
   if (!bootstrap && srv_force_recovery < SRV_FORCE_NO_TRX_UNDO &&
       trx_sys_need_rollback()) {
     /* Rollback all recovered transactions that are
@@ -2782,10 +2796,12 @@ void srv_start_threads(bool bootstrap) {
   }
 
   /* Enable row log encryption if it is set */
+  // 如果设置了行日志加密,则启用它
   log_tmp_enable_encryption_if_set();
 
   /* Create the master thread which does purge and other utility
   operations */
+  // 创建主线程,用于清除和其他实用操作
   srv_threads.m_master =
       os_thread_create(srv_master_thread_key, 0, srv_master_thread);
 
@@ -2797,10 +2813,12 @@ void srv_start_threads(bool bootstrap) {
     insert buffer merge has not had time to clean the records from
     the ibuf tree. */
 
+    // 更新插入缓冲区的最大表空间ID
     ibuf_update_max_tablespace_id();
   }
 
   /* Create the dict stats gathering thread */
+  // 创建数据字典统计信息收集线程
   srv_threads.m_dict_stats =
       os_thread_create(dict_stats_thread_key, 0, dict_stats_thread);
 
@@ -2809,8 +2827,10 @@ void srv_start_threads(bool bootstrap) {
   srv_threads.m_dict_stats.start();
 
   /* Create the thread that will optimize the FTS sub-system. */
+  // 创建优化全文搜索子系统的线程
   fts_optimize_init();
 
+  // 设置启动状态为STAT
   srv_start_state_set(SRV_START_STATE_STAT);
 }
 

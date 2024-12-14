@@ -2714,28 +2714,42 @@ withdraw_retry:
 
 /** This is the thread for resizing buffer pool. It waits for an event and
 when waked up either performs a resizing and sleeps again. */
+/** 这是用于调整缓冲池大小的线程。它等待事件，当被唤醒时执行调整大小操作，然后再次休眠。 */
 void buf_resize_thread() {
+  // 当服务器未处于清理关闭状态时持续运行
   while (srv_shutdown_state.load() < SRV_SHUTDOWN_CLEANUP) {
+    // 等待缓冲池调整大小事件
     os_event_wait(srv_buf_resize_event);
+    // 重置事件
     os_event_reset(srv_buf_resize_event);
 
+    // 如果服务器进入清理关闭状态，则退出循环
     if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP) {
       break;
     }
 
+    // 内存屏障，确保正确读取共享变量
     os_rmb;
+    // 检查缓冲池大小是否真的需要改变
     if (srv_buf_pool_old_size == srv_buf_pool_size) {
+      // 如果新旧大小相同，则无需调整
       std::ostringstream sout;
       sout << "Size did not change (old size = new size = " << srv_buf_pool_size
            << ". Nothing to do.";
+      
+      // 更新调整进度为完成状态
       buf_resize_status_progress_update(1, 1);
+      // 重置进度状态
       buf_resize_status_progress_reset();
+      // 设置调整完成状态消息
       buf_resize_status(BUF_POOL_RESIZE_COMPLETE, "%s", sout.str().c_str());
 
       /* nothing to do */
+      // 无需调整，继续等待下一个事件
       continue;
     }
 
+    // 执行缓冲池大小调整操作
     buf_pool_resize();
   }
 }

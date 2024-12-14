@@ -59,38 +59,89 @@ typedef pthread_cond_t os_cond_t;
 #endif /* _WIN32 */
 
 /** InnoDB condition variable. */
+/*
+线程A(要等待)               内核                    线程B(发出唤醒)
+    |                        |                         |
+    |--futex_wait---------->|                         |
+    |     将自己加入等待队列 |                         |
+    |     状态改为INTERRUPTIBLE                       |
+    |     让出CPU           |                         |
+    |        睡眠           |                         |
+    |                       |<--------futex_wake------|
+    |                       |  找到等待队列            |
+    |                       |  将线程改为RUNNING       |
+    |<---------------------|  将线程加入运行队列       |
+    |      被唤醒          |                         |
+    |                       |                         |
+*/
+/*
+时钟中断 -----> 检查时间片 -----> 时间片耗尽 -----> 触发调度 -----> 切换到下一个任务
+   |              |                    |               |              |
+   |              |                    |               |              |
+   v              v                    v               v              v 
+每个tick     更新计数器          标记需要调度     选择下一个任务    上下文切换
+*/
+/*
+任务A(时间片=10ms)     任务B(时间片=10ms)      任务C(时间片=10ms)
+     |                      |                      |
+     |---运行8ms--->       |                      |
+     |   时间片耗尽        |                      |
+     |----------------切换->|                      |
+                           |---运行10ms--->       |
+                           |   时间片耗尽         |
+                           |----------------切换-->|
+                                                  |---运行10ms--->
+                                                  |   时间片耗尽
+                                                  |--------切换->任务A
+*/
+/*
+唤醒是通过内核的调度机制，通过futex_wake唤醒(基于中断)
+*/
+/** InnoDB条件变量 */
 struct os_event {
+  // 构造函数
   os_event() UNIV_NOTHROW;
 
+  // 析构函数
   ~os_event() UNIV_NOTHROW;
 
+  // 声明全局初始化和销毁函数为友元函数
   friend void os_event_global_init();
   friend void os_event_global_destroy();
 
   /**
   Destroys a condition variable */
+  销毁条件变量 */
   void destroy() UNIV_NOTHROW {
 #ifndef _WIN32
+    // 在非Windows系统上销毁pthread条件变量
     int ret = pthread_cond_destroy(&cond_var);
     ut_a(ret == 0);
 #endif /* !_WIN32 */
 
+    // 销毁互斥锁
     mutex.destroy();
 
+    // 减少活跃对象计数
     ut_ad(n_objects_alive.fetch_sub(1) != 0);
   }
 
   /** Set the event */
+  /** 设置事件为已触发状态 */
   void set() UNIV_NOTHROW {
     mutex.enter();
 
     if (!m_set) {
-      broadcast();
+      broadcast(); // 如果事件未设置,则广播通知所有等待线程
     }
 
     mutex.exit();
   }
 
+  /** 
+  尝试设置事件为已触发状态
+  @return 如果成功获取锁并设置事件则返回true,否则返回false 
+  */
   bool try_set() UNIV_NOTHROW {
     if (mutex.try_lock()) {
       if (!m_set) {
@@ -105,6 +156,10 @@ struct os_event {
     return (false);
   }
 
+  /**
+  重置事件为未触发状态
+  @return 当前的signal_count值
+  */
   int64_t reset() UNIV_NOTHROW {
     mutex.enter();
 
@@ -136,6 +191,21 @@ struct os_event {
   Where such a scenario is possible, to avoid infinite wait, the
   value returned by reset() should be passed in as
   reset_sig_count. */
+  等待事件对象直到其处于已触发状态。
+
+  通常情况下,如果事件在os_event_reset()之后被触发,
+  由于event->m_set == true,我们会立即返回。
+  然而,在某些情况下(例如:sync_array代码)我们可能会
+  丢失这个信息。例如:
+
+  线程A调用os_event_reset()
+  线程B调用os_event_set()   [event->m_set == true]
+  线程C调用os_event_reset() [event->m_set == false]
+  线程A调用os_event_wait()  [无限等待!]
+  线程C调用os_event_wait()  [无限等待!]
+
+  在可能出现这种情况时,为避免无限等待,
+  应该将reset()返回的值作为reset_sig_count传入。 */
   void wait_low(int64_t reset_sig_count) UNIV_NOTHROW;
 
   /** Waits for an event object until it is in the signaled state or
@@ -145,43 +215,59 @@ struct os_event {
   @param  reset_sig_count Zero or the value returned by previous call of
   os_event_reset().
   @return       0 if success, OS_SYNC_TIME_EXCEEDED if timeout was exceeded */
+  /** 等待事件对象直到其处于已触发状态或超时
+  @param  timeout         超时时间(微秒),或std::chrono::microseconds::max()
+  @param  reset_sig_count 0或前一次调用os_event_reset()返回的值
+  @return 0表示成功,OS_SYNC_TIME_EXCEEDED表示超时 */
   ulint wait_time_low(std::chrono::microseconds timeout,
                       int64_t reset_sig_count) UNIV_NOTHROW;
 
   /** @return true if the event is in the signalled state. */
+  /** @return 如果事件处于已触发状态则返回true */
   bool is_set() const UNIV_NOTHROW { return (m_set); }
 
  private:
   /**
   Initialize a condition variable */
+  /** 初始化条件变量 */
   void init() UNIV_NOTHROW {
+    // 初始化互斥锁
     mutex.init();
 
 #ifdef _WIN32
+    // Windows下初始化条件变量
     InitializeConditionVariable(&cond_var);
 #else
     {
+      // 非Windows下初始化pthread条件变量
       int ret;
 
+      // 系统调用,它是 POSIX 线程(pthread)库中的一个函数
+      // 用于初始化条件变量 
       ret = pthread_cond_init(&cond_var, &cond_attr);
       ut_a(ret == 0);
     }
 #endif /* _WIN32 */
 
+    // 增加活跃对象计数
     ut_d(n_objects_alive.fetch_add(1));
   }
 
   /**
   Wait on condition variable */
+  /** 等待条件变量 */
   void wait() UNIV_NOTHROW {
 #ifdef _WIN32
+    // Windows下等待条件变量
     if (!SleepConditionVariableCS(&cond_var, mutex, INFINITE)) {
       ut_error;
     }
 #else
     {
+      // 非Windows下等待pthread条件变量
       int ret;
-
+      // 系统调用,它是 POSIX 线程(pthread)库中的一个函数
+      // 用于等待指定条件变量
       ret = pthread_cond_wait(&cond_var, mutex);
       ut_a(ret == 0);
     }
@@ -190,16 +276,21 @@ struct os_event {
 
   /**
   Wakes all threads waiting for condition variable */
+  /** 唤醒所有等待条件变量的线程 */
   void broadcast() UNIV_NOTHROW {
     m_set = true;
     ++signal_count;
 
 #ifdef _WIN32
+    // Windows下唤醒所有等待线程
     WakeAllConditionVariable(&cond_var);
 #else
     {
+      // 非Windows下广播唤醒所有等待线程
       int ret;
 
+      // 系统调用,它是 POSIX 线程(pthread)库中的一个函数
+      // 用于唤醒所有等待在指定条件变量上的线程
       ret = pthread_cond_broadcast(&cond_var);
       ut_a(ret == 0);
     }
@@ -208,13 +299,18 @@ struct os_event {
 
   /**
   Wakes one thread waiting for condition variable */
+  /** 唤醒一个等待条件变量的线程 */
   void signal() UNIV_NOTHROW {
 #ifdef _WIN32
+    // Windows下唤醒一个等待线程
     WakeConditionVariable(&cond_var);
 #else
     {
+      // 非Windows下唤醒一个等待线程
       int ret;
 
+      // 系统调用,它是 POSIX 线程(pthread)库中的一个函数
+      // 用于唤醒一个等待在指定条件变量上的线程
       ret = pthread_cond_signal(&cond_var);
       ut_a(ret == 0);
     }
@@ -241,39 +337,42 @@ struct os_event {
 #endif /* !_WIN32 */
 
  private:
-  bool m_set;           /*!< this is true when the
-                        event is in the signaled
-                        state, i.e., a thread does
-                        not stop if it tries to wait
-                        for this event */
-  int64_t signal_count; /*!< this is incremented
-                        each time the event becomes
-                        signaled */
-  EventMutex mutex;     /*!< this mutex protects
-                        the next fields */
+  // 事件状态标志
+  bool m_set;           /*!< 当事件处于已触发状态时为true,
+                            即线程尝试等待该事件时不会阻塞 */
+  int64_t signal_count; /*!< 每次事件被触发时递增 */
+  EventMutex mutex;     /*!< 用于保护以下字段的互斥锁 */
 
-  os_cond_t cond_var; /*!< condition variable is
-                      used in waiting for the event */
+  os_cond_t cond_var;   /*!< 用于等待事件的条件变量 */
 
 #ifndef _WIN32
   /** Attributes object passed to pthread_cond_* functions.
   Defines usage of the monotonic clock if it's available.
   Initialized once, in the os_event::global_init(), and
   destroyed in the os_event::global_destroy(). */
+  /** 传递给pthread_cond_*函数的属性对象。
+  定义了是否使用单调时钟(如果可用)。
+  在os_event::global_init()中初始化一次,
+  在os_event::global_destroy()中销毁。 */
   static pthread_condattr_t cond_attr;
 
   /** True iff usage of the monotonic clock has been successfully
   enabled for the cond_attr object. */
+  /** 如果成功启用了单调时钟则为true */
   static bool cond_attr_has_monotonic_clock;
 #endif /* !_WIN32 */
+
+  // 全局初始化标志
   static bool global_initialized;
 
 #ifdef UNIV_DEBUG
+  // 活跃对象计数器
   static std::atomic_size_t n_objects_alive;
 #endif /* UNIV_DEBUG */
 
  protected:
   // Disable copying
+  // 禁用拷贝
   os_event(const os_event &);
   os_event &operator=(const os_event &);
 };
@@ -523,18 +622,34 @@ os_event::~os_event() UNIV_NOTHROW { destroy(); }
 Creates an event semaphore, i.e., a semaphore which may just have two
 states: signaled and nonsignaled. The created event is manual reset: it
 must be reset explicitly by calling sync_os_reset_event.
-@return the event handle */
+@return the event handle 
+
+创建一个事件信号量,该信号量只有两种状态:已触发和未触发。
+创建的事件是手动重置的:必须通过调用sync_os_reset_event显式重置。
+@return 事件句柄
+*/
 os_event_t os_event_create() {
+  // 使用ut::new_withkey分配内存并创建os_event对象
+  // UT_NEW_THIS_FILE_PSI_KEY用于性能监控
   os_event_t ret = (ut::new_withkey<os_event>(UT_NEW_THIS_FILE_PSI_KEY));
+
 /**
  On SuSE Linux we get spurious EBUSY from pthread_mutex_destroy()
  unless we grab and release the mutex here. Current OS version:
  openSUSE Leap 15.0
  Linux xxx 4.12.14-lp150.12.25-default #1 SMP
- Thu Nov 1 06:14:23 UTC 2018 (3fcf457) x86_64 x86_64 x86_64 GNU/Linux */
+ Thu Nov 1 06:14:23 UTC 2018 (3fcf457) x86_64 x86_64 x86_64 GNU/Linux 
+
+ 在SuSE Linux上,除非在这里获取并释放互斥锁,
+ 否则会从pthread_mutex_destroy()得到虚假的EBUSY错误。
+ 当前操作系统版本:openSUSE Leap 15.0
+*/
 #if defined(LINUX_SUSE)
+  // 在SuSE Linux上,需要重置事件以避免EBUSY错误
   os_event_reset(ret);
 #endif
+
+  // 返回创建的事件对象
   return ret;
 }
 
@@ -547,10 +662,12 @@ bool os_event_is_set(const os_event_t event) /*!< in: event to test */
 }
 
 /**
-Sets an event semaphore to the signaled state: lets waiting threads
-proceed. */
+Sets an event semaphore to the signaled state: lets waiting threads proceed.
+将事件信号量设置为已触发状态:允许等待的线程继续执行
+*/
 void os_event_set(os_event_t event) /*!< in/out: event to set */
 {
+  // 调用事件对象的set()方法来设置事件为已触发状态
   event->set();
 }
 
