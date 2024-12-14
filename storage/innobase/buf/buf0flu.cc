@@ -499,37 +499,46 @@ static inline lsn_t buf_flush_borrow_lsn(const buf_pool_t *buf_pool) {
   return page->get_oldest_lsn();
 }
 
+
+/** 
+ * 将修改过的块插入到刷新列表中。
+ * 
+ * @param buf_pool buffer pool 实例
+ * @param block 要修改的块
+ * @param lsn 最旧的修改时间戳
+ */
 /** Inserts a modified block into the flush list. */
 void buf_flush_insert_into_flush_list(
     buf_pool_t *buf_pool, /*!< buffer pool instance */
     buf_block_t *block,   /*!< in/out: block which is modified */
     lsn_t lsn)            /*!< in: oldest modification */
 {
-  ut_ad(mutex_own(buf_page_get_mutex(&block->page)));
-  ut_ad(log_sys != nullptr);
+  ut_ad(mutex_own(buf_page_get_mutex(&block->page))); // 确保当前线程拥有页面的互斥锁
+  ut_ad(log_sys != nullptr); // 确保日志系统已初始化
 
-  buf_flush_list_mutex_enter(buf_pool);
+  buf_flush_list_mutex_enter(buf_pool); // 进入缓冲区刷新列表的互斥锁
 
   /* If we are in the recovery then we need to update the flush
   red-black tree as well. */
   if (buf_pool->flush_rbt != nullptr) {
-    ut_ad(lsn != 0);
-    ut_ad(block->page.get_newest_lsn() != 0);
-    buf_flush_list_mutex_exit(buf_pool);
-    buf_flush_insert_sorted_into_flush_list(buf_pool, block, lsn);
-    return;
+    ut_ad(lsn != 0); // 确保 LSN 不为零
+    ut_ad(block->page.get_newest_lsn() != 0); // 确保最新 LSN 不为零
+    buf_flush_list_mutex_exit(buf_pool); // 退出互斥锁
+    buf_flush_insert_sorted_into_flush_list(buf_pool, block, lsn); // 将块插入到排序的刷新列表中
+    return; // 结束函数
   }
 
-  ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-  ut_ad(!block->page.in_flush_list);
+  ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE); // 确保块的状态为文件页面
+  ut_ad(!block->page.in_flush_list); // 确保块不在刷新列表中
 
-  ut_d(block->page.in_flush_list = true);
+  ut_d(block->page.in_flush_list = true); // 将块标记为在刷新列表中
 
   if (lsn == 0) {
+    // no-redo dirtied page 是指那些被修改但不需要在恢复过程中重做的页面
     /* This is no-redo dirtied page. Borrow the lsn. */
-    lsn = buf_flush_borrow_lsn(buf_pool);
+    lsn = buf_flush_borrow_lsn(buf_pool); // 借用 LSN
 
-    ut_ad(log_is_data_lsn(lsn));
+    ut_ad(log_is_data_lsn(lsn)); // 确保 LSN 是数据 LSN
 
     /* This page could already be no-redo dirtied before,
     and flushed since then. Also the page from which we
@@ -556,57 +565,64 @@ void buf_flush_insert_into_flush_list(
     we read it). */
 
     block->page.set_newest_lsn(
-        std::max(lsn, log_sys->flushed_to_disk_lsn.load()));
+        std::max(lsn, log_sys->flushed_to_disk_lsn.load())); // 设置块的最新 LSN
   }
 
-  ut_ad(log_is_data_lsn(lsn));
-  ut_ad(!block->page.is_dirty());
-  ut_ad(block->page.get_newest_lsn() >= lsn);
+  ut_ad(log_is_data_lsn(lsn)); // 确保 LSN 是数据 LSN
+  ut_ad(!block->page.is_dirty()); // 确保块不脏
+  ut_ad(block->page.get_newest_lsn() >= lsn); // 确保最新 LSN 大于等于 LSN
 
   ut_ad(UT_LIST_GET_FIRST(buf_pool->flush_list) == nullptr ||
         buf_flush_list_order_validate(
-            UT_LIST_GET_FIRST(buf_pool->flush_list)->get_oldest_lsn(), lsn));
+            UT_LIST_GET_FIRST(buf_pool->flush_list)->get_oldest_lsn(), lsn)); // 验证刷新列表的顺序
 
-  block->page.set_oldest_lsn(lsn);
+  block->page.set_oldest_lsn(lsn); // 设置块的最旧 LSN
 
-  UT_LIST_ADD_FIRST(buf_pool->flush_list, &block->page);
+  UT_LIST_ADD_FIRST(buf_pool->flush_list, &block->page); // 将块添加到刷新列表的开头
 
-  incr_flush_list_size_in_bytes(block, buf_pool);
+  incr_flush_list_size_in_bytes(block, buf_pool); // 增加刷新列表的字节大小
 
 #ifdef UNIV_DEBUG_VALGRIND
   void *p;
 
   if (block->page.size.is_compressed()) {
-    p = block->page.zip.data;
+    p = block->page.zip.data; // 获取压缩数据
   } else {
-    p = block->frame;
+    p = block->frame; // 获取页面帧
   }
 
-  UNIV_MEM_ASSERT_RW(p, block->page.size.physical());
+  UNIV_MEM_ASSERT_RW(p, block->page.size.physical()); // 确保内存可读写
 #endif /* UNIV_DEBUG_VALGRIND */
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
-  ut_a(buf_flush_validate_skip(buf_pool));
+  ut_a(buf_flush_validate_skip(buf_pool)); // 验证刷新列表
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
 
-  buf_flush_list_mutex_exit(buf_pool);
+  buf_flush_list_mutex_exit(buf_pool); // 退出互斥锁
 }
 
-/** Inserts a modified block into the flush list in the right sorted position.
- This function is used by recovery, because there the modifications do not
  necessarily come in the order of lsn's. */
+/** 
+ * 将修改过的块插入到刷新列表中，并在正确的排序位置插入。
+ * 此函数用于恢复，因为在恢复过程中，修改不一定按 LSN 的顺序进行。
+ *  TODO 为什么需要红黑树来确保顺序？？
+ * 
+ * @param buf_pool buffer pool 实例
+ * @param block 要修改的块
+ * @param lsn 最旧的修改时间戳
+ */
 void buf_flush_insert_sorted_into_flush_list(
     buf_pool_t *buf_pool, /*!< in: buffer pool instance */
     buf_block_t *block,   /*!< in/out: block which is modified */
     lsn_t lsn)            /*!< in: oldest modification */
 {
-  buf_page_t *prev_b;
-  buf_page_t *b;
+  buf_page_t *prev_b; // 前一个块
+  buf_page_t *b;      // 当前块
 
-  ut_ad(mutex_own(buf_page_get_mutex(&block->page)));
-  ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
+  ut_ad(mutex_own(buf_page_get_mutex(&block->page))); // 确保当前线程拥有页面的互斥锁
+  ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE); // 确保块的状态为文件页面
 
-  buf_flush_list_mutex_enter(buf_pool);
+  buf_flush_list_mutex_enter(buf_pool); // 进入缓冲区刷新列表的互斥锁
 
   /* The field in_LRU_list is protected by buf_pool->LRU_list_mutex,
   which we are not holding.  However, while a block is in the flush
@@ -618,29 +634,29 @@ void buf_flush_insert_sorted_into_flush_list(
   transitions hold block->mutex and the flush list mutex (via
   buf_flush_relocate_on_flush_list()), there is no possibility
   of a race condition in the assertions below. */
-  ut_ad(block->page.in_LRU_list);
-  ut_ad(block->page.in_page_hash);
+  ut_ad(block->page.in_LRU_list); // 确保块在 LRU 列表中
+  ut_ad(block->page.in_page_hash); // 确保块在页面哈希中
   /* buf_buddy_block_register() will take a block in the
   BUF_BLOCK_MEMORY state, not a file page. */
-  ut_ad(!block->page.in_zip_hash);
+  ut_ad(!block->page.in_zip_hash); // 确保块不在压缩哈希中
 
-  ut_ad(!block->page.in_flush_list);
-  ut_d(block->page.in_flush_list = true);
-  block->page.set_oldest_lsn(lsn);
+  ut_ad(!block->page.in_flush_list); // 确保块不在刷新列表中
+  ut_d(block->page.in_flush_list = true); // 将块标记为在刷新列表中
+  block->page.set_oldest_lsn(lsn); // 设置块的最旧 LSN
 
 #ifdef UNIV_DEBUG_VALGRIND
   void *p;
 
   if (block->page.size.is_compressed()) {
-    p = block->page.zip.data;
+    p = block->page.zip.data; // 获取压缩数据
   } else {
-    p = block->frame;
+    p = block->frame; // 获取页面帧
   }
 
-  UNIV_MEM_ASSERT_RW(p, block->page.size.physical());
+  UNIV_MEM_ASSERT_RW(p, block->page.size.physical()); // 确保内存可读写
 #endif /* UNIV_DEBUG_VALGRIND */
 
-  prev_b = nullptr;
+  prev_b = nullptr; // 初始化前一个块为 nullptr
 
   /* For the most part when this function is called the flush_rbt
   should not be NULL. In a very rare boundary case it is possible
@@ -649,36 +665,36 @@ void buf_flush_insert_sorted_into_flush_list(
   io-handler thread. In that case we'll just do a simple
   linear search in the else block. */
   if (buf_pool->flush_rbt != nullptr) {
-    prev_b = buf_flush_insert_in_flush_rbt(&block->page);
+    prev_b = buf_flush_insert_in_flush_rbt(&block->page); // 在红黑树中插入块
 
   } else {
-    b = UT_LIST_GET_FIRST(buf_pool->flush_list);
+    b = UT_LIST_GET_FIRST(buf_pool->flush_list); // 获取刷新列表中的第一个块
 
     while (b != nullptr && b->get_oldest_lsn() > block->page.get_oldest_lsn()) {
-      ut_ad(b->in_flush_list);
-      prev_b = b;
-      b = UT_LIST_GET_NEXT(list, b);
+      ut_ad(b->in_flush_list); // 确保块在刷新列表中
+      prev_b = b; // 更新前一个块
+      b = UT_LIST_GET_NEXT(list, b); // 获取下一个块
     }
   }
 
   if (prev_b == nullptr) {
-    UT_LIST_ADD_FIRST(buf_pool->flush_list, &block->page);
+    UT_LIST_ADD_FIRST(buf_pool->flush_list, &block->page); // 将块添加到刷新列表的开头
   } else {
-    UT_LIST_INSERT_AFTER(buf_pool->flush_list, prev_b, &block->page);
+    UT_LIST_INSERT_AFTER(buf_pool->flush_list, prev_b, &block->page); // 在前一个块后插入
   }
 
   if (buf_pool->oldest_hp.get() != nullptr) {
     /* clear oldest_hp */
-    buf_pool->oldest_hp.set(nullptr);
+    buf_pool->oldest_hp.set(nullptr); // 清除 oldest_hp
   }
 
-  incr_flush_list_size_in_bytes(block, buf_pool);
+  incr_flush_list_size_in_bytes(block, buf_pool); // 增加刷新列表的字节大小
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
-  ut_a(buf_flush_validate_low(buf_pool));
+  ut_a(buf_flush_validate_low(buf_pool)); // 验证刷新列表
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
 
-  buf_flush_list_mutex_exit(buf_pool);
+  buf_flush_list_mutex_exit(buf_pool); // 退出互斥锁
 }
 
 bool buf_flush_ready_for_replace(buf_page_t *bpage) {

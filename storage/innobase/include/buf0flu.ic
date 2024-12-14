@@ -53,6 +53,15 @@ void buf_flush_insert_sorted_into_flush_list(
 /** This function should be called at a mini-transaction commit, if a page was
  modified in it. Puts the block to the list of modified blocks, if it is not
  already in it. */
+/** 
+ * 该函数应在小事务提交时调用，如果其中有页面被修改。
+ * 将块放入修改块的列表中，如果它尚未在其中。
+ * 
+ * @param block 被修改的块
+ * @param start_lsn 修改此块的mtr的开始lsn
+ * @param end_lsn 修改此块的mtr的结束lsn
+ * @param observer 刷新观察者
+ */ 
 static inline void buf_flush_note_modification(
     buf_block_t *block,       /*!< in: block which is modified */
     lsn_t start_lsn,          /*!< in: start lsn of the mtr that
@@ -65,22 +74,29 @@ static inline void buf_flush_note_modification(
   {
     /* Allow write to proceed to shared temporary tablespace
     in read-only mode. */
+    /* 允许在只读模式下对共享临时表空间进行写入。 */
     ut_ad(!srv_read_only_mode ||
           fsp_is_system_temporary(block->page.id.space()));
+    /* 确保块的状态是文件页面 */
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
+    /* 确保块的引用计数大于0 */
     ut_ad(block->page.buf_fix_count > 0);
 
     buf_pool_t *buf_pool = buf_pool_from_block(block);
 
+    /* 确保当前没有持有刷新列表的互斥锁 */
     ut_ad(!buf_flush_list_mutex_own(buf_pool));
   }
 #endif /* UNIV_DEBUG */
 
+  /* 进入块的互斥锁 */
   mutex_enter(&block->mutex);
 
   if (end_lsn != 0) {
+    /* 确保最新的lsn小于等于结束lsn */
     ut_ad(block->page.get_newest_lsn() <= end_lsn);
     if (observer != nullptr) observer->inc_estimate(*block);
+    /* 设置块的最新lsn */
     block->page.set_newest_lsn(end_lsn);
   } else {
     /* Do nothing. This is the case with no-redo mtr and it
@@ -90,24 +106,33 @@ static inline void buf_flush_note_modification(
     within buf_flush_insert_into_flush_list call. That's
     because we can't read the value now, because we don't
     hold the flush list mutex yet. */
+    /* 不执行任何操作。这是没有重做的mtr的情况，可能会重新修改一些早期的脏页面，因此我们不想更改最旧/最新的lsn。
+    如果不是这种情况，我们将在buf_flush_insert_into_flush_list调用中设置最新修改，因为我们现在无法读取该值，因为我们尚未持有刷新列表的互斥锁。 */
   }
 
   if (observer != nullptr) {
+    /* 设置刷新观察者 */
     block->page.set_flush_observer(observer);
   } else {
+    /* 重置刷新观察者 */
     block->page.reset_flush_observer();
   }
 
   if (!block->page.is_dirty()) {
+    //获取page所在的buffer pool instance
     auto buf_pool = buf_pool_from_block(block);
 
+    /* 将块插入到修改块的列表中 */
     buf_flush_insert_into_flush_list(buf_pool, block, start_lsn);
   } else if (start_lsn != 0) {
+    /* 确保块的最旧lsn小于等于开始lsn */
     ut_ad(block->page.get_oldest_lsn() <= start_lsn);
   }
 
+  /* 退出块的互斥锁 */
   buf_page_mutex_exit(block);
 
+  /* 增加缓冲池写请求的统计 */
   srv_stats.buf_pool_write_requests.inc();
 }
 

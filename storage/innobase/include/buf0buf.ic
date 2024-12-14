@@ -110,20 +110,20 @@ static inline ulint buf_pool_index(
 }
 
 /** Returns the buffer pool instance given a page instance
+/** 返回给定页面实例的缓冲池实例
  @return buf_pool */
 static inline buf_pool_t *buf_pool_from_bpage(
-    const buf_page_t *bpage) /*!< in: buffer pool page */
 {
-  ulint i;
-  i = bpage->buf_pool_index;
-  ut_ad(i < srv_buf_pool_instances);
-  return (&buf_pool_ptr[i]);
+  ulint i;  // 声明一个无符号整数 i
+  i = bpage->buf_pool_index;  // 获取页面的缓冲池索引
+  ut_ad(i < srv_buf_pool_instances);  // 断言: 索引 i 小于当前缓冲池实例数量
+  return (&buf_pool_ptr[i]);  // 返回对应的缓冲池实例指针
 }
 
 /** Returns the buffer pool instance given a block instance
+/** 返回给定块实例的缓冲池实例
  @return buf_pool */
 static inline buf_pool_t *buf_pool_from_block(
-    const buf_block_t *block) /*!< in: block */
 {
   return (buf_pool_from_bpage(&block->page));
 }

@@ -327,6 +327,7 @@ struct Debug_check_no_latching {
 #endif /* UNIV_DEBUG */
 
 /** Add blocks modified by the mini-transaction to the flush list. */
+/** 将mini-transaction修改的块添加到刷新列表中 */
 struct Add_dirty_blocks_to_flush_list {
   /** Constructor.
   @param[in]    start_lsn       LSN of the first entry that was
@@ -334,10 +335,15 @@ struct Add_dirty_blocks_to_flush_list {
   @param[in]    end_lsn         LSN after the last entry was
                                   added to REDO by the MTR
   @param[in,out]        observer        flush observer */
+  /** 构造函数。
+  @param[in]    start_lsn       第一个被MTR添加到REDO的条目的LSN
+  @param[in]    end_lsn         最后一个被MTR添加到REDO的条目之后的LSN
+  @param[in,out]        observer        刷新观察者 */
   Add_dirty_blocks_to_flush_list(lsn_t start_lsn, lsn_t end_lsn,
                                  Flush_observer *observer);
 
   /** Add the modified page to the buffer flush list. */
+  /** 将修改的页面添加到缓冲区刷新列表中 */
   void add_dirty_page_to_flush_list(mtr_memo_slot_t *slot) const {
     ut_ad(m_end_lsn > m_start_lsn || (m_end_lsn == 0 && m_start_lsn == 0));
 
@@ -877,6 +883,7 @@ void mtr_t::Command::release_all() {
 }
 
 /** Add blocks modified in this mini-transaction to the flush list. */
+//把MTR中修改的块插入到flush list 中
 void mtr_t::Command::add_dirty_blocks_to_flush_list(lsn_t start_lsn,
                                                     lsn_t end_lsn) {
   Add_dirty_blocks_to_flush_list add_to_flush(start_lsn, end_lsn,
@@ -889,46 +896,47 @@ void mtr_t::Command::add_dirty_blocks_to_flush_list(lsn_t start_lsn,
 
 /** Write the redo log record, add dirty pages to the flush list and release
 the resources. */
+/** 写入重做日志记录，将脏页添加到刷新列表并释放资源。 */
 void mtr_t::Command::execute() {
-  ut_ad(m_impl->m_log_mode != MTR_LOG_NONE);
+  ut_ad(m_impl->m_log_mode != MTR_LOG_NONE); // 确保日志模式不是无日志模式
 
 #ifndef UNIV_HOTBACKUP
-  ulint len = prepare_write();
+  ulint len = prepare_write(); // 准备写入日志，返回需要写入的字节数
 
-  if (len > 0) {
-    mtr_write_log_t write_log;
+  if (len > 0) { // 如果有需要写入的字节数
+    mtr_write_log_t write_log; // 创建写日志的结构体
 
-    write_log.m_left_to_write = len;
+    write_log.m_left_to_write = len; // 设置剩余待写入的字节数
 
-    auto handle = log_buffer_reserve(*log_sys, len);
+    auto handle = log_buffer_reserve(*log_sys, len); // 预留日志缓冲区
 
-    write_log.m_handle = handle;
-    write_log.m_lsn = handle.start_lsn;
+    write_log.m_handle = handle; // 记录句柄
+    write_log.m_lsn = handle.start_lsn; // 记录开始的日志序列号
 
-    m_impl->m_log.for_each_block(write_log);
+    m_impl->m_log.for_each_block(write_log); // 遍历日志块并写入
 
-    ut_ad(write_log.m_left_to_write == 0);
-    ut_ad(write_log.m_lsn == handle.end_lsn);
+    ut_ad(write_log.m_left_to_write == 0); // 确保剩余待写入字节数为0
+    ut_ad(write_log.m_lsn == handle.end_lsn); // 确保日志序列号正确
 
-    log_wait_for_space_in_log_recent_closed(*log_sys, handle.start_lsn);
+    log_wait_for_space_in_log_recent_closed(*log_sys, handle.start_lsn); // 等待日志空间
 
-    DEBUG_SYNC_C("mtr_redo_before_add_dirty_blocks");
+    DEBUG_SYNC_C("mtr_redo_before_add_dirty_blocks"); // 调试同步点
 
-    add_dirty_blocks_to_flush_list(handle.start_lsn, handle.end_lsn);
+    add_dirty_blocks_to_flush_list(handle.start_lsn, handle.end_lsn); // 将脏块添加到刷新列表
 
-    log_buffer_close(*log_sys, handle);
+    log_buffer_close(*log_sys, handle); // 关闭日志缓冲区
 
-    m_impl->m_mtr->m_commit_lsn = handle.end_lsn;
+    m_impl->m_mtr->m_commit_lsn = handle.end_lsn; // 设置提交的日志序列号
 
-  } else {
-    DEBUG_SYNC_C("mtr_noredo_before_add_dirty_blocks");
+  } else { // 如果没有需要写入的字节数
+    DEBUG_SYNC_C("mtr_noredo_before_add_dirty_blocks"); // 调试同步点
 
-    add_dirty_blocks_to_flush_list(0, 0);
+    add_dirty_blocks_to_flush_list(0, 0); // 添加空的脏块到刷新列表
   }
 #endif /* !UNIV_HOTBACKUP */
 
-  release_all();
-  release_resources();
+  release_all(); // 释放所有资源
+  release_resources(); // 释放资源
 }
 
 std::ostream &mtr_memo_slot_t::print(std::ostream &out) const {
