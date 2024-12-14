@@ -1027,21 +1027,26 @@ static buf_chunk_t *buf_chunk_init(
 
   /* Round down to a multiple of page size,
   although it already should be. */
+  // 将内存大小向下取整为页面大小的整数倍
   mem_size = ut_2pow_round(mem_size, UNIV_PAGE_SIZE);
   size_target = (mem_size / UNIV_PAGE_SIZE) - 1;
   /* Reserve space for the block descriptors. */
+  
+  // 为块描述符预留空间
   mem_size += ut_2pow_round(
       (mem_size / UNIV_PAGE_SIZE) * (sizeof *block) + (UNIV_PAGE_SIZE - 1),
       UNIV_PAGE_SIZE);
 
   DBUG_EXECUTE_IF("ib_buf_chunk_init_fails", return (nullptr););
 
+  // 为chunk分配内存
   if (!buf_pool->allocate_chunk(mem_size, chunk, populate)) {
     return (nullptr);
   }
 
   /* Allocate the block descriptors from
   the start of the memory block. */
+  // 从内存块的开始处分配块描述符
   chunk->blocks = (buf_block_t *)chunk->mem;
 
   /* Align a pointer to the first frame.  Note that when
@@ -1049,13 +1054,18 @@ static buf_chunk_t *buf_chunk_init(
   we may allocate one fewer block than requested.  When
   it is bigger, we may allocate more blocks than requested. */
 
+  // 将指针对齐到第一个帧
+  // 注意:当os_large_page_size小于UNIV_PAGE_SIZE时,可能会分配比请求少一个块
+  // 当它更大时,可能会分配比请求更多的块
   frame = (byte *)ut_align(chunk->mem, UNIV_PAGE_SIZE);
+  // 通过mmap 申请大块内存
   chunk->size = ut::large_page_allocation_size(
                     chunk->mem, ut::fallback_to_normal_page_t{}) /
                     UNIV_PAGE_SIZE -
                 (frame != chunk->mem);
 
   /* Subtract the space needed for block descriptors. */
+  // 减去块描述符所需的空间
   {
     ulint size = chunk->size;
 
@@ -1075,13 +1085,17 @@ static buf_chunk_t *buf_chunk_init(
   assign the frames to the first blocks (we already mapped the
   memory above). */
 
+  // 初始化块结构并为其分配帧
+  // 然后将帧分配给第一个块(我们已经在上面映射了内存)
   block = chunk->blocks;
 
   for (i = chunk->size; i--;) {
+    // 初始化每个块
     buf_block_init(buf_pool, block, frame);
     UNIV_MEM_INVALID(block->frame, UNIV_PAGE_SIZE);
 
     /* Add the block to the free list */
+    // 将块添加到空闲列表
     UT_LIST_ADD_LAST(buf_pool->free, &block->page);
 
     ut_d(block->page.in_free_list = true);
@@ -1092,6 +1106,7 @@ static buf_chunk_t *buf_chunk_init(
     frame += UNIV_PAGE_SIZE;
   }
 
+  // 注册chunk到buffer pool
   if (mutex != nullptr) {
     mutex->lock();
   }
@@ -1103,6 +1118,7 @@ static buf_chunk_t *buf_chunk_init(
   }
 
 #ifdef PFS_GROUP_BUFFER_SYNC
+  // 注册块到性能监控系统
   pfs_register_buffer_block(chunk);
 #endif /* PFS_GROUP_BUFFER_SYNC */
   return (chunk);
@@ -3731,47 +3747,62 @@ struct Buf_fetch_normal : public Buf_fetch<Buf_fetch_normal> {
   /** Constructor.
   @param[in] page_id            Page ID of page to fetch.
   @param[in] page_size          Size of page on disk. */
+  // 构造函数
+  // @param page_id 要获取的页面ID
+  // @param page_size 磁盘上的页面大小
   Buf_fetch_normal(const page_id_t &page_id, const page_size_t &page_size)
       : Buf_fetch(page_id, page_size) {}
 
   /** Fetch a block from the hash table or read from disk if necessary.
   @param[out] block             Block to fetch.
   @return DB_SUCCESS or error code. */
+  // 从哈希表中获取块,如果需要则从磁盘读取
+  // @param block 要获取的块
+  // @return DB_SUCCESS或错误码
   dberr_t get(buf_block_t *&block) noexcept;
 };
 
+// 实现get()方法
 dberr_t Buf_fetch_normal::get(buf_block_t *&block) noexcept {
   /* Keep this path as simple as possible. */
+  // 尽可能保持这个路径简单
   for (;;) {
     /* Lookup the page in the page hash. If it doesn't exist in the
     buffer pool then try and read it in from disk. */
 
-    ut_ad(
-        !rw_lock_own(buf_page_hash_lock_get(m_buf_pool, m_page_id), RW_LOCK_S));
+    // 确保没有持有哈希锁
+    ut_ad(!rw_lock_own(buf_page_hash_lock_get(m_buf_pool, m_page_id), RW_LOCK_S));
 
+    // 在页面哈希表中查找块
     block = lookup();
 
     if (block != nullptr) {
+      // 如果块是过期的,尝试释放它
       if (block->page.was_stale()) {
         if (!buf_page_free_stale(m_buf_pool, &block->page, m_hash_lock)) {
           /* The page is during IO and can't be released. We wait some to not go
            into loop that would consume CPU. This is not something that will be
            hit frequently. */
+          // 页面正在进行IO,无法释放。等待一段时间避免CPU空转
           std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
         /* The hash lock was released, we should try again lookup for the page
          until it's gone - it should disappear eventually when the IO ends. */
+        // 哈希锁已释放,需要重新查找页面直到它消失
         continue;
       }
 
+      // 增加块的固定计数
       buf_block_fix(block);
 
       /* Now safe to release page_hash S lock. */
+      // 现在可以安全地释放页面哈希S锁
       rw_lock_s_unlock(m_hash_lock);
       break;
     }
 
     /* Page not in buf_pool: needs to be read from file */
+    // 页面不在缓冲池中:需要从文件读取
     read_page();
   }
 
@@ -3782,12 +3813,18 @@ struct Buf_fetch_other : public Buf_fetch<Buf_fetch_other> {
   /** Constructor.
   @param[in] page_id            Page ID of page to fetch.
   @param[in] page_size          Size of page on disk. */
+  // 构造函数
+  // @param page_id 要获取的页面ID
+  // @param page_size 磁盘上的页面大小
   Buf_fetch_other(const page_id_t &page_id, const page_size_t &page_size)
       : Buf_fetch(page_id, page_size) {}
 
   /** Fetch a block from the hash table or read from disk if necessary.
   @param[out] block             Block to fetch.
   @return DB_SUCCESS or error code. */
+  // 从哈希表中获取块,如果需要则从磁盘读取
+  // @param block 要获取的块
+  // @return DB_SUCCESS或错误码
   dberr_t get(buf_block_t *&block) noexcept;
 };
 
@@ -3795,26 +3832,33 @@ dberr_t Buf_fetch_other::get(buf_block_t *&block) noexcept {
   for (;;) {
     /* Lookup the page in the page hash. If it doesn't exist in the
     buffer pool then try and read it in from disk. */
+    // 在页面哈希表中查找页面。如果在缓冲池中不存在,则尝试从磁盘读取
 
-    ut_ad(
-        !rw_lock_own(buf_page_hash_lock_get(m_buf_pool, m_page_id), RW_LOCK_S));
+    // 确保没有持有哈希锁
+    ut_ad(!rw_lock_own(buf_page_hash_lock_get(m_buf_pool, m_page_id), RW_LOCK_S));
 
+    // 在哈希表中查找块
     block = lookup();
 
     if (block != nullptr) {
       /* Here we have MDL latches making the stale status to not change. */
+      // 这里我们有MDL锁,使得过期状态不会改变
       if (block->page.was_stale()) {
+        // 如果块是过期的,尝试释放它
         if (!buf_page_free_stale(m_buf_pool, &block->page, m_hash_lock)) {
           /* The page is during IO and can't be released. We wait some to not go
           into loop that would consume CPU. This is not something that will be
           hit frequently. */
+          // 页面正在进行IO,无法释放。等待一段时间避免CPU空转
           std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
         /* The hash lock was released, we should try again lookup for the page
         until it's gone - it should disappear eventually when the IO ends. */
+        // 哈希锁已释放,我们应该重新查找页面直到它消失 - 当IO结束时它最终会消失
         continue;
       }
 
+      // 根据是否是临时表空间采取不同的处理方式
       if (m_is_temp_space) {
         temp_space_page_handler(block);
       } else {
@@ -3822,10 +3866,12 @@ dberr_t Buf_fetch_other::get(buf_block_t *&block) noexcept {
       }
 
       /* Now safe to release page_hash S lock. */
+      // 现在可以安全地释放页面哈希S锁
       rw_lock_s_unlock(m_hash_lock);
       break;
     }
 
+    // 如果是IF_IN_POOL_OR_WATCH模式,检查是否在watch列表中
     if (m_mode == Page_fetch::IF_IN_POOL_OR_WATCH) {
       block = is_on_watch();
     }
@@ -3834,6 +3880,7 @@ dberr_t Buf_fetch_other::get(buf_block_t *&block) noexcept {
       break;
     }
 
+    // 如果是乐观获取或IF_IN_POOL_OR_WATCH模式,且未找到页面,则返回未找到
     if (is_optimistic() || m_mode == Page_fetch::IF_IN_POOL_OR_WATCH) {
       /* If it was an optimistic request, return the page only if it was
       found in the buffer pool and we haven't been able to find it then
@@ -3846,6 +3893,7 @@ dberr_t Buf_fetch_other::get(buf_block_t *&block) noexcept {
     }
 
     /* Page not in buf_pool: needs to be read from file */
+    // 页面不在缓冲池中:需要从文件读取
     read_page();
   }
 
@@ -3854,13 +3902,18 @@ dberr_t Buf_fetch_other::get(buf_block_t *&block) noexcept {
 
 template <typename T>
 buf_block_t *Buf_fetch<T>::lookup() {
+  // 获取页面对应的哈希锁
   m_hash_lock = buf_page_hash_lock_get(m_buf_pool, m_page_id);
 
+  // 获取猜测的缓冲块
   auto block = m_guess;
 
+  // 获取哈希锁的共享锁
   rw_lock_s_lock(m_hash_lock, UT_LOCATION_HERE);
 
   /* If not own LRU_list_mutex, page_hash can be changed. */
+  // 如果没有持有LRU_list_mutex,页面哈希可能会改变
+  // 确认并更新哈希锁
   m_hash_lock =
       buf_page_hash_lock_s_confirm(m_hash_lock, m_buf_pool, m_page_id);
 
@@ -3871,52 +3924,69 @@ buf_block_t *Buf_fetch<T>::lookup() {
     so we need to check the `block` pointer is still within one of the chunks
     before dereferencing it to verify it still contains the same m_page_id */
 
+    // 验证猜测的块是否有效:
+    // 1. 检查块是否在当前缓冲池实例中
+    // 2. 检查页面ID是否匹配
+    // 3. 检查块状态是否为文件页面
     if (!buf_is_block_in_instance(m_buf_pool, block) ||
         m_page_id != block->page.id ||
         buf_block_get_state(block) != BUF_BLOCK_FILE_PAGE) {
       /* Our m_guess was bogus or things have changed since. */
+      // 猜测的块无效,将其置为空
       block = m_guess = nullptr;
 
     } else {
+      // 确保块不在压缩哈希表中
       ut_ad(!block->page.in_zip_hash);
     }
   }
 
+  // 如果没有有效的猜测块,从哈希表中查找
   if (block == nullptr) {
     block = reinterpret_cast<buf_block_t *>(
         buf_page_hash_get_low(m_buf_pool, m_page_id));
   }
 
+  // 如果在哈希表中未找到块,释放锁并返回空
   if (block == nullptr) {
     rw_lock_s_unlock(m_hash_lock);
 
     return (nullptr);
   }
 
+  // 获取块的页面指针
   const auto bpage = &block->page;
 
+  // 检查是否是监视哨兵块,如果是则返回空
   if (buf_pool_watch_is_sentinel(m_buf_pool, bpage)) {
     rw_lock_s_unlock(m_hash_lock);
 
     return (nullptr);
   }
 
+  // 返回找到的块
   return (block);
 }
 
 template <typename T>
 buf_block_t *Buf_fetch<T>::is_on_watch() {
+  // 确保是IF_IN_POOL_OR_WATCH模式
   ut_ad(m_mode == Page_fetch::IF_IN_POOL_OR_WATCH);
 
+  // 获取哈希表的X锁
   rw_lock_x_lock(m_hash_lock, UT_LOCATION_HERE);
 
   /* If not own LRU_list_mutex, page_hash can be changed. */
+  // 如果没有持有LRU_list_mutex,页面哈希可能会改变
+  // 确认并更新哈希锁
   m_hash_lock =
       buf_page_hash_lock_x_confirm(m_hash_lock, m_buf_pool, m_page_id);
 
+  // 在watch列表中设置页面,并返回对应的block
   auto block = reinterpret_cast<buf_block_t *>(
       buf_pool_watch_set(m_page_id, &m_hash_lock));
 
+  // 如果没有找到block,释放哈希锁并返回nullptr
   if (block == nullptr) {
     rw_lock_x_unlock(m_hash_lock);
     return (nullptr);
@@ -3924,13 +3994,16 @@ buf_block_t *Buf_fetch<T>::is_on_watch() {
 
   /* We can release hash_lock after we increment the fix count to make
   sure that no state change takes place. */
+  // 增加fix count后可以释放哈希锁,以确保不会发生状态变化
 
+  // 根据是否是临时表空间采取不同的处理方式
   if (m_is_temp_space) {
     temp_space_page_handler(block);
   } else {
     buf_block_fix(block);
   }
 
+  // 释放哈希锁
   rw_lock_x_unlock(m_hash_lock);
 
   return (block);
@@ -4146,11 +4219,14 @@ dberr_t Buf_fetch<T>::check_state(buf_block_t *&block) {
 template <typename T>
 void Buf_fetch<T>::read_page() {
   bool success{};
+  // 判断是否为同步读取模式(非SCAN模式)
   auto sync = m_mode != Page_fetch::SCAN;
 
   if (sync) {
+    // 同步模式:直接调用buf_read_page读取页面
     success = buf_read_page(m_page_id, m_page_size, m_trx);
   } else {
+    // 异步模式:使用buf_read_page_low进行读取
     dberr_t err;
 
     auto ret = buf_read_page_low(&err, false, 0, BUF_READ_ANY_PAGE, m_page_id,
@@ -4158,26 +4234,34 @@ void Buf_fetch<T>::read_page() {
     success = ret > 0;
 
     if (success) {
+      // 读取成功,增加缓冲池读取计数
       srv_stats.buf_pool_reads.add(1);
     }
 
+    // 确保不是因为表空间被删除而失败
     ut_a(err != DB_TABLESPACE_DELETED);
 
     /* Increment number of I/O operations used for LRU policy. */
+    // 增加用于LRU策略的IO操作计数
     buf_LRU_stat_inc_io();
   }
 
   if (success) {
     if (sync) {
+      // 同步模式下,尝试随机预读
       buf_read_ahead_random(m_page_id, m_page_size, ibuf_inside(m_mtr), m_trx);
     }
+    // 重置重试计数
     m_retries = 0;
   } else if (m_retries < BUF_PAGE_READ_MAX_RETRIES) {
+    // 读取失败但未达到最大重试次数,增加重试计数
     ++m_retries;
 
+    // 调试用:模拟页面损坏重试
     DBUG_EXECUTE_IF("innodb_page_corruption_retries",
                     m_retries = BUF_PAGE_READ_MAX_RETRIES;);
   } else {
+    // 达到最大重试次数,输出错误信息并终止
     ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_74)
         << "Unable to read page " << m_page_id << " into the buffer pool after "
         << BUF_PAGE_READ_MAX_RETRIES
@@ -4192,6 +4276,7 @@ void Buf_fetch<T>::read_page() {
   }
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
+  // 调试模式:定期验证缓冲池状态
   ut_ad(fsp_skip_sanity_check(m_page_id.space()) || ++buf_dbg_counter % 5771 ||
         buf_validate());
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
@@ -4199,35 +4284,51 @@ void Buf_fetch<T>::read_page() {
 
 template <typename T>
 void Buf_fetch<T>::mtr_add_page(buf_block_t *block) {
+
+/* 2. 对Page加对应的rw_latch模式的的Latch，也就是block结构上的lock */
+  // 定义锁定类型变量
   mtr_memo_type_t fix_type;
 
+  // 创建位置信息对象,包含文件名和行号
   ut::Location loc{m_file, m_line};
 
+  // 根据不同的读写锁类型选择不同的处理方式
   switch (m_rw_latch) {
     case RW_NO_LATCH:
 
+      // 无锁模式,只需要固定缓冲页
       fix_type = MTR_MEMO_BUF_FIX;
       break;
 
     case RW_S_LATCH:
+      // 共享锁模式
+      // 获取块的共享锁
       rw_lock_s_lock_gen(&block->lock, 0, loc);
       fix_type = MTR_MEMO_PAGE_S_FIX;
       break;
 
     case RW_SX_LATCH:
+      // 共享排他锁模式
+      // 获取块的共享排他锁
       rw_lock_sx_lock_gen(&block->lock, 0, loc);
 
       fix_type = MTR_MEMO_PAGE_SX_FIX;
       break;
 
     default:
+      // 默认为排他锁模式
       ut_ad(m_rw_latch == RW_X_LATCH);
+      // 获取块的排他锁
       rw_lock_x_lock_gen(&block->lock, 0, loc);
 
       fix_type = MTR_MEMO_PAGE_X_FIX;
       break;
   }
 
+/* 最后这个block的指针以及加锁的模式还会一起记录在mtr的结构中，方便mtr commit时的释放 */
+
+  // 将块和对应的锁定类型添加到mini-transaction的memo中
+  // 这样可以确保事务结束时正确释放锁
   mtr_memo_push(m_mtr, block, fix_type);
 }
 
@@ -4325,6 +4426,7 @@ dberr_t Buf_fetch<T>::debug_check(buf_block_t *fix_block) {
 
     mutex_exit(&m_buf_pool->LRU_list_mutex);
 
+/* 1.标记page的FIX状态，阻止其被换出，这里是一个page结构上的计数器buf_fix_count */
     buf_block_fix(fix_block);
 
     buf_page_mutex_exit(fix_block);
@@ -4337,21 +4439,34 @@ dberr_t Buf_fetch<T>::debug_check(buf_block_t *fix_block) {
 
 #endif /* UNIV_DEBUG || UNIV_IBUF_DEBUG */
 
+/*
+模版，静态多态
+类似golang的接口，但是又不像
+这里有点像代码模版的组装，模版函数中编辑公共的代码，
+实现这个模版的结构体中，定义实现这个模版中需要用到的公共方法
+多个实现，就是多个结构体以及多个函数实现
+*/
 template <typename T>
 buf_block_t *Buf_fetch<T>::single_page() {
   buf_block_t *block;
 
+  // 增加缓冲池页面获取计数器
   Counter::inc(m_buf_pool->stat.m_n_page_gets, m_page_id.page_no());
 
   for (;;) {
+    // 尝试获取块,如果未找到则返回nullptr
+    // 这里就是需要实现的模版函数：获取某个page的方法，后面的逻辑是对page的检查以及处理
     if (static_cast<T *>(this)->get(block) == DB_NOT_FOUND) {
       return (nullptr);
     }
+    // 确保块不是过期的
     ut_a(!block->page.was_stale());
 
+    // 如果是乐观获取模式
     if (is_optimistic()) {
       const auto bpage = &block->page;
 
+      // 如果页面正在被读取到缓冲池中,不等待读取完成
       if (bpage->was_io_fix_read()) {
         /* The page is being read to buffer pool, but we cannot wait around for
         the read to complete. */
@@ -4362,12 +4477,14 @@ buf_block_t *Buf_fetch<T>::single_page() {
       }
     }
 
+    // 如果页面损坏且不允许访问损坏的表,则返回nullptr
     if (UNIV_UNLIKELY(block->page.is_corrupt && srv_pass_corrupt_table <= 1)) {
       buf_block_unfix(block);
 
       return (nullptr);
     }
 
+    // 检查块的状态
     switch (check_state(block)) {
       case DB_NOT_FOUND:
         return (nullptr);
@@ -4381,15 +4498,19 @@ buf_block_t *Buf_fetch<T>::single_page() {
         break;
     }
 
+    // 确保块的fix count大于0
     ut_ad(block->page.buf_fix_count > 0);
 
+    // 确保没有持有哈希锁
     ut_ad(!rw_lock_own(m_hash_lock, RW_LOCK_X));
 
     ut_ad(!rw_lock_own(m_hash_lock, RW_LOCK_S));
 
+    // 确保块状态为文件页面
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
 
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
+    // 调试模式下的额外检查
     switch (debug_check(block)) {
       case DB_NOT_FOUND:
         return (nullptr);
@@ -4416,6 +4537,7 @@ buf_block_t *Buf_fetch<T>::single_page() {
   page/block belongs to system temporary tablespace (Not much needed for
   table with single threaded access.). */
 
+  // 如果不是临时表空间,则进行调试锁定
   if (!m_is_temp_space) {
     bool ret;
     ut::Location loc{m_file, m_line};
@@ -4424,17 +4546,20 @@ buf_block_t *Buf_fetch<T>::single_page() {
   }
 #endif /* UNIV_DEBUG */
 
+  // 检查页面访问模式和状态
   ut_ad(m_mode == Page_fetch::POSSIBLY_FREED ||
         m_mode == Page_fetch::PEEK_IF_IN_POOL ||
         !block->page.file_page_was_freed);
 
   /* Check if this is the first access to the page */
+  // 检查是否是首次访问该页面
   const auto access_time = buf_page_is_accessed(&block->page);
 
   /* Don't move the page to the head of the LRU list so that the
   page can be discarded quickly if it is not accessed again. */
   if (m_mode != Page_fetch::SCAN) {
     /* This is a heuristic and we don't care about ordering issues. */
+    // 如果是首次访问,设置访问标志
     if (access_time == std::chrono::steady_clock::time_point{}) {
       buf_page_mutex_enter(block);
 
@@ -4443,12 +4568,14 @@ buf_block_t *Buf_fetch<T>::single_page() {
       buf_page_mutex_exit(block);
     }
 
+    // 如果不是PEEK_IF_IN_POOL模式,则根据需要将页面移到young区域
     if (m_mode != Page_fetch::PEEK_IF_IN_POOL) {
       buf_page_make_young_if_needed(&block->page);
     }
   }
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
+  // 调试模式下的验证
   ut_a(fsp_skip_sanity_check(m_page_id.space()) || ++buf_dbg_counter % 5771 ||
        buf_validate());
   ut_a(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
@@ -4456,6 +4583,7 @@ buf_block_t *Buf_fetch<T>::single_page() {
 
   /* We have to wait here because the IO_READ state was set under the protection
   of the hash_lock and not the block->mutex and block->lock. */
+  // 等待读取完成
   buf_wait_for_read(block, m_trx);
 
   /* Mark block as dirty if requested by caller. If not requested (false)
@@ -4465,12 +4593,15 @@ buf_block_t *Buf_fetch<T>::single_page() {
   set the dirty state to true and second mtr mark it as false the last
   updated dirty state is retained. Which means we can loose flushing of
   a modified block. */
+  // 如果请求,将块标记为脏页
   if (m_dirty_with_no_latch) {
     block->made_dirty_with_no_latch = m_dirty_with_no_latch;
   }
 
+  // 将页面添加到mini-transaction
   mtr_add_page(block);
 
+  // 如果是首次访问且不是特殊模式,尝试线性预读
   if (m_mode != Page_fetch::PEEK_IF_IN_POOL && m_mode != Page_fetch::SCAN &&
       access_time == std::chrono::steady_clock::time_point{}) {
     /* In the case of a first access, try to apply linear read-ahead */
@@ -4482,30 +4613,47 @@ buf_block_t *Buf_fetch<T>::single_page() {
   ut_ad(ibuf_count_get(block->page.id) == 0);
 #endif /* UNIV_IBUF_COUNT_DEBUG */
 
+  // 确保没有持有哈希锁
   ut_ad(!rw_lock_own(m_hash_lock, RW_LOCK_X));
   ut_ad(!rw_lock_own(m_hash_lock, RW_LOCK_S));
 
+  // 确保块不是过期的
   ut_a(!block->page.was_stale());
 
+  // 增加事务统计信息
   trx_stats::inc_page_get(m_trx, block->page.id.hash());
 
   return (block);
 }
 
+/** 获取缓冲池中的页面
+@param[in] page_id 页面ID
+@param[in] page_size 页面大小
+@param[in] rw_latch 读写锁类型(RW_S_LATCH/RW_X_LATCH/RW_SX_LATCH/RW_NO_LATCH)
+@param[in] guess 猜测的缓冲块指针
+@param[in] mode 获取模式
+@param[in] location 调用位置信息
+@param[in] mtr mini-transaction
+@param[in] dirty_with_no_latch 是否在无锁的情况下将页面标记为脏页
+@return 缓冲块指针 */
 buf_block_t *buf_page_get_gen(const page_id_t &page_id,
                               const page_size_t &page_size, ulint rw_latch,
                               buf_block_t *guess, Page_fetch mode,
                               ut::Location location, mtr_t *mtr,
                               bool dirty_with_no_latch) {
 #ifdef UNIV_DEBUG
+  // 确保mini-transaction处于活动状态
   ut_ad(mtr->is_active());
 
+  // 验证读写锁类型的有效性
   ut_ad(rw_latch == RW_S_LATCH || rw_latch == RW_X_LATCH ||
         rw_latch == RW_SX_LATCH || rw_latch == RW_NO_LATCH);
 
+  // 验证insert buffer相关条件
   ut_ad(!ibuf_inside(mtr) ||
         ibuf_page_low(page_id, page_size, false, location, nullptr));
 
+  // 检查获取模式的有效性
   switch (mode) {
     case Page_fetch::NO_LATCH:
       ut_ad(rw_latch == RW_NO_LATCH);
@@ -4523,6 +4671,7 @@ buf_block_t *buf_page_get_gen(const page_id_t &page_id,
       ut_error;
   }
 
+  // 验证页面大小的一致性
   bool found;
   const page_size_t &space_page_size =
       fil_space_get_page_size(page_id.space(), &found);
@@ -4530,9 +4679,19 @@ buf_block_t *buf_page_get_gen(const page_id_t &page_id,
   ut_ad(!found || page_size.equals_to(space_page_size));
 #endif /* UNIV_DEBUG */
 
+  // 根据不同情况选择不同的获取方式
+  // todo 这两种方式有什么区别，什么时候用哪种
   if (mode == Page_fetch::NORMAL && !fsp_is_system_temporary(page_id.space())) {
+    // 普通获取方式
+    /*
+    用于常规的页面获取
+实现更简单直接
+不处理临时表空间的特殊情况
+不支持 watch 模式
+    */
     Buf_fetch_normal fetch(page_id, page_size);
 
+    // 设置获取参数
     fetch.m_rw_latch = rw_latch;
     fetch.m_guess = guess;
     fetch.m_mode = mode;
@@ -4544,8 +4703,17 @@ buf_block_t *buf_page_get_gen(const page_id_t &page_id,
     return (fetch.single_page());
 
   } else {
+    // 其他获取方式
+    /*
+    支持更多的获取模式和特殊情况
+增加了对临时表空间的特殊处理
+支持 IF_IN_POOL_OR_WATCH 模式
+支持乐观获取模式
+实现更复杂，处理更多边界情况
+    */
     Buf_fetch_other fetch(page_id, page_size);
 
+    // 设置获取参数
     fetch.m_rw_latch = rw_latch;
     fetch.m_guess = guess;
     fetch.m_mode = mode;

@@ -1130,43 +1130,46 @@ class copyable_atomic_t : public std::atomic<T> {
 };
 
 using buf_fix_count_atomic_t = copyable_atomic_t<uint32_t>;
+// buf_block_t 和 buf_page_t 可以做强制类型转换
 class buf_page_t {
  public:
   /** Copy constructor.
   @param[in] other       Instance to copy from. */
+  // 拷贝构造函数,从另一个实例复制数据
   buf_page_t(const buf_page_t &other)
-      : id(other.id),
-        size(other.size),
-        buf_fix_count(other.buf_fix_count),
-        io_fix(other.io_fix),
-        state(other.state),
-        flush_type(other.flush_type),
-        buf_pool_index(other.buf_pool_index),
+      : id(other.id),                // 页面ID
+        size(other.size),            // 页面大小
+        buf_fix_count(other.buf_fix_count),  // buffer fix计数器
+        io_fix(other.io_fix),        // IO操作状态
+        state(other.state),          // 页面状态
+        flush_type(other.flush_type),  // 刷新类型
+        buf_pool_index(other.buf_pool_index),  // buffer pool索引
 #ifndef UNIV_HOTBACKUP
-        hash(other.hash),
+        hash(other.hash),            // 哈希链表节点
 #endif /* !UNIV_HOTBACKUP */
-        list(other.list),
-        newest_modification(other.newest_modification),
-        oldest_modification(other.oldest_modification),
-        LRU(other.LRU),
-        zip(other.zip)
+        list(other.list),            // 链表节点
+        newest_modification(other.newest_modification),  // 最新修改LSN
+        oldest_modification(other.oldest_modification),  // 最早修改LSN
+        LRU(other.LRU),              // LRU链表节点
+        zip(other.zip)               // 压缩页信息
 #ifndef UNIV_HOTBACKUP
         ,
-        m_flush_observer(other.m_flush_observer),
-        m_space(other.m_space),
-        freed_page_clock(other.freed_page_clock),
-        m_version(other.m_version),
-        access_time(other.access_time),
-        m_dblwr_id(other.m_dblwr_id),
-        old(other.old)
+        m_flush_observer(other.m_flush_observer),  // 刷新观察者
+        m_space(other.m_space),      // 表空间对象
+        freed_page_clock(other.freed_page_clock),  // 释放页面时钟
+        m_version(other.m_version),   // 表空间版本号
+        access_time(other.access_time), // 首次访问时间
+        m_dblwr_id(other.m_dblwr_id),  // 双写缓冲区ID
+        old(other.old)                // 是否为旧页面标记
 #ifdef UNIV_DEBUG
         ,
-        file_page_was_freed(other.file_page_was_freed),
-        in_flush_list(other.in_flush_list),
-        in_free_list(other.in_free_list),
-        in_LRU_list(other.in_LRU_list),
-        in_page_hash(other.in_page_hash),
-        in_zip_hash(other.in_zip_hash)
+        // 调试用标记
+        file_page_was_freed(other.file_page_was_freed),  // 页面是否已释放
+        in_flush_list(other.in_flush_list),    // 是否在flush链表中
+        in_free_list(other.in_free_list),      // 是否在空闲链表中
+        in_LRU_list(other.in_LRU_list),        // 是否在LRU链表中
+        in_page_hash(other.in_page_hash),      // 是否在页面哈希表中
+        in_zip_hash(other.in_zip_hash)         // 是否在压缩页哈希表中
 #endif /* UNIV_DEBUG */
 #endif /* !UNIV_HOTBACKUP */
   {
@@ -1176,19 +1179,23 @@ class buf_page_t {
   }
 
 #ifndef UNIV_HOTBACKUP
-  /** Set the doublewrite buffer ID.
+ /** Set the doublewrite buffer ID.
   @param[in]  batch_id  Double write batch ID that flushed the page. */
+  // 设置双写缓冲区ID
   void set_dblwr_batch_id(uint16_t batch_id) { m_dblwr_id = batch_id; }
 
   /** @return the double write batch id, or uint16_t max if undefined. */
+  // 获取双写缓冲区批次ID
   [[nodiscard]] uint16_t get_dblwr_batch_id() const { return (m_dblwr_id); }
 
   /** Retrieve the tablespace id.
   @return tablespace id */
+  // 获取表空间ID
   [[nodiscard]] space_id_t space() const noexcept { return id.space(); }
 
   /** Retrieve the page number.
   @return page number */
+  // 获取页号
   [[nodiscard]] page_no_t page_no() const noexcept { return id.page_no(); }
 
   /** Checks if this space reference saved during last page ID initialization
@@ -1196,6 +1203,7 @@ class buf_page_t {
   @return true when space reference stored leads was deleted or truncated and
   this page should be discarded. Result is up to date until the fil_shard mutex
   is released. */
+  // 检查上次页面ID初始化时保存的表空间引用是否已被删除或截断
   inline bool is_stale() const {
     ut_a(m_space != nullptr);
     ut_a(id.space() == m_space->id);
@@ -1213,6 +1221,7 @@ class buf_page_t {
   @return true when space reference stored leads was deleted or truncated and
   this page should be discarded. When false is returned, the status of stale is
   checked to be guaranteed. */
+  // 检查上次页面ID初始化时保存的表空间引用是否已被删除或截断
   inline bool was_stale() const {
     ut_a(m_space != nullptr);
     ut_a(id.space() == m_space->id);
@@ -1235,11 +1244,13 @@ class buf_page_t {
   other mean to assure the page will not be freed. After that is released the
   space object may be freed.
   @return tablespace object */
+  // 获取表空间对象(如果在页面ID初始化时可用)
   inline fil_space_t *get_space() const { return m_space; }
 
   /** Sets stored page ID to the new value. Handles space object reference
   count.
   @param[in]    new_page_id  new page ID to be set. */
+  // 设置新的页面ID,处理表空间对象引用计数
   inline void reset_page_id(page_id_t new_page_id) {
     if (m_space != nullptr) {
       /* If we reach this line through a call chain:
@@ -1256,6 +1267,7 @@ class buf_page_t {
 
   /** Sets stored value to invalid/empty value. Handles space object reference
   count. */
+  // 将存储的值设置为无效/空值,处理表空间对象引用计数
   inline void reset_page_id() {
     reset_page_id(page_id_t(UINT32_UNDEFINED, UINT32_UNDEFINED));
   }
@@ -1263,6 +1275,7 @@ class buf_page_t {
  private:
   /** Updates new space reference and acquires "reference count latch" and the
   current version of the space object. */
+  // 更新新的表空间引用并获取"引用计数锁"和表空间对象的当前版本
   inline void space_id_changed() {
     m_space = nullptr;
     m_version = 0;
@@ -1279,10 +1292,12 @@ class buf_page_t {
 
  public:
   /** @return the flush observer instance. */
+  // 获取刷新观察者实例
   Flush_observer *get_flush_observer() noexcept { return m_flush_observer; }
 
   /** Set the flush observer for the page.
   @param[in] flush_observer     The flush observer to set. */
+  // 设置页面的刷新观察者
   void set_flush_observer(Flush_observer *flush_observer) noexcept {
     /* Don't allow to set flush observer from non-null to null, or from one
     observer to another. */
@@ -1291,31 +1306,39 @@ class buf_page_t {
   }
 
   /** Remove the flush observer. */
+  // 移除刷新观察者
   void reset_flush_observer() noexcept { m_flush_observer = nullptr; }
 #endif /* !UNIV_HOTBACKUP */
 
   /** @return the LSN of the latest modification. */
+  // 获取最新修改的LSN
   lsn_t get_newest_lsn() const noexcept { return newest_modification; }
 
   /** @return the LSN of the first modification since the last time
   it was clean. */
+  // 获取上次清理后第一次修改的LSN
   lsn_t get_oldest_lsn() const noexcept { return oldest_modification; }
 
   /** @return true if the page is dirty. */
+  // 判断页面是否为脏页
   bool is_dirty() const noexcept { return get_oldest_lsn() > 0; }
 
   /** Set the latest modification LSN.
   @param[in] lsn                Latest modification lSN. */
+  // 设置最新修改的LSN
   void set_newest_lsn(lsn_t lsn) noexcept { newest_modification = lsn; }
 
   /** Set the LSN when the page is modified for the first time.
   @param[in] lsn                First modification LSN. */
+  // 设置页面首次修改时的LSN
   void set_oldest_lsn(lsn_t lsn) noexcept;
 
   /** Set page to clean state. */
+  // 将页面设置为干净状态
   void set_clean() noexcept { set_oldest_lsn(0); }
 
   /** Set page to clean state (used in buf_page_init_low()). */
+  // 将页面设置为干净状态(用于buf_page_init_low())
   void set_clean_low() noexcept { oldest_modification = 0; }
 
   /** @name General fields
@@ -1325,14 +1348,10 @@ class buf_page_t {
   machine word.  */
   /** @{ */
 
-  /** Page id. */
-  page_id_t id;
-
-  /** Page size. */
-  page_size_t size;
-
   /** Count of how many fold this block is currently bufferfixed. */
-  buf_fix_count_atomic_t buf_fix_count;
+  page_id_t id;           // 页面ID
+  page_size_t size;       // 页面大小
+  buf_fix_count_atomic_t buf_fix_count;  // buffer fix计数器,原子类型
 
  private:
   /** Type of pending I/O operation.
@@ -1698,27 +1717,33 @@ struct alignas(alignof(uint64_t)) btr_search_prefix_info_t {
 };
 
 /** The buffer control block structure */
+/** 缓冲控制块结构 */
 struct buf_block_t {
   /** @name General fields */
   /** @{ */
 
   /** page information; this must be the first field, so
   that buf_pool->page_hash can point to buf_page_t or buf_block_t */
+  /** 页面信息;必须是第一个字段,这样buf_pool->page_hash才能指向buf_page_t或buf_block_t */
   buf_page_t page;
 
 #ifndef UNIV_HOTBACKUP
   /** read-write lock of the buffer frame */
+  /** 缓冲帧的读写锁 */
   BPageLock lock;
 
 #endif /* UNIV_HOTBACKUP */
 
   /** pointer to buffer frame which is of size UNIV_PAGE_SIZE, and aligned
   to an address divisible by UNIV_PAGE_SIZE */
+  /** 指向缓冲帧的指针,大小为UNIV_PAGE_SIZE,并按UNIV_PAGE_SIZE对齐 */
   byte *frame;
 
   /** node of the decompressed LRU list; a block is in the unzip_LRU list if
   page.state == BUF_BLOCK_FILE_PAGE and page.zip.data != NULL. Protected by
   both LRU_list_mutex and the block mutex. */
+  /** 解压缩LRU列表的节点;如果page.state == BUF_BLOCK_FILE_PAGE且page.zip.data != NULL,
+  则块在unzip_LRU列表中。受LRU_list_mutex和block mutex保护。*/
   UT_LIST_NODE_T(buf_block_t) unzip_LRU;
 #ifdef UNIV_DEBUG
 
@@ -1731,6 +1756,7 @@ struct buf_block_t {
   /** @} */
 
   /** Structure that holds most AHI-related fields. */
+  /** 保存大多数AHI(自适应哈希索引)相关字段的结构 */
   struct ahi_t {
    public:
     /** Recommended prefix info for hash search. It is atomically copied
@@ -1738,6 +1764,8 @@ struct buf_block_t {
     eventually get to the block's actual prefix info used. It is used to decide
     when the n_hash_helps should be reset. It is modified only while having S-
     or X- latch on block's lock. */
+    /** Recommended prefix info for hash search. */
+    /** 哈希搜索的推荐前缀信息 */
     std::atomic<btr_search_prefix_info_t> recommended_prefix_info;
     /** Prefix info that was used for building hash index. It cannot be modified
     while there are any record entries added in the AHI. It's invariant that all
@@ -1820,6 +1848,7 @@ struct buf_block_t {
   but having it outside causes the made_dirty_with_no_latch to occupy the common
   8byte aligned 8byte long space, so basically it saves us 8bytes of the object
   that is used in high volumes. */
+  /** 控制当前前缀推荐在搜索中帮助次数的计数器 */
   std::atomic<uint32_t> n_hash_helps;
   /** true if block has been made dirty without acquiring X/SX latch as the
   block belongs to temporary tablespace and block is always accessed by a
@@ -1846,6 +1875,7 @@ struct buf_block_t {
   this field may be changed if the thread (1) owns the LRU list mutex and the
   page is not bufferfixed, or (2) the thread has an x-latch on the block,
   or (3) the block must belong to an intrinsic table */
+  /** 每当页面上的记录指针可能过时时,此时钟就会增加 */
   uint64_t modify_clock;
 
   /** @} */
@@ -2197,34 +2227,44 @@ struct buf_pool_t {
      buf_pool_t
    - writing to buf_pool_should_madvise requires holding these latches
      for all buf_pool_t-s */
+  // 保护chunks的分配和释放的互斥锁
   BufListMutex chunks_mutex;
 
   /** LRU list mutex */
+  // LRU列表的互斥锁
   BufListMutex LRU_list_mutex;
 
   /** free and withdraw list mutex */
+  // 空闲列表和撤回列表的互斥锁
   BufListMutex free_list_mutex;
 
   /** buddy allocator mutex */
+  // 伙伴分配器的互斥锁
   BufListMutex zip_free_mutex;
 
   /** zip_hash mutex */
+  // 压缩哈希表的互斥锁
   BufListMutex zip_hash_mutex;
 
   /** Flush state protection mutex */
+  // 刷新状态保护的互斥锁
   ib_mutex_t flush_state_mutex;
 
   /** Zip mutex of this buffer pool instance, protects compressed only pages (of
   type buf_page_t, not buf_block_t */
+  // 缓冲池实例的压缩互斥锁,保护压缩页(buf_page_t类型,非buf_block_t类型)
   BufPoolZipMutex zip_mutex;
 
   /** Array index of this buffer pool instance */
+  // 此缓冲池实例在数组中的索引
   ulint instance_no;
 
   /** Current pool size in bytes */
+  // 当前缓冲池大小(字节)
   ulint curr_pool_size;
 
   /** Reserve this much of the buffer pool for "old" blocks */
+  // 为"旧"块保留的缓冲池空间大小
   ulint LRU_old_ratio;
 #ifdef UNIV_DEBUG
   /** Number of frames allocated from the buffer pool to the buddy system.
@@ -2233,12 +2273,15 @@ struct buf_pool_t {
 #endif
 
   /** Number of buffer pool chunks */
+  // 缓冲池块的数量
   volatile ulint n_chunks;
 
   /** New number of buffer pool chunks */
+  // 新的缓冲池块数量
   volatile ulint n_chunks_new;
 
   /** buffer pool chunks */
+  // 缓冲池块数组
   buf_chunk_t *chunks;
 
   /** old buffer pool chunks to be freed after resizing buffer pool */
@@ -2255,18 +2298,23 @@ struct buf_pool_t {
   page_no_t read_ahead_area;
 
   /** Hash table of buf_page_t or buf_block_t file pages, buf_page_in_file() ==
-  true, indexed by (space_id, offset).  page_hash is protected by an array of
+  true, indexed by (space_id, offset). page_hash is protected by an array of
   mutexes. */
+  // 文件页的哈希表,由(space_id, offset)索引,受互斥锁数组保护
+  // ToDo 怎么是通过page_id的哈希进行查找的？定位到后然后才是(space_id, offset)？？
   hash_table_t *page_hash;
 
   /** Hash table of buf_block_t blocks whose frames are allocated to the zip
   buddy system, indexed by block->frame */
+  // 分配给zip伙伴系统的buf_block_t块的哈希表,由block->frame索引
   hash_table_t *zip_hash;
 
   /** Number of pending read operations. Accessed atomically */
+  // 待处理的读操作数量,原子访问
   std::atomic<ulint> n_pend_reads;
 
-  /** number of pending decompressions.  Accessed atomically. */
+  /** number of pending decompressions. Accessed atomically. */
+  // 待处理的解压操作数量,原子访问
   std::atomic<ulint> n_pend_unzip;
 
   /** when buf_print_io was last time called. Accesses not protected. */
@@ -2301,6 +2349,7 @@ struct buf_pool_t {
   FlushHp oldest_hp;
 
   /** Base node of the modified block list */
+  // 已修改块列表的基节点
   UT_LIST_BASE_NODE_T(buf_page_t, list) flush_list;
 
   /** This is true when a flush of the given type is being initialized.
@@ -2354,6 +2403,7 @@ struct buf_pool_t {
   /** @{ */
 
   /** Base node of the free block list */
+  // 空闲块列表的基节点
   UT_LIST_BASE_NODE_T(buf_page_t, list) free;
 
   /** base node of the withdraw block list. It is only used during shrinking
@@ -2377,6 +2427,7 @@ struct buf_pool_t {
   LRUItr single_scan_itr;
 
   /** Base node of the LRU list */
+  // LRU列表的基节点
   UT_LIST_BASE_NODE_T(buf_page_t, LRU) LRU;
 
   /** Pointer to the about LRU_old_ratio/BUF_LRU_OLD_RATIO_DIV oldest blocks in
@@ -2411,6 +2462,8 @@ struct buf_pool_t {
   /** Sentinel records for buffer pool watches. Scanning the array is protected
   by taking all page_hash latches in X. Updating or reading an individual
   watch page is protected by a corresponding individual page_hash latch. */
+  // 缓冲池监视的哨兵记录。扫描数组需要获取所有page_hash的X锁。
+  // 更新或读取单个监视页需要获取相应的page_hash锁。
   buf_page_t *watch;
 
   /** A wrapper for buf_pool_t::allocator.alocate_large which also advices the
@@ -2487,8 +2540,11 @@ Use these instead of accessing buffer pool mutexes directly. */
   } while (0)
 
 /** Get appropriate page_hash_lock. */
+/** 获取适当的页面哈希锁 */
 inline rw_lock_t *buf_page_hash_lock_get(const buf_pool_t *buf_pool,
                                          const page_id_t page_id) {
+  // 根据缓冲池的页面哈希表和页面ID的哈希值获取对应的读写锁
+  // 这个锁用于保护页面哈希表中的特定桶(bucket)
   return hash_get_lock(buf_pool->page_hash, page_id.hash());
 }
 

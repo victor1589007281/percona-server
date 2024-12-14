@@ -844,33 +844,42 @@ static inline buf_pool_t *buf_pool_from_array(
 }
 
 /** Returns the control block of a file page, NULL if not found.
-@param[in]      buf_pool        buffer pool instance
+@param[in]      buf_pool        buffer pool instance 
 @param[in]      page_id         page id
 @return block, NULL if not found */
 static inline buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool,
                                                 const page_id_t &page_id) {
+  // 声明一个缓冲页指针
   buf_page_t *bpage;
 
 #ifdef UNIV_DEBUG
+  // 在调试模式下获取哈希表的读写锁
   rw_lock_t *hash_lock;
 
   hash_lock = hash_get_lock(buf_pool->page_hash, page_id.hash());
+  // 断言:当前线程持有哈希表的X锁或S锁
   ut_ad(rw_lock_own(hash_lock, RW_LOCK_X) || rw_lock_own(hash_lock, RW_LOCK_S));
 #endif /* UNIV_DEBUG */
 
   /* Look for the page in the hash table */
 
+  // 在哈希表中查找页面
   HASH_SEARCH(hash, buf_pool->page_hash, page_id.hash(), buf_page_t *, bpage,
+              // 断言:页面在page_hash中,不在zip_hash中,且是文件页面
               ut_ad(bpage->in_page_hash && !bpage->in_zip_hash &&
                     buf_page_in_file(bpage)),
+              // 匹配条件:页面ID相等
               page_id == bpage->id);
+
   if (bpage) {
-    ut_a(buf_page_in_file(bpage));
-    ut_ad(bpage->in_page_hash);
-    ut_ad(!bpage->in_zip_hash);
-    ut_ad(buf_pool_from_bpage(bpage) == buf_pool);
+    // 如果找到页面,进行一系列断言验证
+    ut_a(buf_page_in_file(bpage));  // 断言:是文件页面
+    ut_ad(bpage->in_page_hash);     // 断言:在page_hash中
+    ut_ad(!bpage->in_zip_hash);     // 断言:不在zip_hash中
+    ut_ad(buf_pool_from_bpage(bpage) == buf_pool);  // 断言:属于正确的缓冲池
   }
 
+  // 返回找到的页面控制块,如果没找到则返回NULL
   return (bpage);
 }
 

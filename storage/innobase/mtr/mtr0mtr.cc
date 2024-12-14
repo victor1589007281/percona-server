@@ -235,44 +235,56 @@ bool mtr_t::conflicts_with(const mtr_t *mtr2) const {
 
 /** Release latches and decrement the buffer fix count.
 @param[in]      slot    memo slot */
+// 释放闩锁并减少缓冲区固定计数
 static void memo_slot_release(mtr_memo_slot_t *slot) {
   switch (slot->type) {
 #ifndef UNIV_HOTBACKUP
     buf_block_t *block;
 #endif /* !UNIV_HOTBACKUP */
 
-    case MTR_MEMO_BUF_FIX:
-    case MTR_MEMO_PAGE_S_FIX:
-    case MTR_MEMO_PAGE_SX_FIX:
-    case MTR_MEMO_PAGE_X_FIX:
+    // 根据不同的slot类型进行相应的释放操作
+    case MTR_MEMO_BUF_FIX:     // 缓冲区固定
+    case MTR_MEMO_PAGE_S_FIX:  // 页面共享锁固定
+    case MTR_MEMO_PAGE_SX_FIX: // 页面共享排他锁固定  
+    case MTR_MEMO_PAGE_X_FIX:  // 页面排他锁固定
 #ifndef UNIV_HOTBACKUP
+      // 将slot中的对象转换为缓冲区块
       block = reinterpret_cast<buf_block_t *>(slot->object);
 
+      // 释放页面闩锁
+      /* 2. 释放Page的锁，block->lock */
       buf_page_release_latch(block, slot->type);
       /* The buf_page_release_latch(block,..) call was last action dereferencing
       the `block`, so we can unfix the `block` now, but not sooner.*/
+      // 解除缓冲区块的固定
+      /* 1. 对Page UNFIX，即buf_fix_count-- */
       buf_block_unfix(block);
 #endif /* !UNIV_HOTBACKUP */
       break;
 
-    case MTR_MEMO_S_LOCK:
+    case MTR_MEMO_S_LOCK:  // 共享锁
+      // 释放共享锁
       rw_lock_s_unlock(reinterpret_cast<rw_lock_t *>(slot->object));
       break;
 
-    case MTR_MEMO_SX_LOCK:
+    case MTR_MEMO_SX_LOCK: // 共享排他锁
+      // 释放共享排他锁
       rw_lock_sx_unlock(reinterpret_cast<rw_lock_t *>(slot->object));
       break;
 
-    case MTR_MEMO_X_LOCK:
+    case MTR_MEMO_X_LOCK:  // 排他锁
+      // 释放排他锁
       rw_lock_x_unlock(reinterpret_cast<rw_lock_t *>(slot->object));
       break;
 
 #ifdef UNIV_DEBUG
     default:
+      // 在调试模式下,确保其他类型只能是MTR_MEMO_MODIFY
       ut_ad(slot->type == MTR_MEMO_MODIFY);
 #endif /* UNIV_DEBUG */
   }
 
+  // 清空slot中的对象指针
   slot->object = nullptr;
 }
 
@@ -728,42 +740,64 @@ void mtr_t::x_lock_space(fil_space_t *space, ut::Location location) {
 }
 
 /** Release an object in the memo stack. */
+/** 释放memo栈中的一个对象 */
+//可以释放任何类型的对象(页面、锁等)
 void mtr_t::memo_release(const void *object, ulint type) {
+  // 检查MTR的魔数是否正确
   ut_ad(m_impl.m_magic_n == MTR_MAGIC_N);
+  // 检查MTR是否处于活动状态
   ut_ad(is_active());
 
   /* We cannot release a page that has been written to in the
   middle of a mini-transaction. */
+  /* 不能在mini-transaction过程中释放已经被写入的页面 */
   ut_ad(!m_impl.m_modifications || type != MTR_MEMO_PAGE_X_FIX);
 
+  // 创建Find对象用于查找指定的对象和类型
+  // 这里查找指定的对象，是根据object和type来查找的
   Find find(object, type);
+  // 创建迭代器用于遍历memo栈
   Iterate<Find> iterator(find);
 
+  // 从后向前遍历memo栈的每个block
+  // 如果找到了对象(返回false),则释放对应的slot
   if (!m_impl.m_memo.for_each_block_in_reverse(iterator)) {
+    // 调用memo_slot_release释放找到的slot
     memo_slot_release(find.m_slot);
   }
 }
 
 /** Release a page latch.
-@param[in]      ptr     pointer to within a page frame
+@param[in]      ptr     pointer to within a page frame 
 @param[in]      type    object type: MTR_MEMO_PAGE_X_FIX, ... */
+//专门用于释放页面闩锁(page latch)
 void mtr_t::release_page(const void *ptr, mtr_memo_type_t type) {
+  // 检查MTR的魔数是否正确
   ut_ad(m_impl.m_magic_n == MTR_MAGIC_N);
+  // 检查MTR是否处于活动状态
   ut_ad(is_active());
 
   /* We cannot release a page that has been written to in the
   middle of a mini-transaction. */
+  /* 不能在mini-transaction过程中释放已经被写入的页面 */
   ut_ad(!m_impl.m_modifications || type != MTR_MEMO_PAGE_X_FIX);
 
+  // 创建Find_page对象用于查找指定的页面和类型
+  // 这里查找指定的页面，是根据ptr和type来查找的
   Find_page find(ptr, type);
+  // 创建迭代器用于遍历memo栈
   Iterate<Find_page> iterator(find);
 
+  // 从后向前遍历memo栈的每个block
+  // 如果找到了页面(返回false),则释放对应的slot
   if (!m_impl.m_memo.for_each_block_in_reverse(iterator)) {
+    // 调用memo_slot_release释放找到的slot
     memo_slot_release(find.get_slot());
     return;
   }
 
   /* The page was not found! */
+  /* 页面未找到,报错! */
   ut_d(ut_error);
 }
 

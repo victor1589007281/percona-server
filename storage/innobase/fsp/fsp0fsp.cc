@@ -298,7 +298,12 @@ bool fsp_is_session_temporary(space_id_t space_id) {
 /** Check if tablespace is system temporary.
 @param[in]      space_id        tablespace ID
 @return true if tablespace is system temporary. */
+/* 检查表空间是否为系统临时表空间
+@param[in]      space_id        表空间ID 
+@return 如果是系统临时表空间则返回true */
 bool fsp_is_system_temporary(space_id_t space_id) {
+  /* 判断表空间是否为全局临时表空间或会话临时表空间
+     如果是其中任意一种,则返回true */
   return (fsp_is_global_temporary(space_id) ||
           fsp_is_session_temporary(space_id));
 }

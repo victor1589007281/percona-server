@@ -5463,83 +5463,83 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
 [[nodiscard]] static dberr_t os_file_read_page(
     IORequest &type, const char *file_name, os_file_t file, void *buf,
     os_offset_t offset, ulint n, ulint *o, bool exit_on_err, trx_t *trx) {
-  dberr_t err(DB_ERROR_UNSET);
+  dberr_t err(DB_ERROR_UNSET); // 初始化错误状态为未设置
 
 #ifdef UNIV_HOTBACKUP
-  static meb::Mutex meb_mutex;
+  static meb::Mutex meb_mutex; // 定义静态互斥锁
 
-  meb_mutex.lock();
+  meb_mutex.lock(); // 锁定互斥锁以保护共享资源
 #endif /* UNIV_HOTBACKUP */
-  os_bytes_read_since_printout += n;
+  os_bytes_read_since_printout += n; // 更新读取的字节数
 #ifdef UNIV_HOTBACKUP
-  meb_mutex.unlock();
+  meb_mutex.unlock(); // 解锁互斥锁
 #endif /* UNIV_HOTBACKUP */
 
-  ut_ad(type.validate());
-  ut_ad(n > 0);
+  ut_ad(type.validate()); // 验证IO请求类型
+  ut_ad(n > 0); // 确保读取的字节数大于0
 
-  for (;;) {
-    ssize_t n_bytes;
+  for (;;) { // 循环读取直到成功或发生错误
+    ssize_t n_bytes; // 实际读取的字节数
 
-    n_bytes = os_file_pread(type, file, buf, n, offset, trx, &err);
+    n_bytes = os_file_pread(type, file, buf, n, offset, trx, &err); // 执行读取操作
 
     if (o != nullptr) {
-      *o = n_bytes;
+      *o = n_bytes; // 如果提供了输出参数，记录实际读取的字节数
     }
 
     if (err == DB_IO_DECRYPT_FAIL) {
-      return err;
+      return err; // 如果解密失败，返回错误
 
     } else if (err != DB_SUCCESS && !exit_on_err) {
-      return err;
+      return err; // 如果发生错误且不要求退出，返回错误
 
-    } else if ((ulint)n_bytes == n) {
+    } else if ((ulint)n_bytes == n) { // 如果读取的字节数等于请求的字节数
       /** The read will succeed but decompress can fail
       for various reasons. */
 
-      if (type.is_compression_enabled() &&
+      if (type.is_compression_enabled() && // 如果启用了压缩
           !Compression::is_compressed_page(static_cast<byte *>(buf))) {
-        return (DB_SUCCESS);
+        return (DB_SUCCESS); // 返回成功
 
       } else {
-        return (err);
+        return (err); // 返回错误
       }
     }
 
-    const auto fd_path = os_file_find_path_for_fd(file);
+    const auto fd_path = os_file_find_path_for_fd(file); // 获取文件描述符的路径
     if (!fd_path.empty()) {
       ib::error(ER_IB_MSG_817)
           << "Tried to read " << n << " bytes at offset " << offset
           << ", but was only able to read " << n_bytes << " of FD " << file
-          << ", filename " << fd_path;
+          << ", filename " << fd_path; // 记录读取失败的错误信息
     } else {
       ib::error(ER_IB_MSG_817)
           << "Tried to read " << n << " bytes at offset " << offset
-          << ", but was only able to read " << n_bytes;
+          << ", but was only able to read " << n_bytes; // 记录读取失败的错误信息
     }
 
-    if (exit_on_err) {
+    if (exit_on_err) { // 如果要求在错误时退出
       if (!os_file_handle_error(file_name, "read")) {
         /* Hard error */
-        break;
+        break; // 处理错误并退出循环
       }
 
     } else if (!os_file_handle_error_no_exit(file_name, "read", false)) {
       /* Hard error */
-      break;
+      break; // 处理错误并退出循环
     }
 
-    if (n_bytes > 0 && (ulint)n_bytes < n) {
-      n -= (ulint)n_bytes;
-      offset += (ulint)n_bytes;
-      buf = reinterpret_cast<uchar *>(buf) + (ulint)n_bytes;
+    if (n_bytes > 0 && (ulint)n_bytes < n) { // 如果读取的字节数小于请求的字节数
+      n -= (ulint)n_bytes; // 减少剩余要读取的字节数
+      offset += (ulint)n_bytes; // 更新偏移量
+      buf = reinterpret_cast<uchar *>(buf) + (ulint)n_bytes; // 更新缓冲区指针
     }
   }
 
   ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_818)
-      << "Cannot read from file. OS error number " << errno << ".";
+      << "Cannot read from file. OS error number " << errno << "."; // 记录致命错误信息
 
-  return (err);
+  return (err); // 返回错误
 }
 
 /** Retrieves the last error number if an error occurs in a file io function.
@@ -7365,26 +7365,26 @@ dberr_t os_aio_func(IORequest &type, AIO_mode aio_mode, const char *name,
                     bool read_only, fil_node_t *m1, void *m2,
                     space_id_t space_id, trx_t *trx, bool should_buffer) {
 #ifdef WIN_ASYNC_IO
-  BOOL ret = TRUE;
+  BOOL ret = TRUE; // Windows异步I/O的返回值
 #endif /* WIN_ASYNC_IO */
 
-  const file::Block *e_block = type.get_encrypted_block();
+  const file::Block *e_block = type.get_encrypted_block(); // 获取加密块
 
 #ifdef UNIV_DEBUG
   if (type.is_write() && e_block != nullptr) {
-    ut_ad(os_block_get_frame(e_block) == buf);
+    ut_ad(os_block_get_frame(e_block) == buf); // 确保加密块与缓冲区一致
   }
 #endif /* UNIV_DEBUG */
 
-  ut_ad(n > 0);
-  ut_ad((n % OS_FILE_LOG_BLOCK_SIZE) == 0);
-  ut_ad((offset % OS_FILE_LOG_BLOCK_SIZE) == 0);
+  ut_ad(n > 0); // 确保读取的字节数大于0
+  ut_ad((n % OS_FILE_LOG_BLOCK_SIZE) == 0); // 确保字节数是日志块大小的倍数
+  ut_ad((offset % OS_FILE_LOG_BLOCK_SIZE) == 0); // 确保偏移量是日志块大小的倍数
 #ifndef UNIV_HOTBACKUP
-  ut_ad(os_aio_validate_skip());
+  ut_ad(os_aio_validate_skip()); // 验证跳过AIO
 #endif /* !UNIV_HOTBACKUP */
 
 #ifdef WIN_ASYNC_IO
-  ut_ad((n & 0xFFFFFFFFUL) == n);
+  ut_ad((n & 0xFFFFFFFFUL) == n); // 确保n在32位范围内
 #endif /* WIN_ASYNC_IO */
 
   if (aio_mode == AIO_mode::SYNC) {
@@ -7401,82 +7401,82 @@ dberr_t os_aio_func(IORequest &type, AIO_mode aio_mode, const char *name,
     and os_file_write_func() */
 
     if (type.is_read()) {
-      return (os_file_read_func(type, name, file.m_file, buf, offset, n, trx));
+      return (os_file_read_func(type, name, file.m_file, buf, offset, n, trx)); // 处理读取请求
     }
 
     ut_ad(type.is_write());
-    return (os_file_write_func(type, name, file.m_file, buf, offset, n));
+    return (os_file_write_func(type, name, file.m_file, buf, offset, n)); // 处理写入请求
   }
 
 try_again:
 
-  auto array = AIO::select_slot_array(type, read_only, aio_mode);
+  auto array = AIO::select_slot_array(type, read_only, aio_mode); // 选择AIO槽数组
 
   auto slot = array->reserve_slot(type, m1, m2, file, name, buf, offset, n,
-                                  e_block, space_id);
+                                  e_block, space_id); // 预留槽
 
   if (type.is_read()) {
-    trx_stats::bump_io_read(trx, n);
+    trx_stats::bump_io_read(trx, n); // 增加读取统计
 
     if (srv_use_native_aio) {
-      ++os_n_file_reads;
+      ++os_n_file_reads; // 增加文件读取计数
 
-      os_bytes_read_since_printout += n;
+      os_bytes_read_since_printout += n; // 增加读取字节数
 #ifdef WIN_ASYNC_IO
       ret = ReadFile(file.m_file, slot->ptr, slot->len, &slot->n_bytes,
-                     &slot->control);
+                     &slot->control); // Windows读取文件
 #elif defined(LINUX_NATIVE_AIO)
       if (!array->linux_dispatch(slot, should_buffer)) {
-        goto err_exit;
+        goto err_exit; // 处理Linux异步I/O
       }
 #endif /* WIN_ASYNC_IO */
     } else if (type.is_wake()) {
       AIO::wake_simulated_handler_thread(
-          AIO::get_segment_no_from_slot(array, slot));
+          AIO::get_segment_no_from_slot(array, slot)); // 唤醒模拟处理线程
     }
   } else if (type.is_write()) {
     if (srv_use_native_aio) {
-      ++os_n_file_writes;
+      ++os_n_file_writes; // 增加文件写入计数
 
 #ifdef WIN_ASYNC_IO
       ret = WriteFile(file.m_file, slot->ptr, slot->len, &slot->n_bytes,
-                      &slot->control);
+                      &slot->control); // Windows写入文件
 #elif defined(LINUX_NATIVE_AIO)
       if (!array->linux_dispatch(slot, false)) {
-        goto err_exit;
+        goto err_exit; // 处理Linux异步I/O
       }
 #endif /* WIN_ASYNC_IO */
 
     } else if (type.is_wake()) {
       AIO::wake_simulated_handler_thread(
-          AIO::get_segment_no_from_slot(array, slot));
+          AIO::get_segment_no_from_slot(array, slot)); // 唤醒模拟处理线程
     }
   } else {
-    ut_error;
+    ut_error; // 错误处理
   }
 
 #ifdef WIN_ASYNC_IO
   if (srv_use_native_aio) {
     if ((!ret && GetLastError() != ERROR_IO_PENDING) ||
         (ret && slot->len != slot->n_bytes)) {
-      goto err_exit;
+      goto err_exit; // 检查Windows异步I/O的返回值
     }
   }
 #endif /* WIN_ASYNC_IO */
 
   /* AIO request was queued successfully! */
-  return (DB_SUCCESS);
+  return (DB_SUCCESS); // 成功返回
 
 #if defined LINUX_NATIVE_AIO || defined WIN_ASYNC_IO
 err_exit:
 #endif /* LINUX_NATIVE_AIO || WIN_ASYNC_IO */
 
-  array->release_with_mutex(slot);
+  array->release_with_mutex(slot); // 释放槽
   if (os_file_handle_error(name, type.is_read() ? "aio read" : "aio write")) {
-    goto try_again;
+    goto try_again; // 处理错误并重试
   }
 
-  return (DB_IO_ERROR);
+  return (DB_IO_ERROR); // 返回I/O错误
 }
 
 /** Simulated AIO handler for reaping IO requests */

@@ -1801,6 +1801,33 @@ AIO read ahead uses this. If you plan to use this parameter,
 make sure you remember to call os_aio_dispatch_read_array_submit()
 when you're ready to commit all your requests.
 @return DB_SUCCESS or error code */
+/**
+NOTE! Use the corresponding macro os_aio(), not directly this function!
+Requests an asynchronous i/o operation.
+@param[in]      type            IO request context  // IO请求上下文
+@param[in]      aio_mode        IO mode            // IO模式
+@param[in]      name            Name of the file or path as NUL terminated
+string                                      // 文件名或路径，以NUL结尾的字符串
+@param[in]      file            Open file handle    // 打开的文件句柄
+@param[out]     buf             buffer where to read // 读取的缓冲区
+@param[in]      offset          file offset where to read // 读取的文件偏移量
+@param[in]      n               how many bytes to read or write; this
+must not cross a file boundary; in AIO this must be a block size multiple
+// 读取或写入的字节数；此值不得跨越文件边界；在AIO中，必须是块大小的倍数
+@param[in]      read_only       if true read only mode checks are enforced
+// 如果为真，则强制执行只读模式检查
+@param[in,out]  m1              Message for the AIO handler, (can be used to
+identify a completed AIO operation); ignored if mode is OS_AIO_SYNC
+// AIO处理程序的消息（可用于识别已完成的AIO操作）；如果模式为OS_AIO_SYNC，则忽略
+@param[in,out]  m2              message for the AIO handler (can be used to
+identify a completed AIO operation); ignored if mode is OS_AIO_SYNC
+// AIO处理程序的消息（可用于识别已完成的AIO操作）；如果模式为OS_AIO_SYNC，则忽略
+@param[in]	should_buffer	Whether to buffer an aio request.
+AIO read ahead uses this. If you plan to use this parameter,
+make sure you remember to call os_aio_dispatch_read_array_submit()
+when you're ready to commit all your requests.
+// 是否缓冲AIO请求。AIO预读使用此参数。如果您计划使用此参数，请确保在准备提交所有请求时调用os_aio_dispatch_read_array_submit()
+@return DB_SUCCESS or error code */ // 返回DB_SUCCESS或错误代码
 dberr_t os_aio_func(IORequest &type, AIO_mode aio_mode, const char *name,
                     pfs_os_file_t file, void *buf, os_offset_t offset, ulint n,
                     bool read_only, fil_node_t *m1, void *m2,

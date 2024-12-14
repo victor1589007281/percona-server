@@ -66,8 +66,10 @@ ulint buf_read_page_low(dberr_t *err, bool sync, ulint type, ulint mode,
                         bool unzip, trx_t *trx, bool should_buffer) {
   buf_page_t *bpage;
 
+  // 初始化错误码为成功
   *err = DB_SUCCESS;
 
+  // 检查是否在尝试读取双写缓冲区的页面
   if (page_id.space() == TRX_SYS_SPACE &&
       dblwr::v1::is_inside(page_id.page_no())) {
     ib::error(ER_IB_MSG_139)
@@ -76,6 +78,7 @@ ulint buf_read_page_low(dberr_t *err, bool sync, ulint type, ulint mode,
     return (0);
   }
 
+  // 对于ibuf位图页和事务系统头页,必须使用同步IO
   if (ibuf_bitmap_page(page_id, page_size) || trx_sys_hdr_page(page_id)) {
     /* Trx sys header is so low in the latching order that we play
     safe and do not leave the i/o-completion to an asynchronous
@@ -90,45 +93,55 @@ ulint buf_read_page_low(dberr_t *err, bool sync, ulint type, ulint mode,
   or is being dropped; if we succeed in initing the page in the buffer
   pool for read, then DISCARD cannot proceed until the read has
   completed */
+  // 在缓冲池中初始化页面用于读取
   bpage = buf_page_init_for_read(err, mode, page_id, page_size, unzip);
 
+  // 验证表空间ID是否匹配
   ut_a(bpage == nullptr || bpage->get_space()->id == page_id.space());
 
   if (bpage == nullptr) {
     return (0);
   }
 
+  // 打印调试信息
   DBUG_PRINT("ib_buf",
              ("read page %u:%u size=%u unzip=%u,%s", (unsigned)page_id.space(),
               (unsigned)page_id.page_no(), (unsigned)page_size.physical(),
               (unsigned)unzip, sync ? "sync" : "async"));
 
+  // 断言检查
   ut_ad(buf_page_in_file(bpage));
   ut_ad(!mutex_own(&buf_pool_from_bpage(bpage)->LRU_list_mutex));
 
+  // 如果是同步IO,开始等待磁盘IO
   if (sync) {
     thd_wait_begin(nullptr, THD_WAIT_DISKIO);
   }
 
+  // 确定读取目标地址
   void *dst;
 
   if (page_size.is_compressed()) {
-    dst = bpage->zip.data;
+    dst = bpage->zip.data;  // 压缩页面
   } else {
     ut_a(buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);
 
-    dst = ((buf_block_t *)bpage)->frame;
+    dst = ((buf_block_t *)bpage)->frame;  // 非压缩页面
   }
 
+  // 创建IO请求
   IORequest request(type | IORequest::READ);
 
+  // 执行实际的IO操作
   *err = _fil_io(request, sync, page_id, page_size, 0, page_size.physical(),
                  dst, bpage, trx, should_buffer);
 
+  // 同步IO完成后结束等待
   if (sync) {
     thd_wait_end(nullptr);
   }
 
+  // 处理IO错误
   if (*err != DB_SUCCESS) {
     if (IORequest::ignore_missing(type) || *err == DB_TABLESPACE_DELETED) {
       buf_read_page_handle_error(bpage);
@@ -138,6 +151,7 @@ ulint buf_read_page_low(dberr_t *err, bool sync, ulint type, ulint mode,
     SRV_CORRUPT_TABLE_CHECK(*err == DB_SUCCESS, bpage->is_corrupt = true;);
   }
 
+  // 同步IO时完成页面IO
   if (sync) {
     /* The i/o is already completed when we arrive from fil_read */
     if (!buf_page_io_complete(bpage, false)) {
@@ -286,22 +300,35 @@ read_ahead:
 
 bool buf_read_page(const page_id_t &page_id, const page_size_t &page_size,
                    trx_t *trx) {
+  // 记录读取的页面数量
   ulint count;
+  // 存储操作结果的错误码
   dberr_t err;
 
+  // 调用底层函数读取页面
+  // 参数说明:
+  // - true: 同步读取
+  // - 0: 无特殊IO请求标志
+  // - BUF_READ_ANY_PAGE: 可以读取任何类型的页面
+  // - false: 不进行解压缩
+  // - false: 不进行缓冲
   count = buf_read_page_low(&err, true, 0, BUF_READ_ANY_PAGE, page_id,
                             page_size, false, trx, false);
 
+  // 更新缓冲池读取统计信息
   srv_stats.buf_pool_reads.add(count);
 
+  // 如果表空间已被删除,输出错误日志
   if (err == DB_TABLESPACE_DELETED) {
     ib::error(ER_IB_MSG_141) << "trying to read page " << page_id
                              << " in nonexisting or being-dropped tablespace";
   }
 
   /* Increment number of I/O operations used for LRU policy. */
+  // 增加用于LRU策略的IO操作计数
   buf_LRU_stat_inc_io();
 
+  // 返回是否成功读取了页面(count>0表示成功)
   return (count > 0);
 }
 

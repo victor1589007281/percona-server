@@ -106,16 +106,23 @@ static inline rw_lock_t *hash_get_nth_lock(
 
 /** Gets the rw_lock for a hash value in a hash table.
  @return rw_lock */
+/* 根据哈希值获取哈希表中对应的读写锁
+   返回值: 读写锁指针 */
 static inline rw_lock_t *hash_get_lock(
-    hash_table_t *table, /*!< in: hash table */
-    uint64_t hash_value) /*!< in: hash value */
+    hash_table_t *table, /*!< in: hash table */  /* 输入参数:哈希表 */
+    uint64_t hash_value) /*!< in: hash value */  /* 输入参数:哈希值 */
 {
+  /* 断言检查:确保table指针非空 */
   ut_ad(table);
+  /* 断言检查:确保哈希表类型为读写锁同步类型 */
   ut_ad(table->type == HASH_TABLE_SYNC_RW_LOCK);
+  /* 断言检查:确保哈希表的魔数正确 */
   ut_ad(table->magic_n == hash_table_t::HASH_TABLE_MAGIC_N);
 
+  /* 根据哈希值计算同步对象的索引 */
   const auto i = hash_get_sync_obj_index(table, hash_value);
 
+  /* 返回对应索引位置的读写锁 */
   return hash_get_nth_lock(table, i);
 }
 

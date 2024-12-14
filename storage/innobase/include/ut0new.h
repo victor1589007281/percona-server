@@ -1427,14 +1427,24 @@ inline void *malloc_large_page(std::size_t size, fallback_to_normal_page_t,
     ut::malloc_large_page*(fallback_to_normal_page_t) variants.
     @return Number of bytes available for use.
  */
+// 获取应用程序可用的总字节数
 inline size_t large_page_allocation_size(void *ptr,
                                          fallback_to_normal_page_t) noexcept {
+  // 断言指针不为空
   assert(ptr);
+
+  // 根据是否启用PFS内存监控选择相应的大页面分配实现
   using impl = detail::select_large_page_alloc_impl_t<WITH_PFS_MEMORY>;
   using large_page_alloc_impl = detail::Large_alloc_<impl>;
+
+  // 判断页面类型是否为系统页面
   if (large_page_alloc_impl::page_type(ptr) == detail::Page_type::system_page)
+    // 如果是系统页面,返回系统页面的分配大小
     return ut::page_allocation_size(ptr);
+
+  // 断言页面类型为大页面
   ut_a(large_page_alloc_impl::page_type(ptr) == detail::Page_type::large_page);
+  // 返回大页面的分配大小
   return ut::large_page_allocation_size(ptr);
 }
 

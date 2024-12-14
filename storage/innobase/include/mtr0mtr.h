@@ -156,20 +156,42 @@ savepoint. */
 struct fil_space_t;
 
 /** Mini-transaction memo stack slot. */
+/** Mini-transaction 备忘录栈槽位 */
+// 存储MTR的一个对象(page等)以及这个对象加锁模式
 struct mtr_memo_slot_t {
   /** Pointer to the object - either buf_block_t or rw_lock_t */
+  /** 指向对象的指针 - 可以是 buf_block_t 或 rw_lock_t 类型 */
+  /*
+缓冲页块 (buf_block_t)
+数据页
+索引页
+系统页等
+锁对象 (rw_lock_t)
+索引树的锁
+表空间的锁
+系统锁等
+3. 文件对象 (fil_node_t)
+表空间文件
+表空间对象 (fil_space_t)
+InnoDB表空间  
+  */
   void *object;
 
   /** type of the stored object (MTR_MEMO_S_LOCK, ...) */
+  /** 存储对象的类型 (MTR_MEMO_S_LOCK等) */
   ulint type;
 
   /** Check if the object stored in this slot is a lock (rw_lock_t).
   @return true if it is a lock object, false otherwise. */
+  /** 检查该槽位中存储的对象是否为锁(rw_lock_t)
+  @return 如果是锁对象返回true,否则返回false */
   bool is_lock() const {
+    // 通过检查类型是否为以下三种锁类型之一来判断
     return type == MTR_MEMO_S_LOCK || type == MTR_MEMO_X_LOCK ||
            type == MTR_MEMO_SX_LOCK;
   }
 
+  /** 将槽位信息打印到输出流 */
   std::ostream &print(std::ostream &out) const;
 };
 
@@ -178,45 +200,60 @@ inline std::ostream &operator<<(std::ostream &out, const mtr_memo_slot_t &obj) {
 }
 
 /** Mini-transaction handle and buffer */
+/** Mini-transaction(迷你事务)句柄和缓冲区 */
 struct mtr_t {
   /** State variables of the mtr */
+  /** mtr的状态变量 */
   struct Impl {
     /** memo stack for locks etc. */
+    /** 用于存储锁等对象的备忘录栈 */
     mtr_buf_t m_memo;
 
     /** mini-transaction log */
+    /** 迷你事务的重做日志 */
     mtr_buf_t m_log;
 
     /** true if mtr has made at least one buffer pool page dirty */
+    /** 如果mtr至少修改了一个缓冲池页面则为true */
     bool m_made_dirty;
 
     /** true if inside ibuf changes */
+    /** 如果在插入缓冲区更改中则为true */
     bool m_inside_ibuf;
 
     /** true if the mini-transaction modified buffer pool pages */
+    /** 如果迷你事务修改了缓冲池页面则为true */
     bool m_modifications;
 
     /** true if mtr is forced to NO_LOG mode because redo logging is
     disabled globally. In this case, mtr increments the global counter
     at ::start and must decrement it back at ::commit. */
+    /** 如果由于全局禁用重做日志而强制mtr进入NO_LOG模式则为true。
+    在这种情况下,mtr在start时增加全局计数器,必须在commit时减少回来。*/
     bool m_marked_nolog;
 
     /** Shard index used for incrementing global counter at ::start. We need
     to use the same shard while decrementing counter at ::commit. */
+    /** 在start时用于增加全局计数器的分片索引。
+    在commit时减少计数器时需要使用相同的分片。*/
     size_t m_shard_index;
 
     /** Count of how many page initial log records have been
     written to the mtr log */
+    /** 记录写入mtr日志的页面初始日志记录数量 */
     uint32_t m_n_log_recs;
 
     /** specifies which operations should be logged; default
     value MTR_LOG_ALL */
+    /** 指定应记录哪些操作;默认值为MTR_LOG_ALL */
     mtr_log_t m_log_mode;
 
     /** State of the transaction */
+    /** 事务的状态 */
     mtr_state_t m_state;
 
     /** Flush Observer */
+    /** 刷新观察器 */
     Flush_observer *m_flush_observer;
 
 #ifdef UNIV_DEBUG
@@ -231,6 +268,7 @@ struct mtr_t {
 
 #ifndef UNIV_HOTBACKUP
   /** mtr global logging */
+  /** mtr全局日志记录 */
   class Logging {
    public:
     /** mtr global redo logging state.
@@ -240,19 +278,35 @@ struct mtr_t {
     Disable Logging :
     [DISABLED] -> [ENABLED_RESTRICT] -> [ENABLED_DBLWR] -> [ENABLED] */
 
+    /** 全局重做日志状态。
+    启用日志记录:
+    [ENABLED] -> [ENABLED_RESTRICT] -> [DISABLED]
+    
+    禁用日志记录:
+    [DISABLED] -> [ENABLED_RESTRICT] -> [ENABLED_DBLWR] -> [ENABLED] */
     enum State : uint32_t {
       /* Redo Logging is enabled. Server is crash safe. */
+      /* 重做日志已启用。服务器是崩溃安全的。*/
       ENABLED,
+
       /* Redo logging is enabled. All non-logging mtr are finished with the
       pages flushed to disk. Double write is enabled. Some pages could be
       still getting written to disk without double-write. Not safe to crash. */
+      /* 重做日志已启用。所有非日志记录的mtr都已完成,页面已刷新到磁盘。
+      双写已启用。一些页面可能仍在不使用双写的情况下写入磁盘。不安全崩溃。*/
       ENABLED_DBLWR,
+
       /* Redo logging is enabled but there could be some mtrs still running
       in no logging mode. Redo archiving and clone are not allowed to start.
       No double-write */
+      /* 重做日志已启用,但可能仍有一些mtr在无日志模式下运行。
+      不允许启动重做归档和克隆。无双写。*/
       ENABLED_RESTRICT,
+
       /* Redo logging is disabled and all new mtrs would not generate any redo.
       Redo archiving and clone are not allowed. */
+      /* 重做日志已禁用,所有新的mtr都不会生成任何重做日志。
+      不允许重做归档和克隆。*/
       DISABLED
     };
 

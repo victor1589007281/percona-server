@@ -1635,22 +1635,33 @@ class Fil_system {
   @param[in]    space_id        Tablespace ID
   @return reference to the shard */
   [[nodiscard]] Fil_shard *shard_by_id(space_id_t space_id) const {
+/** 根据表空间ID获取对应的Fil_shard
+@param[in]    space_id        表空间ID
+@return 返回对应的shard引用 */
+[[nodiscard]] Fil_shard *shard_by_id(space_id_t space_id) const {
 #ifndef UNIV_HOTBACKUP
+    // 如果是undo表空间
     if (fsp_is_undo_tablespace(space_id)) {
-      const size_t limit = space_id % UNDO_SHARDS;
+        // 根据space_id取模计算undo表空间在哪个shard
+        const size_t limit = space_id % UNDO_SHARDS;
 
-      return m_shards[UNDO_SHARDS_START + limit];
+        // 返回undo表空间对应的shard
+        return m_shards[UNDO_SHARDS_START + limit];
     }
 
+    // 确保shard总数正确
     ut_ad(m_shards.size() == MAX_SHARDS);
 
+    // 对于非undo表空间,根据space_id取模计算对应的shard
     return m_shards[space_id % UNDO_SHARDS_START];
 #else  /* !UNIV_HOTBACKUP */
+    // 在热备份模式下只有一个shard
     ut_ad(m_shards.size() == 1);
 
+    // 返回唯一的shard
     return m_shards[0];
 #endif /* !UNIV_HOTBACKUP */
-  }
+}
 
   /** Acquire all the mutexes. */
   void mutex_acquire_all() const {
@@ -7633,11 +7644,14 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
                          const page_id_t &page_id, const page_size_t &page_size,
                          ulint byte_offset, ulint len, void *buf, void *message,
                          trx_t *trx, bool should_buffer) {
+  // 创建一个IO请求的副本
   IORequest req_type(type);
 
+  // 验证IO请求的有效性
   ut_ad(req_type.validate());
   ut_ad(!req_type.is_log());
 
+  // 验证基本参数
   ut_ad(len > 0);
   ut_ad(byte_offset < UNIV_PAGE_SIZE);
   ut_ad(!page_size.is_compressed() || byte_offset == 0);
@@ -7650,12 +7664,16 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
   ut_ad(recv_no_ibuf_operations || req_type.is_write() ||
         !ibuf_bitmap_page(page_id, page_size) || sync);
 
+  // 获取AIO模式
   auto aio_mode = get_AIO_mode(req_type, sync);
 
+  // 处理读请求
   if (req_type.is_read()) {
     ut_ad(type.get_original_size() == 0);
+    // 更新读取的数据统计
     srv_stats.data_read.add(len);
 
+    // 如果是ibuf页面,调整AIO模式以避免死锁
     if (aio_mode == AIO_mode::NORMAL && !recv_no_ibuf_operations &&
         ibuf_page(page_id, page_size, UT_LOCATION_HERE, nullptr)) {
       /* Reduce probability of deadlock bugs
@@ -7668,6 +7686,7 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
     }
 
 #ifdef UNIV_DEBUG
+    // 检查是否在已删除的表空间上进行读取
     mutex_acquire();
     /* Should never attempt to read from a deleted tablespace, unless we
     are also importing the tablespace. By the time we get here in the final
@@ -7684,9 +7703,11 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
     mutex_release();
 #endif /* UNIV_DEBUG && !UNIV_HOTBACKUP */
 
+  // 处理写请求  
   } else if (req_type.is_write()) {
     ut_ad(!srv_read_only_mode || fsp_is_system_temporary(page_id.space()));
 
+    // 更新写入的数据统计
     srv_stats.data_written.add(len);
   }
 #else  /* !UNIV_HOTBACKUP */
@@ -7699,12 +7720,14 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
 
   auto bpage = static_cast<buf_page_t *>(message);
 
+  // 获取互斥锁并检查表空间
   mutex_acquire();
   auto space = get_space_by_id(page_id.space());
 
   /* If we are deleting a tablespace we don't allow async read
   operations on that. However, we do allow write operations and
   sync read operations. */
+  // 检查表空间是否可用于IO操作
   if (space == nullptr ||
       (req_type.is_read() && !sync && space->stop_new_ops)) {
 #ifndef UNIV_HOTBACKUP
@@ -7759,6 +7782,7 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
   }
 #endif /* !UNIV_HOTBACKUP */
 
+  // 获取文件节点并准备IO
   fil_node_t *file;
   auto page_no = page_id.page_no();
   auto err = get_file_for_io(space, &page_no, file);
@@ -7880,6 +7904,7 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
   ut_a(page_size.is_compressed() ||
        page_size.physical() == page_size.logical());
 
+  // 计算文件偏移量
   auto offset = (os_offset_t)page_no * page_size.physical();
 
   offset += byte_offset;
@@ -7895,6 +7920,7 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
 
   /* Don't compress the log, page 0 of all tablespaces, tables compressed with
    the old compression scheme and all pages from the system tablespace. */
+  // 处理压缩和打孔操作
   if (req_type.is_write() && !page_size.is_compressed() &&
       page_id.page_no() > 0 && IORequest::is_punch_hole_supported() &&
       file->punch_hole) {
@@ -7912,8 +7938,10 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
 
   req_type.block_size(file->block_size);
 
+  // 执行实际的IO操作
 #ifdef UNIV_HOTBACKUP
   /* In mysqlbackup do normal I/O, not AIO */
+  // 在备份模式下执行同步IO
   if (req_type.is_read()) {
     err = os_file_read(req_type, file->name, file->handle, buf, offset, len);
 
@@ -7922,30 +7950,8 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
 
     err = os_file_write(req_type, file->name, file->handle, buf, offset, len);
   }
-#else /* UNIV_HOTBACKUP */
-  /* Queue the aio request */
-  err = os_aio(
-      req_type, aio_mode, file->name, file->handle, buf, offset, len,
-      fsp_is_system_temporary(page_id.space()) ? false : srv_read_only_mode,
-      file, message, page_id.space(), trx, should_buffer);
 
-#endif /* UNIV_HOTBACKUP */
-
-  if (err == DB_IO_NO_PUNCH_HOLE) {
-    err = DB_SUCCESS;
-
-    if (file->punch_hole) {
-      ib::warn(ER_IB_MSG_333) << "Punch hole failed for '" << file->name << "'";
-    }
-
-    fil_no_punch_hole(file);
-  }
-
-  /* We an try to recover the page from the double write buffer if
-  the decompression fails or the page is corrupt. */
-
-  ut_a(req_type.is_dblwr() || err == DB_SUCCESS);
-
+  // 处理同步IO的完成操作
   if (sync) {
     /* The i/o operation is already completed when we return from
     os_aio: */
@@ -8027,7 +8033,7 @@ void fil_aio_wait(ulint segment) {
 #endif /* !UNIV_HOTBACKUP */
 
 /** Read or write data from a file.
-@param[in]	type		IO context
+@param[in]	type		IO context 
 @param[in]	sync		If true then do synchronous IO
 @param[in]	page_id		page id
 @param[in]	page_size	page size
@@ -8051,23 +8057,30 @@ void fil_aio_wait(ulint segment) {
 dberr_t _fil_io(const IORequest &type, bool sync, const page_id_t &page_id,
                 const page_size_t &page_size, ulint byte_offset, ulint len,
                 void *buf, void *message, trx_t *trx, bool should_buffer) {
+  // 根据表空间ID获取对应的分片，有些表空间会有多个分片，这里就是计算在哪个分片文件
   auto shard = fil_system->shard_by_id(page_id.space());
+
 #ifdef UNIV_DEBUG
   if (!sync) {
     /* In case of async io we transfer the io responsibility to the thread which
     will perform the io completion routine. */
+    // 异步IO情况下,将IO责任转移给将执行IO完成例程的线程
     static_cast<buf_page_t *>(message)->release_io_responsibility();
   }
 #endif
 
+  // 执行实际的IO操作
   auto const err = shard->do_io(type, sync, page_id, page_size, byte_offset,
                                 len, buf, message, trx, should_buffer);
+
 #ifdef UNIV_DEBUG
   /* If the error prevented async io, then we haven't actually transferred the
   io responsibility at all, so we revert the debug io responsibility info. */
+  // 如果错误阻止了异步IO,则实际上没有转移IO责任,需要恢复调试IO责任信息
   auto bpage = static_cast<buf_page_t *>(message);
 
   /* When space is deleted, we could have marked the io complete. */
+  // 当表空间被删除时,可能已经标记IO完成
   if (err != DB_SUCCESS && !sync && bpage->was_io_fixed()) {
     bpage->take_io_responsibility();
   }
