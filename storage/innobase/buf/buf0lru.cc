@@ -616,24 +616,28 @@ work after an interrupt is received.
 @param[in,out]  buf_pool  buffer pool instance
 @param[in,out]  bpage     page to flush
 @return true if page was flushed. */
+/** 在缓冲池实例中刷新单个页面。
+@param[in,out]  buf_pool  缓冲池实例
+@param[in,out]  bpage     要刷新的页面
+@return true 如果页面被刷新。 */
 static bool flush_page_flush_list(buf_pool_t *buf_pool, buf_page_t *bpage) {
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-  ut_ad(buf_flush_list_mutex_own(buf_pool));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 确保持有 LRU 列表的互斥锁
+  ut_ad(buf_flush_list_mutex_own(buf_pool)); // 确保持有刷新列表的互斥锁
 
-  if (bpage->was_io_fixed()) {
-    return false;
+  if (bpage->was_io_fixed()) { // 如果页面被 I/O 固定
+    return false; // 返回 false
   }
 
-  BPageMutex *block_mutex = buf_page_get_mutex(bpage);
+  BPageMutex *block_mutex = buf_page_get_mutex(bpage); // 获取页面的互斥锁
 
   /* We don't have to worry about bpage becoming a dangling pointer by a
   compressed page flush list relocation because we hold LRU mutex. */
-  buf_flush_list_mutex_exit(buf_pool);
+  buf_flush_list_mutex_exit(buf_pool); // 释放刷新列表的互斥锁
 
-  mutex_enter(block_mutex);
-  bool flushed = false;
+  mutex_enter(block_mutex); // 进入页面的互斥锁
+  bool flushed = false; // 初始化 flushed 为 false
 
-  if (buf_flush_ready_for_flush(bpage, BUF_FLUSH_SINGLE_PAGE)) {
+  if (buf_flush_ready_for_flush(bpage, BUF_FLUSH_SINGLE_PAGE)) { // 检查页面是否准备好刷新
     /* We trigger single page flush and async IO. However, if double write is
     used, dblwr::write() forces all single page flush to sync IO.
     1. It makes the function behaviour change from sync to async for temp
@@ -642,25 +646,25 @@ static bool flush_page_flush_list(buf_pool_t *buf_pool, buf_page_t *bpage) {
     2. For bulk flush async trigger could be better for performance and seems
        to be the case in 5.7. Need to validate if 8.0 forcing sync flush
        is intentional - No functional impact. */
-    flushed = buf_flush_page(buf_pool, bpage, BUF_FLUSH_SINGLE_PAGE, false);
+    flushed = buf_flush_page(buf_pool, bpage, BUF_FLUSH_SINGLE_PAGE, false); // 刷新页面
   }
 
-  if (flushed) {
+  if (flushed) { // 如果页面被刷新
     /* During flush, we have already released the LRU list and block mutexes.
     Wake up possible simulated aio thread to actually post the writes to the
     operating system */
-    os_aio_simulated_wake_handler_threads();
-    mutex_enter(&buf_pool->LRU_list_mutex);
+    os_aio_simulated_wake_handler_threads(); // 唤醒可能的模拟异步 I/O 线程
+    mutex_enter(&buf_pool->LRU_list_mutex); // 重新进入 LRU 列表的互斥锁
   } else {
-    mutex_exit(block_mutex);
+    mutex_exit(block_mutex); // 如果没有刷新，退出页面的互斥锁
   }
 
-  buf_flush_list_mutex_enter(buf_pool);
+  buf_flush_list_mutex_enter(buf_pool); // 重新进入刷新列表的互斥锁
 
-  ut_ad(!mutex_own(block_mutex));
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(!mutex_own(block_mutex)); // 确保不持有页面的互斥锁
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 确保持有 LRU 列表的互斥锁
 
-  return flushed;
+  return flushed; // 返回刷新状态
 }
 
 /** Remove all dirty pages belonging to a given tablespace inside a specific

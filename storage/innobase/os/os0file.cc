@@ -8246,23 +8246,33 @@ bool Dir_Walker::is_directory(const Path &path) {
   return (false);
 }
 
+/** 
+ * 尝试写入文件并在失败时重试
+ * @param[in]      type            IO请求上下文
+ * @param[in]      name            文件名
+ * @param[in]      file            文件句柄
+ * @param[in]      buf             要写入的缓冲区
+ * @param[in]      offset          写入的偏移量
+ * @param[in]      n               要写入的字节数
+ * @return DB_SUCCESS if successful, otherwise an error code
+ */
 dberr_t os_file_write_retry(IORequest &type, const char *name,
                             pfs_os_file_t file, const void *buf,
                             os_offset_t offset, ulint n) {
-  dberr_t err;
+  dberr_t err; // 错误代码
   for (;;) {
-    err = os_file_write(type, name, file, buf, offset, n);
+    err = os_file_write(type, name, file, buf, offset, n); // 尝试写入文件
 
-    if (err == DB_SUCCESS || err == DB_TABLESPACE_DELETED) {
-      break;
-    } else if (err == DB_IO_ERROR) {
-      ib::error(ER_INNODB_IO_WRITE_ERROR_RETRYING, name);
-      std::chrono::seconds ten(10);
-      std::this_thread::sleep_for(ten);
-      continue;
-    } else {
-      ib::fatal(UT_LOCATION_HERE, ER_INNODB_IO_WRITE_FAILED, name);
+    if (err == DB_SUCCESS || err == DB_TABLESPACE_DELETED) { // 如果成功或表空间已删除
+      break; // 退出循环
+    } else if (err == DB_IO_ERROR) { // 如果发生IO错误
+      ib::error(ER_INNODB_IO_WRITE_ERROR_RETRYING, name); // 记录错误信息
+      std::chrono::seconds ten(10); // 等待10秒
+      std::this_thread::sleep_for(ten); // 休眠
+      continue; // 继续重试
+    } else { // 其他错误
+      ib::fatal(UT_LOCATION_HERE, ER_INNODB_IO_WRITE_FAILED, name); // 记录致命错误
     }
   }
-  return err;
+  return err; // 返回错误代码
 }

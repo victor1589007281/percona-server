@@ -5935,11 +5935,17 @@ void buf_page_t::set_io_fix(buf_io_fix io_fix) {
 #endif
 }
 
+/**
+ * 完成页面的I/O操作
+ * @param bpage 指向缓冲页面的指针
+ * @param evict 是否驱逐页面
+ * @return 如果成功，返回true；否则返回false
+ */
 bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
-  auto buf_pool = buf_pool_from_bpage(bpage);
-  const bool uncompressed = (buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);
+  auto buf_pool = buf_pool_from_bpage(bpage); // 从页面获取缓冲池
+  const bool uncompressed = (buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE); // 检查页面是否未压缩
 
-  ut_a(buf_page_in_file(bpage));
+  ut_a(buf_page_in_file(bpage)); // 确保页面在文件中
 
   /* We do not need protect io_fix here by mutex to read it because this is the
   only function where we can change the value from BUF_IO_READ or BUF_IO_WRITE
@@ -5948,40 +5954,40 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
   NONE, but they must do that before the IO is requested to OS and must be done
   as a part of cleanup in thread that was trying to make such IO request. */
 
-  ut_ad(bpage->current_thread_has_io_responsibility());
+  ut_ad(bpage->current_thread_has_io_responsibility()); // 确保当前线程负责I/O
   const auto io_type =
-      bpage->is_io_fix_read_as_opposed_to_write() ? BUF_IO_READ : BUF_IO_WRITE;
-  const auto flush_type = buf_page_get_flush_type(bpage);
+      bpage->is_io_fix_read_as_opposed_to_write() ? BUF_IO_READ : BUF_IO_WRITE; // 确定I/O类型
+  const auto flush_type = buf_page_get_flush_type(bpage); // 获取刷新类型
 
-  if (io_type == BUF_IO_READ) {
-    bool compressed_page;
-    byte *frame{};
-    page_no_t read_page_no;
-    space_id_t read_space_id;
-    bool is_wrong_page_id [[maybe_unused]] = false;
+  if (io_type == BUF_IO_READ) { // 如果是读取操作
+    bool compressed_page; // 是否为压缩页面
+    byte *frame{}; // 页面帧
+    page_no_t read_page_no; // 读取的页面编号
+    space_id_t read_space_id; // 读取的空间ID
+    bool is_wrong_page_id [[maybe_unused]] = false; // 是否错误的页面ID
 
-    if (bpage->size.is_compressed()) {
-      frame = bpage->zip.data;
-      buf_pool->n_pend_unzip.fetch_add(1);
-      if (uncompressed && !buf_zip_decompress((buf_block_t *)bpage, false)) {
-        buf_pool->n_pend_unzip.fetch_sub(1);
+    if (bpage->size.is_compressed()) { // 如果页面是压缩的
+      frame = bpage->zip.data; // 获取压缩数据
+      buf_pool->n_pend_unzip.fetch_add(1); // 增加待解压计数
+      if (uncompressed && !buf_zip_decompress((buf_block_t *)bpage, false)) { // 解压失败
+        buf_pool->n_pend_unzip.fetch_sub(1); // 减少待解压计数
 
-        compressed_page = false;
-        goto corrupt;
+        compressed_page = false; // 标记为非压缩页面
+        goto corrupt; // 跳转到错误处理
       }
-      buf_pool->n_pend_unzip.fetch_sub(1);
+      buf_pool->n_pend_unzip.fetch_sub(1); // 解压完成，减少计数
     } else {
-      frame = reinterpret_cast<buf_block_t *>(bpage)->frame;
-      ut_a(uncompressed);
+      frame = reinterpret_cast<buf_block_t *>(bpage)->frame; // 获取页面帧
+      ut_a(uncompressed); // 确保页面未压缩
     }
 
     /* If this page is not uninitialized and not in the
     doublewrite buffer, then the page number and space id
     should be the same as in block. */
-    read_page_no = mach_read_from_4(frame + FIL_PAGE_OFFSET);
-    read_space_id = mach_read_from_4(frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
+    read_page_no = mach_read_from_4(frame + FIL_PAGE_OFFSET); // 读取页面编号
+    read_space_id = mach_read_from_4(frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID); // 读取空间ID
 
-    if (bpage->id.space() == TRX_SYS_SPACE &&
+    if (bpage->id.space() == TRX_SYS_SPACE && // 检查是否在双写缓冲区
         dblwr::v1::is_inside(bpage->id.page_no())) {
       ib::error(ER_IB_MSG_78) << "Reading page " << bpage->id
                               << ", which is in the doublewrite buffer!";
@@ -5999,11 +6005,11 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
                                  "the page read in are "
                               << page_id_t(read_space_id, read_page_no)
                               << ", should be " << bpage->id;
-      is_wrong_page_id = true;
+      is_wrong_page_id = true; // 标记为错误的页面ID
     }
 
-    if (UNIV_LIKELY(!bpage->is_corrupt || !srv_pass_corrupt_table)) {
-      compressed_page = Compression::is_compressed_page(frame);
+    if (UNIV_LIKELY(!bpage->is_corrupt || !srv_pass_corrupt_table)) { // 检查页面是否损坏
+      compressed_page = Compression::is_compressed_page(frame); // 检查是否为压缩页面
 
       /* If the decompress failed then the most likely case is
       that we are reading in a page for which this instance doesn't
@@ -6011,7 +6017,7 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
       if (compressed_page) {
         Compression::meta_t meta;
 
-        Compression::deserialize_header(frame, &meta);
+        Compression::deserialize_header(frame, &meta); // 反序列化压缩头
 
         ib::error(ER_IB_MSG_80)
             << "Page " << bpage->id << " "
@@ -6021,12 +6027,12 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
 
       /* From version 3.23.38 up we store the page checksum
       to the 4 first bytes of the page end lsn field */
-      bool is_corrupted;
+      bool is_corrupted; // 页面是否损坏
       {
         BlockReporter reporter =
             BlockReporter(true, frame, bpage->size,
-                          fsp_is_checksum_disabled(bpage->id.space()));
-        is_corrupted = reporter.is_corrupted();
+                          fsp_is_checksum_disabled(bpage->id.space())); // 创建块报告器
+        is_corrupted = reporter.is_corrupted(); // 检查页面是否损坏
       }
 
 #ifdef UNIV_LINUX
@@ -6036,16 +6042,16 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
       - No redo log record for the page yet (brand new page) */
       if (recv_recovery_is_on() && (is_corrupted || is_wrong_page_id) &&
           recv_page_is_brand_new((buf_block_t *)bpage)) {
-        memset(frame, 0, bpage->size.logical());
-        is_corrupted = false;
+        memset(frame, 0, bpage->size.logical()); // 用零填充页面
+        is_corrupted = false; // 标记为非损坏
       }
 #endif /* UNIV_LINUX */
 
-      if (compressed_page || is_corrupted) {
+      if (compressed_page || is_corrupted) { // 如果是压缩页面或损坏
         /* Not a real corruption if it was triggered by
         error injection */
         DBUG_EXECUTE_IF("buf_page_import_corrupt_failure",
-                        goto page_not_corrupt;);
+                        goto page_not_corrupt;); // 跳转到非损坏处理
 
       corrupt:
         /* Compressed pages are basically gibberish avoid
@@ -6057,7 +6063,7 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
               << bpage->id << ". You may have to recover from "
               << "a backup.";
 
-          buf_page_print(frame, bpage->size, BUF_PAGE_PRINT_NO_CRASH);
+          buf_page_print(frame, bpage->size, BUF_PAGE_PRINT_NO_CRASH); // 打印页面内容
 
           ib::info(ER_IB_MSG_82) << "It is also possible that your"
                                     " operating system has corrupted"
@@ -6078,15 +6084,15 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
 
           ib::warn() << "Space " << bpage->id.space()
                      << " will be treated as corrupt.",
-              fil_space_set_corrupt(bpage->id.space());
+              fil_space_set_corrupt(bpage->id.space()); // 标记空间为损坏
 
-          trx = innobase_get_trx();
+          trx = innobase_get_trx(); // 获取当前事务
           if (trx && trx->dict_operation_lock_mode == RW_X_LATCH) {
-            dict_table_set_corrupt_by_space(bpage->id.space(), false);
+            dict_table_set_corrupt_by_space(bpage->id.space(), false); // 设置空间为非损坏
           } else {
-            dict_table_set_corrupt_by_space(bpage->id.space(), true);
+            dict_table_set_corrupt_by_space(bpage->id.space(), true); // 设置空间为损坏
           }
-          bpage->is_corrupt = true;
+          bpage->is_corrupt = true; // 标记页面为损坏
         } else if (srv_force_recovery < SRV_FORCE_IGNORE_CORRUPT) {
           /* We do not have to mark any index as
           corrupted here, since we only know the space
@@ -6094,8 +6100,8 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
           be multiple tables/indexes in the same space,
           so we will mark it later in upper layer */
 
-          buf_read_page_handle_error(bpage);
-          return (false);
+          buf_read_page_handle_error(bpage); // 处理页面读取错误
+          return (false); // 返回失败
         }
       }
     }
@@ -6106,7 +6112,7 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
     if (recv_recovery_is_on()) {
       /* Pages must be uncompressed for crash recovery. */
       ut_a(uncompressed);
-      recv_recover_page(true, (buf_block_t *)bpage);
+      recv_recover_page(true, (buf_block_t *)bpage); // 恢复页面
     }
 
     if (uncompressed && !Compression::is_compressed_page(frame) &&
@@ -6125,24 +6131,24 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
         update_ibuf_bitmap = true;
       }
       ibuf_merge_or_delete_for_page(block, bpage->id, &bpage->size,
-                                    update_ibuf_bitmap);
+                                    update_ibuf_bitmap); // 合并或删除页面
     }
   }
 
-  bool has_LRU_mutex = false;
+  bool has_LRU_mutex = false; // 是否持有LRU互斥锁
 
-  auto block_mutex = buf_page_get_mutex(bpage);
+  auto block_mutex = buf_page_get_mutex(bpage); // 获取页面互斥锁
 
-  if (io_type == BUF_IO_WRITE) {
+  if (io_type == BUF_IO_WRITE) { // 如果是写入操作
     /* We decide whether or not to evict the page from the
     LRU list based on the flush_type.
     - BUF_FLUSH_LIST: don't evict
     - BUF_FLUSH_LRU: always evict
     - BUF_FLUSH_SINGLE_PAGE: eviction preference is passed
     by the caller explicitly. */
-    ut_ad(!(flush_type == BUF_FLUSH_LIST && evict));
+    ut_ad(!(flush_type == BUF_FLUSH_LIST && evict)); // 检查是否允许驱逐
     if (flush_type == BUF_FLUSH_LRU) {
-      evict = true;
+      evict = true; // 设置为驱逐
     }
     if (evict
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
@@ -6158,18 +6164,18 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
         || buf_page_get_state(bpage) == BUF_BLOCK_ZIP_DIRTY
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
     ) {
-      has_LRU_mutex = true;
-      mutex_enter(&buf_pool->LRU_list_mutex);
+      has_LRU_mutex = true; // 标记持有LRU互斥锁
+      mutex_enter(&buf_pool->LRU_list_mutex); // 进入LRU列表互斥锁
     }
   }
-  mutex_enter(block_mutex);
+  mutex_enter(block_mutex); // 进入页面互斥锁
 
 #ifdef UNIV_IBUF_COUNT_DEBUG
   if (io_type == BUF_IO_WRITE || uncompressed) {
     /* For BUF_IO_READ of compressed-only blocks, the
     buffered operations will be merged by buf_page_get_gen()
     after the block has been uncompressed. */
-    ut_a(ibuf_count_get(bpage->id) == 0);
+    ut_a(ibuf_count_get(bpage->id) == 0); // 检查插入缓冲区计数
   }
 #endif /* UNIV_IBUF_COUNT_DEBUG */
 
@@ -6178,64 +6184,64 @@ bool buf_page_io_complete(buf_page_t *bpage, bool evict) {
   removes the newest lock debug record, without checking the thread
   id. */
 
-  buf_page_monitor(bpage, io_type);
+  buf_page_monitor(bpage, io_type); // 监控页面I/O操作
 
   switch (io_type) {
-    case BUF_IO_READ:
+    case BUF_IO_READ: // 处理读取操作
 
-      ut_ad(!has_LRU_mutex);
+      ut_ad(!has_LRU_mutex); // 确保没有持有LRU互斥锁
 
-      buf_page_set_io_fix(bpage, BUF_IO_NONE);
+      buf_page_set_io_fix(bpage, BUF_IO_NONE); // 设置I/O修复为NONE
 
       /* NOTE that the call to ibuf may have moved the ownership of
       the x-latch to this OS thread: do not let this confuse you in
       debugging! */
 
       if (uncompressed) {
-        rw_lock_x_unlock_gen(&((buf_block_t *)bpage)->lock, BUF_IO_READ);
+        rw_lock_x_unlock_gen(&((buf_block_t *)bpage)->lock, BUF_IO_READ); // 解锁
       }
 
-      mutex_exit(block_mutex);
+      mutex_exit(block_mutex); // 退出页面互斥锁
 
-      ut_ad(buf_pool->n_pend_reads > 0);
-      buf_pool->n_pend_reads.fetch_sub(1);
-      buf_pool->stat.n_pages_read.fetch_add(1);
+      ut_ad(buf_pool->n_pend_reads > 0); // 确保有待处理的读取
+      buf_pool->n_pend_reads.fetch_sub(1); // 减少待处理读取计数
+      buf_pool->stat.n_pages_read.fetch_add(1); // 增加读取页面计数
 
       break;
 
-    case BUF_IO_WRITE:
+    case BUF_IO_WRITE: // 处理写入操作
       /* Write means a flush operation: call the completion
       routine in the flush system */
 
-      buf_flush_write_complete(bpage);
+      buf_flush_write_complete(bpage); // 完成写入操作
 
       if (uncompressed) {
-        rw_lock_sx_unlock_gen(&((buf_block_t *)bpage)->lock, BUF_IO_WRITE);
+        rw_lock_sx_unlock_gen(&((buf_block_t *)bpage)->lock, BUF_IO_WRITE); // 解锁
       }
 
-      buf_pool->stat.n_pages_written.fetch_add(1);
+      buf_pool->stat.n_pages_written.fetch_add(1); // 增加写入页面计数
 
-      ut_ad(!(evict && !has_LRU_mutex));
-      if (evict && buf_LRU_free_page(bpage, true)) {
-        has_LRU_mutex = false;
+      ut_ad(!(evict && !has_LRU_mutex)); // 确保驱逐操作合法
+      if (evict && buf_LRU_free_page(bpage, true)) { // 如果需要驱逐页面
+        has_LRU_mutex = false; // 标记为未持有LRU互斥锁
       } else {
-        mutex_exit(block_mutex);
+        mutex_exit(block_mutex); // 退出页面互斥锁
       }
       if (has_LRU_mutex) {
-        mutex_exit(&buf_pool->LRU_list_mutex);
+        mutex_exit(&buf_pool->LRU_list_mutex); // 退出LRU列表互斥锁
       }
 
       break;
 
     default:
-      ut_error;
+      ut_error; // 处理错误
   }
 
   DBUG_PRINT("ib_buf", ("%s page " UINT32PF ":" UINT32PF,
                         io_type == BUF_IO_READ ? "read" : "wrote",
-                        bpage->id.space(), bpage->id.page_no()));
+                        bpage->id.space(), bpage->id.page_no())); // 打印I/O操作信息
 
-  return (true);
+  return (true); // 返回成功
 }
 
 /** Asserts that all file pages in the buffer are in a replaceable state.

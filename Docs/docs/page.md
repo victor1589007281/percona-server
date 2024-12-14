@@ -16,3 +16,11 @@
 3. 其会调用函数`buf_flush_note_modification`->`buf_flush_insert_into_flush_list`,这里会把page刷新到MTR的end lsn,然后才插入到flush list中。
 4. 不过，函数 `buf_flush_insert_into_flush_list`也会用于故障恢复过程中，这时候它不会走上面的流程，而是把page插入到一个红黑树中，维持有序性以及唯一性。具体为什么要这么做，还不知道？
 5. 另外，函数中还提到了一种no-redo dirty page，这种page是已经被修改，但是不需要在恢复过程中重做的page。什么时候产生，以及哪些page 也不知道？
+
+## 3. 脏页的刷新
+0. `buf_LRU_get_free_block`->`buf_LRU_get_free_block`->`buf_flush_single_page_from_LRU`: 从LRU列表的尾部选择一个页面，刷新它（如果它是脏的），从 page_hash 和 LRU 列表中移除它，并将其放入空闲列表。
+   `buf_LRU_flush_or_remove_pages`->`buf_LRU_remove_pages`->`buf_flush_dirty_pages`->`flush_pages_flush_list`->`flush_page_flush_list`: 从刷新列表中选择一个页面，刷新它（如果它是脏的），从 page_hash 和 LRU 列表中移除它，并将其放入空闲列表。
+
+1. 函数`buf_flush_page`->`buf_flush_write_block_low`，是最后的刷脏入口，除了sigle page flush外，其他的都是异步落地。
+2. 这里会调用Double Write，先写入到系统表空间，然后再让数据也落地。函数为`dblwr::write`。
+3. IO结束后会在IO线程中回调`buf_page_io_complete`做收尾工作，包括清空IO FIX状态，释放Page Lock，以及从Flush List和LRU List上删除

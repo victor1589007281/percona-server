@@ -668,14 +668,18 @@ class Double_write {
   @param[in]  flush_type        Flush type.
   @param[in]    bpage             Page from the buffer pool.
   @param[in]  e_block    compressed + encrypted frame contents or nullptr.*/
+  /** 获取处理特定页面IO的实例。将写请求提交到空的双写队列。
+  @param[in]  flush_type        刷新类型。
+  @param[in]    bpage             来自缓冲池的页面。
+  @param[in]  e_block    压缩 + 加密的帧内容或nullptr。*/
   static void submit(buf_flush_t flush_type, buf_page_t *bpage,
                      const file::Block *e_block) noexcept {
     if (s_instances == nullptr) {
-      return;
+      return; // 如果实例为空，直接返回
     }
 
-    auto dblwr = instance(flush_type, bpage);
-    dblwr->enqueue(flush_type, bpage, e_block);
+    auto dblwr = instance(flush_type, bpage); // 获取处理该页面的双写实例
+    dblwr->enqueue(flush_type, bpage, e_block); // 将页面和加密块加入双写队列
   }
 
   /** Writes a single page to the doublewrite buffer on disk, syncs it,
@@ -978,15 +982,18 @@ class Segment {
   /** Write to the segment.
   @param[in] ptr                Start writing from here.
   @param[in] len                Number of bytes to write. */
+  /** 写入段
+  @param[in] ptr                从这里开始写入。
+  @param[in] len                要写入的字节数。 */
   void write(const void *ptr, uint32_t len) noexcept {
-    ut_a(len <= m_end - m_start);
-    IORequest req(IORequest::WRITE | IORequest::DO_NOT_WAKE);
+    ut_a(len <= m_end - m_start); // 确保写入长度不超过段的结束位置
+    IORequest req(IORequest::WRITE | IORequest::DO_NOT_WAKE); // 创建写请求
 
-    req.dblwr();
+    req.dblwr(); // 设置请求为双写
 
     auto err = os_file_write_retry(req, m_file.m_name.c_str(), m_file.m_pfs,
-                                   ptr, m_start, len);
-    ut_a(err == DB_SUCCESS);
+                                   ptr, m_start, len); // 尝试写入文件
+    ut_a(err == DB_SUCCESS); // 确保写入成功
   }
 
   /** Flush the segment to disk. */
@@ -1341,20 +1348,29 @@ void Double_write::prepare(const buf_page_t *bpage, void **ptr,
   }
 }
 
+//双写的第一写
 void Double_write::single_write(Segment *segment, const buf_page_t *bpage,
                                 file::Block *e_block) noexcept {
+  // 定义写入长度
   uint32_t len{};
+  // 定义帧指针
   void *frame{};
 
+  // 如果加密块不为空
   if (e_block != nullptr) {
+    // 获取加密块的帧
     frame = os_block_get_frame(e_block);
+    // 获取加密块的大小
     len = e_block->m_size;
   } else {
+    // 准备页面数据
     prepare(bpage, &frame, &len);
   }
 
+  // 确保长度不超过物理页面大小
   ut_ad(len <= univ_page_size.physical());
 
+  // 将帧写入段
   segment->write(frame, len);
 }
 
@@ -1645,60 +1661,71 @@ dberr_t Double_write::write_to_datafile(const buf_page_t *in_bpage, bool sync,
   return err;
 }
 
+/** 
+ * 同步页面刷新
+ * @param bpage 要写入的缓冲区页面
+ * @param e_block 加密块
+ * @return 错误码
+ */
 dberr_t Double_write::sync_page_flush(buf_page_t *bpage,
                                       file::Block *e_block) noexcept {
 #ifdef UNIV_DEBUG
-  ut_d(auto page_id = bpage->id);
+  ut_d(auto page_id = bpage->id); // 获取页面ID
 
-  if (dblwr::Force_crash == page_id) {
-    auto frame = reinterpret_cast<const buf_block_t *>(bpage)->frame;
-    const auto p = reinterpret_cast<byte *>(frame);
+  if (dblwr::Force_crash == page_id) { // 如果强制崩溃
+    auto frame = reinterpret_cast<const buf_block_t *>(bpage)->frame; // 获取页面帧
+    const auto p = reinterpret_cast<byte *>(frame); // 转换为字节指针
 
-    ut_ad(page_get_space_id(p) == dblwr::Force_crash.space());
-    ut_ad(page_get_page_no(p) == dblwr::Force_crash.page_no());
+    ut_ad(page_get_space_id(p) == dblwr::Force_crash.space()); // 检查空间ID
+    ut_ad(page_get_page_no(p) == dblwr::Force_crash.page_no()); // 检查页面号
   }
 #endif /* UNIV_DEBUG */
 
-  Segment *segment{};
+  Segment *segment{}; // 定义段
 
+  // 从单段队列中获取一个段
   while (!s_single_segments->dequeue(segment)) {
-    std::this_thread::yield();
+    std::this_thread::yield(); // 让出线程
   }
 
-  single_write(segment, bpage, e_block);
+//第一次写入，写入到doublewrite buffer
+  single_write(segment, bpage, e_block); // 写入单个段
 
 #ifndef _WIN32
-  if (is_fsync_required()) {
-    segment->flush();
+  if (is_fsync_required()) { // 如果需要fsync
+    segment->flush(); // 刷新段
   }
 #endif /* !_WIN32 */
 
 #ifdef UNIV_DEBUG
-  if (dblwr::Force_crash == page_id) {
-    DBUG_SUICIDE();
+  if (dblwr::Force_crash == page_id) { // 如果强制崩溃
+    DBUG_SUICIDE(); // 触发崩溃
   }
 #endif /* UNIV_DEBUG */
 
-  auto err = write_to_datafile(bpage, true, e_block);
+//第二次写入，写入到数据文件
+  auto err = write_to_datafile(bpage, true, e_block); // 写入数据文件
 
-  if (err == DB_SUCCESS) {
-    fil_flush(bpage->id.space());
+  if (err == DB_SUCCESS) { // 如果成功
+    fil_flush(bpage->id.space()); // 刷新空间ID
   } else {
     /* This block is not freed if the write_to_datafile doesn't succeed. */
-    if (e_block != nullptr) {
-      os_free_block(e_block);
+    if (e_block != nullptr) { // 如果加密块不为空
+      os_free_block(e_block); // 释放加密块
     }
   }
 
+  // 将段重新放回单段队列
   while (!s_single_segments->enqueue(segment)) {
-    UT_RELAX_CPU();
+    UT_RELAX_CPU(); // 放松CPU
   }
 
   /* true means we want to evict this page from the LRU list as well. */
-  buf_page_io_complete(bpage, true);
+  buf_page_io_complete(bpage, true); // 完成页面IO
 
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
+
 
 void Double_write::reset_file(dblwr::File &file, bool truncate) noexcept {
   auto cur_size = os_file_get_size(file.m_pfs);
@@ -2502,80 +2529,88 @@ file::Block *dblwr::get_encrypted_frame(buf_page_t *bpage) noexcept {
   return e_block;
 }
 
+/**
+ * 写入双写缓冲区
+ * @param flush_type 刷新类型
+ * @param bpage 要写入的缓冲区页面
+ * @param sync 是否同步写入
+ * @return 错误码
+ */
 dberr_t dblwr::write(buf_flush_t flush_type, buf_page_t *bpage,
                      bool sync) noexcept {
-  dberr_t err;
-  const space_id_t space_id = bpage->id.space();
+  dberr_t err;  // 定义错误码
+  const space_id_t space_id = bpage->id.space();  // 获取页面的空间ID
 
-  ut_ad(bpage->current_thread_has_io_responsibility());
+  ut_ad(bpage->current_thread_has_io_responsibility());  // 确保当前线程有IO责任
   /* This is not required for correctness, but it aborts the processing early.
    */
-  if (bpage->was_stale()) {
+  if (bpage->was_stale()) {  // 检查页面是否过时
     /* Disable batch completion in write_complete(). */
-    bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());
+    bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());  // 设置双写批次ID为最大值
     buf_page_free_stale_during_write(
-        bpage, buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);
+        bpage, buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);  // 释放过时页面
     /* We don't hold io_responsibility here no matter which path through ifs and
     elses we've got here, but we can't assert:
       ut_ad(!bpage->current_thread_has_io_responsibility());
     because bpage could be freed by the time we got here. */
-    return DB_SUCCESS;
+    return DB_SUCCESS;  // 返回成功
   }
 
-  if (srv_read_only_mode || fsp_is_system_temporary(space_id) ||
-      !dblwr::is_enabled() || Double_write::s_instances == nullptr ||
-      mtr_t::s_logging.dblwr_disabled()) {
+  if (srv_read_only_mode || fsp_is_system_temporary(space_id) ||  // 检查是否为只读模式或临时表空间
+      !dblwr::is_enabled() || Double_write::s_instances == nullptr ||  // 检查双写是否启用
+      mtr_t::s_logging.dblwr_disabled()) {  // 检查双写日志是否禁用
     /* Skip the double-write buffer since it is not needed. Temporary
     tablespaces are never recovered, therefore we don't care about
     torn writes. */
-    bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());
-    err = Double_write::write_to_datafile(bpage, sync, nullptr);
-    if (err == DB_PAGE_IS_STALE || err == DB_TABLESPACE_DELETED) {
-      if (bpage->was_io_fixed()) {
+    bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());  // 设置双写批次ID为最大值
+    err = Double_write::write_to_datafile(bpage, sync, nullptr);  // 写入数据文件
+    if (err == DB_PAGE_IS_STALE || err == DB_TABLESPACE_DELETED) {  // 检查错误类型
+      if (bpage->was_io_fixed()) {  // 如果页面的IO已固定
         buf_page_free_stale_during_write(
-            bpage, buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);
+            bpage, buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);  // 释放过时页面
       }
-      err = DB_SUCCESS;
-    } else if (sync) {
-      ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_SINGLE_PAGE);
+      err = DB_SUCCESS;  // 返回成功
+    } else if (sync) {  // 如果需要同步
+      ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_SINGLE_PAGE);  // 检查刷新类型
 
       if (err == DB_SUCCESS) {
-        fil_flush(space_id);
+        fil_flush(space_id);  // 刷新空间ID
       }
       /* true means we want to evict this page from the LRU list as well. */
-      buf_page_io_complete(bpage, true);
+      buf_page_io_complete(bpage, true);  // 完成页面IO
     }
 
   } else {
-    ut_d(auto page_id = bpage->id);
+    ut_d(auto page_id = bpage->id);  // 获取页面ID
 
     /* Encrypt the page here, so that the same encrypted contents are written
     to the dblwr file and the data file. */
-    file::Block *e_block = dblwr::get_encrypted_frame(bpage);
+    file::Block *e_block = dblwr::get_encrypted_frame(bpage);  // 获取加密页面
 
-    if (!sync && flush_type != BUF_FLUSH_SINGLE_PAGE) {
-      MONITOR_INC(MONITOR_DBLWR_ASYNC_REQUESTS);
+    if (!sync && flush_type != BUF_FLUSH_SINGLE_PAGE) {  // 如果不需要同步且不是单页面刷新
+      MONITOR_INC(MONITOR_DBLWR_ASYNC_REQUESTS);  // 增加异步请求计数
 
-      ut_d(bpage->release_io_responsibility());
-      Double_write::submit(flush_type, bpage, e_block);
-      err = DB_SUCCESS;
+      ut_d(bpage->release_io_responsibility());  // 释放IO责任
+      Double_write::submit(flush_type, bpage, e_block);  // 提交双写请求
+      err = DB_SUCCESS;  // 返回成功
 #ifdef UNIV_DEBUG
-      if (dblwr::Force_crash == page_id) {
-        force_flush(flush_type, buf_pool_index(buf_pool_from_bpage(bpage)));
+      if (dblwr::Force_crash == page_id) {  // 如果强制崩溃
+        force_flush(flush_type, buf_pool_index(buf_pool_from_bpage(bpage)));  // 强制刷新
       }
 #endif /* UNIV_DEBUG */
     } else {
-      MONITOR_INC(MONITOR_DBLWR_SYNC_REQUESTS);
+      MONITOR_INC(MONITOR_DBLWR_SYNC_REQUESTS);  // 增加同步请求计数
       /* Disable batch completion in write_complete(). */
-      bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());
-      err = Double_write::sync_page_flush(bpage, e_block);
+      bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());  // 设置双写批次ID为最大值
+      //同步双写
+      err = Double_write::sync_page_flush(bpage, e_block);  // 同步页面刷新
     }
   }
   /* We don't hold io_responsibility here no matter which path through ifs and
   elses we've got here, but we can't assert:
     ut_ad(!bpage->current_thread_has_io_responsibility());
   because bpage could be freed by the time we got here. */
-  return err;
+  return err;  // 返回错误码
 }
 
 bool Double_write::is_reduced_batch_id(uint32_t batch_id) {
