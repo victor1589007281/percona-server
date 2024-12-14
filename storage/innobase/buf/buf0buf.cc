@@ -2164,31 +2164,39 @@ ulonglong buf_pool_adjust_chunk_unit(ulonglong size) {
 
 /** Resize the buffer pool based on srv_buf_pool_size from
 srv_buf_pool_old_size. */
+/** 根据 srv_buf_pool_size 从 srv_buf_pool_old_size 调整缓冲池大小 */
 static void buf_pool_resize() {
   buf_pool_t *buf_pool;
   ulint new_instance_size;
   bool warning = false;
 
+  // 设置 NUMA 内存策略为交错模式
   NUMA_MEMPOLICY_INTERLEAVE_IN_SCOPE;
 
+  // 确保当前没有其他调整大小的操作在进行
   ut_ad(!buf_pool_resizing);
   ut_ad(srv_buf_pool_chunk_unit > 0);
 
   /* Assumes that buf_resize_thread has already issued the necessary
   memory barrier to read srv_buf_pool_size and srv_buf_pool_old_size */
+  /* 假设 buf_resize_thread 已经发出必要的内存屏障来读取 srv_buf_pool_size 和 srv_buf_pool_old_size */
+  // 计算每个缓冲池实例的新大小
   new_instance_size = srv_buf_pool_size / srv_buf_pool_instances;
   new_instance_size /= UNIV_PAGE_SIZE;
 
+  // 设置调整大小的状态信息
   buf_resize_status(
       BUF_POOL_RESIZE_START,
       "Resizing buffer pool from " ULINTPF " to " ULINTPF " (unit=%llu).",
       srv_buf_pool_old_size, srv_buf_pool_size, srv_buf_pool_chunk_unit);
 
   /* set new limit for all buffer pool for resizing */
+  /* 为所有缓冲池实例设置新的大小限制 */
   for (ulint i = 0; i < srv_buf_pool_instances; i++) {
     buf_pool = buf_pool_from_array(i);
 
     // No locking needed to read, same thread updated those
+    // 无需加锁即可读取,因为同一线程更新了这些值
     ut_ad(buf_pool->curr_size == buf_pool->old_size);
     ut_ad(buf_pool->n_chunks_new == buf_pool->n_chunks);
 #ifdef UNIV_DEBUG
@@ -2199,9 +2207,12 @@ static void buf_pool_resize() {
     buf_flush_list_mutex_exit(buf_pool);
 #endif
 
+    // 设置新的当前大小
     buf_pool->curr_size = new_instance_size;
 
+    // 确保块单位大小是页面大小的整数倍
     ut_ad(srv_buf_pool_chunk_unit % UNIV_PAGE_SIZE == 0);
+    // 计算新的块数
     buf_pool->n_chunks_new =
         new_instance_size * UNIV_PAGE_SIZE / srv_buf_pool_chunk_unit;
     buf_resize_status_progress_update(i + 1, srv_buf_pool_instances);
@@ -2209,11 +2220,13 @@ static void buf_pool_resize() {
     os_wmb;
   }
 
+  // 准备禁用自适应哈希索引
   buf_resize_status_progress_reset();
   buf_resize_status(BUF_POOL_RESIZE_DISABLE_AHI,
                     "Disabling adaptive hash index.");
 
   /* disable AHI if needed */
+  // 禁用自适应哈希索引并记录其之前的状态
   const bool btr_search_was_enabled = btr_search_disable();
 
   if (btr_search_was_enabled) {
@@ -2221,14 +2234,17 @@ static void buf_pool_resize() {
   }
 
   /* set withdraw target */
+  // 为每个缓冲池实例设置撤回目标
   for (ulint i = 0; i < srv_buf_pool_instances; i++) {
     buf_pool = buf_pool_from_array(i);
+    // 如果新大小小于旧大小,需要计算要撤回的块数
     if (buf_pool->curr_size < buf_pool->old_size) {
       ulint withdraw_target = 0;
 
       const buf_chunk_t *chunk = buf_pool->chunks + buf_pool->n_chunks_new;
       const buf_chunk_t *echunk = buf_pool->chunks + buf_pool->n_chunks;
 
+      // 计算需要撤回的总块数
       while (chunk < echunk) {
         withdraw_target += chunk->size;
         ++chunk;
@@ -2240,10 +2256,12 @@ static void buf_pool_resize() {
     buf_resize_status_progress_update(i + 1, srv_buf_pool_instances);
   }
 
+  // 开始撤回块的过程
   buf_resize_status_progress_reset();
   buf_resize_status(BUF_POOL_RESIZE_WITHDRAW_BLOCKS,
                     "Withdrawing blocks to be shrunken.");
 
+  // 设置撤回操作的计时和重试机制
   auto withdraw_start_time = std::chrono::system_clock::now();
   std::chrono::minutes message_interval{1};
   ulint retry_interval = 1;
@@ -2252,6 +2270,7 @@ withdraw_retry:
   bool should_retry_withdraw = false;
 
   /* wait for the number of blocks fit to the new size (if needed)*/
+  // 等待块数达到新的大小要求
   for (ulint i = 0; i < srv_buf_pool_instances; i++) {
     buf_pool = buf_pool_from_array(i);
     if (buf_pool->curr_size < buf_pool->old_size) {
@@ -2262,17 +2281,21 @@ withdraw_retry:
     }
   }
 
+  // 如果系统正在关闭,终止调整大小操作
   if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP) {
     /* abort to resize for shutdown. */
     return;
   }
 
   /* abort buffer pool load */
+  // 中止缓冲池加载
   buf_load_abort();
 
+  // 处理需要重试撤回操作的情况
   if (should_retry_withdraw &&
       std::chrono::system_clock::now() - withdraw_start_time >=
           message_interval) {
+    // 调整消息间隔时间
     if (message_interval > std::chrono::minutes{15}) {
       message_interval = std::chrono::minutes{30};
     } else {
@@ -2281,6 +2304,7 @@ withdraw_retry:
 
     {
       /* lock_trx_print_wait_and_mvcc_state() requires exclusive global latch */
+      // 获取全局锁并打印可能持有块的事务信息
       locksys::Global_exclusive_latch_guard guard{UT_LOCATION_HERE};
       trx_sys_mutex_enter();
       bool found = false;
@@ -2318,11 +2342,13 @@ withdraw_retry:
     withdraw_start_time = std::chrono::system_clock::now();
   }
 
+  // 如果需要重试,等待一段时间后重试
   if (should_retry_withdraw) {
     ib::info(ER_IB_MSG_62) << "Will retry to withdraw " << retry_interval
                            << " seconds later.";
     std::this_thread::sleep_for(std::chrono::seconds(retry_interval));
 
+    // 调整重试间隔
     if (retry_interval > 5) {
       retry_interval = 10;
     } else {
@@ -2332,6 +2358,7 @@ withdraw_retry:
     goto withdraw_retry;
   }
 
+  // 准备获取全局锁
   buf_resize_status_progress_reset();
   buf_resize_status(BUF_POOL_RESIZE_GLOBAL_LOCK,
                     "Latching whole of buffer pool.");
@@ -2349,11 +2376,13 @@ withdraw_retry:
   }
 #endif /* UNIV_DEBUG */
 
+  // 再次检查是否需要终止操作
   if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP) {
     return;
   }
 
   /* Indicate critical path */
+  // 标记进入关键路径
   buf_pool_resizing = true;
 
   /* Acquire all buffer pool mutexes and hash table locks */
@@ -2362,6 +2391,7 @@ withdraw_retry:
   have no pointers to them from the buffer pool nor from any other thread
   except for the freeing one to remove redundant locking. The same applies
   to freshly allocated pages before any pointers to them are published.*/
+  // 获取所有缓冲池互斥锁和哈希表锁
   for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
     mutex_enter(&(buf_pool_from_array(i)->chunks_mutex));
   }
@@ -2397,24 +2427,29 @@ withdraw_retry:
   }
   buf_resize_status_progress_update(7, 7);
 
+  // 重新创建块映射注册表
   ut::delete_(buf_chunk_map_reg);
   buf_chunk_map_reg =
       ut::new_withkey<buf_pool_chunk_map_t>(UT_NEW_THIS_FILE_PSI_KEY);
 
+  // 开始实际的池大小调整
   buf_resize_status_progress_reset();
   buf_resize_status(BUF_POOL_RESIZE_IN_PROGRESS, "Starting pool resize");
   /* add/delete chunks */
+  // 为每个缓冲池实例添加或删除块
   for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
     buf_pool_t *buf_pool = buf_pool_from_array(i);
     buf_chunk_t *chunk;
     buf_chunk_t *echunk;
 
+    // 更新调整状态
     buf_resize_status(BUF_POOL_RESIZE_IN_PROGRESS,
                       "buffer pool " ULINTPF
                       " :"
                       " resizing with chunks " ULINTPF " to " ULINTPF ".",
                       i, buf_pool->n_chunks, buf_pool->n_chunks_new);
 
+    // 如果需要减少块数
     if (buf_pool->n_chunks_new < buf_pool->n_chunks) {
       /* delete chunks */
       chunk = buf_pool->chunks + buf_pool->n_chunks_new;
@@ -2422,6 +2457,7 @@ withdraw_retry:
 
       ulint sum_freed = 0;
 
+      // 释放多余的块
       while (chunk < echunk) {
         buf_block_t *block = chunk->blocks;
 
@@ -2433,13 +2469,12 @@ withdraw_retry:
         }
 
         buf_pool->deallocate_chunk(chunk);
-
         sum_freed += chunk->size;
-
         ++chunk;
       }
 
       /* discard withdraw list */
+      // 清除撤回列表
       buf_pool->withdraw.clear();
       buf_pool->withdraw_target = 0;
 
@@ -2451,6 +2486,7 @@ withdraw_retry:
       buf_pool->n_chunks = buf_pool->n_chunks_new;
     }
 
+    // 重新分配缓冲池块数组
     {
       /* reallocate buf_pool->chunks */
       const ulint new_chunks_size = buf_pool->n_chunks_new * sizeof(*chunk);
@@ -2458,9 +2494,11 @@ withdraw_retry:
       buf_chunk_t *new_chunks = reinterpret_cast<buf_chunk_t *>(
           ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, new_chunks_size));
 
+      // 调试代码用于模拟内存分配失败
       DBUG_EXECUTE_IF("buf_pool_resize_chunk_null",
                       buf_pool_resize_chunk_make_null(&new_chunks););
 
+      // 处理内存分配失败的情况
       if (new_chunks == nullptr) {
         ib::error(ER_IB_MSG_64) << "buffer pool " << i
                                 << " : failed to allocate"
@@ -2474,6 +2512,7 @@ withdraw_retry:
         goto calc_buf_pool_size;
       }
 
+      // 复制现有块到新数组
       ulint n_chunks_copy =
           std::min(buf_pool->n_chunks_new, buf_pool->n_chunks);
 
@@ -2487,6 +2526,7 @@ withdraw_retry:
       buf_pool->chunks = new_chunks;
     }
 
+    // 如果需要增加块数
     if (buf_pool->n_chunks_new > buf_pool->n_chunks) {
       /* add chunks */
       chunk = buf_pool->chunks + buf_pool->n_chunks;
@@ -2495,6 +2535,7 @@ withdraw_retry:
       ulint sum_added = 0;
       ulint n_chunks = buf_pool->n_chunks;
 
+      // 初始化新块
       while (chunk < echunk) {
         ulonglong unit = srv_buf_pool_chunk_unit;
 
@@ -2505,14 +2546,11 @@ withdraw_retry:
                                      " new memory.";
 
           warning = true;
-
           buf_pool->n_chunks_new = n_chunks;
-
           break;
         }
 
         sum_added += chunk->size;
-
         ++n_chunks;
         ++chunk;
       }
@@ -2524,9 +2562,9 @@ withdraw_retry:
 
       buf_pool->n_chunks = n_chunks;
     }
-  calc_buf_pool_size:
 
     /* recalc buf_pool->curr_size */
+    // 重新计算缓冲池当前大小
     ulint new_size = 0;
 
     chunk = buf_pool->chunks;
@@ -2537,6 +2575,7 @@ withdraw_retry:
     buf_pool->curr_size = new_size;
     buf_pool->n_chunks_new = buf_pool->n_chunks;
 
+    // 释放旧的块数组
     if (buf_pool->chunks_old) {
       ut::free(buf_pool->chunks_old);
       buf_pool->chunks_old = nullptr;
@@ -2545,6 +2584,7 @@ withdraw_retry:
   }
 
   /* set instance sizes */
+  // 设置实例大小
   {
     ulint curr_size = 0;
 
@@ -2553,6 +2593,7 @@ withdraw_retry:
 
       ut_ad(UT_LIST_GET_LEN(buf_pool->withdraw) == 0);
 
+      // 设置预读区域大小
       buf_pool->read_ahead_area = static_cast<page_no_t>(std::min(
           BUF_READ_AHEAD_PAGES,
           ut_2_power_up(buf_pool->curr_size / BUF_READ_AHEAD_PORTION)));
@@ -2564,12 +2605,14 @@ withdraw_retry:
     innodb_set_buf_pool_size(buf_pool_size_align(curr_size));
   }
 
+  // 判断新旧大小差异是否显著
   const bool new_size_too_diff =
       srv_buf_pool_base_size > srv_buf_pool_size * 2 ||
       srv_buf_pool_base_size * 2 < srv_buf_pool_size;
 
   /* Normalize page_hash and zip_hash,
   if the new size is too different */
+  // 如果新旧大小差异显著,需要调整哈希表
   if (!warning && new_size_too_diff) {
     buf_resize_status_progress_reset();
     buf_resize_status(BUF_POOL_RESIZE_HASH, "Resizing hash tables.");
@@ -2586,6 +2629,7 @@ withdraw_retry:
   }
 
   /* Release all buf_pool_mutex/page_hash */
+  // 释放所有缓冲池互斥锁和哈希表锁
   for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
     buf_pool_t *buf_pool = buf_pool_from_array(i);
 
@@ -2600,19 +2644,23 @@ withdraw_retry:
   buf_pool_resizing = false;
 
   /* Normalize other components, if the new size is too different */
+  // 如果新旧大小差异显著,需要调整其他组件
   if (!warning && new_size_too_diff) {
     srv_buf_pool_base_size = srv_buf_pool_size;
 
     buf_resize_status(BUF_POOL_RESIZE_HASH, "Resizing also other hash tables.");
 
     /* normalize lock_sys */
+    // 调整锁系统大小
     srv_lock_table_size = 5 * (srv_buf_pool_size / UNIV_PAGE_SIZE);
     lock_sys_resize(srv_lock_table_size);
 
     /* normalize btr_search_sys */
+    // 调整自适应哈希索引系统大小
     btr_search_sys_resize(buf_pool_get_curr_size() / sizeof(void *) / 64);
 
     /* normalize dict_sys */
+    // 调整数据字典系统大小
     dict_resize();
 
     ib::info(ER_IB_MSG_68) << "Resized hash tables at lock_sys,"
@@ -2620,8 +2668,10 @@ withdraw_retry:
   }
 
   /* normalize ibuf->max_size */
+  // 更新插入缓冲区最大大小
   ibuf_max_size_update(srv_change_buffer_max_size);
 
+  // 完成大小调整,更新旧大小值
   if (srv_buf_pool_old_size != srv_buf_pool_size) {
     ib::info(ER_IB_MSG_69) << "Completed to resize buffer pool from "
                            << srv_buf_pool_old_size << " to "
@@ -2631,11 +2681,13 @@ withdraw_retry:
   }
 
   /* enable AHI if needed */
+  // 如果之前启用了自适应哈希索引,重新启用它
   if (btr_search_was_enabled) {
     btr_search_enable();
     ib::info(ER_IB_MSG_70) << "Re-enabled adaptive hash index.";
   }
 
+  // 记录完成时间并更新状态
   char now[32];
 
   ut_sprintf_timestamp(now);

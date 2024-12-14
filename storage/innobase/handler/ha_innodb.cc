@@ -21226,12 +21226,25 @@ memory needed for buffer pool resize.
 if validation succeeds, else original value passed in
 @return true on success, false on failure.
 */
+/** 验证请求的缓冲池大小并为缓冲池调整预留必要的内存空间
+@param[in]      thd     线程句柄
+@param[in]      buffer_pool_size 需要验证的缓冲池大小值 
+@param[out]     aligned_buffer_pool_size 验证成功时为对齐后的buffer_pool_size,否则为原始值
+@return 成功返回true,失败返回false
+*/
 static bool innodb_buffer_pool_size_validate(THD *thd,
                                              longlong buffer_pool_size,
                                              ulint &aligned_buffer_pool_size) {
-  os_rmb;
+/*
+在读取缓冲池大小之前,其他处理器对缓冲池大小的修改都是可见的
+获取到的是最新的缓冲池大小值
+防止后续的读操作被重排到屏障之前
+golang中的automic,sync.WaitGroup,lock,sync.Once 也用到了
+*/
+  os_rmb; // ToDo 内存读屏障
   ut_ad(srv_buf_pool_old_size == srv_buf_pool_size);
 
+  // 当缓冲池实例数大于1且缓冲池总大小小于阈值时进行检查
   if (srv_buf_pool_instances > 1 &&
       buffer_pool_size < BUF_POOL_SIZE_THRESHOLD) {
 #ifdef UNIV_DEBUG
@@ -21253,6 +21266,7 @@ static bool innodb_buffer_pool_size_validate(THD *thd,
 debug_set:
 #endif /* UNIV_DEBUG */
 
+  // 在32位系统上检查缓冲池大小是否超过最大值
   if constexpr (sizeof(ulint) == 4) {
     if (buffer_pool_size > UINT_MAX32) {
       push_warning_printf(
@@ -21263,6 +21277,7 @@ debug_set:
     }
   }
 
+  // 检查空闲列表算法是否允许当前的缓冲池大小
   if (!innodb_empty_free_list_algorithm_allowed(
           static_cast<srv_empty_free_list_t>(srv_empty_free_list_algorithm),
           buffer_pool_size)) {
@@ -21273,9 +21288,11 @@ debug_set:
     return false;
   }
 
+  // 对缓冲池大小进行内存对齐
   aligned_buffer_pool_size =
       buf_pool_size_align(static_cast<ulint>(buffer_pool_size));
 
+  // 处理缓冲池大小调整的三种情况
   if (srv_buf_pool_size == static_cast<ulint>(buffer_pool_size)) {
     /* nothing to do */
   } else if (srv_buf_pool_size == aligned_buffer_pool_size) {
@@ -21284,9 +21301,11 @@ debug_set:
                         " chunk size of %llu bytes.",
                         srv_buf_pool_chunk_unit);
   } else {
+    // 更新缓冲池大小并使用内存写屏障确保其他线程可见
     srv_buf_pool_size = aligned_buffer_pool_size;
     os_wmb;
 
+    // 如果对齐后的大小与请求的大小不同,发出截断警告
     if (buffer_pool_size != static_cast<longlong>(aligned_buffer_pool_size)) {
       push_warning_printf(
           thd, Sql_condition::SL_WARNING, ER_TRUNCATED_WRONG_VALUE,
@@ -21328,40 +21347,62 @@ value. This function is registered as a callback with MySQL.
 @param[in]      thd     thread handle
 @param[out]     var_ptr where the formal string goes
 @param[in]      save    immediate result from check function */
+/** 使用"saved"值更新系统变量innodb_buffer_pool_size。
+这个函数作为回调函数注册到MySQL。
+@param[in]      thd     线程句柄
+@param[out]     var_ptr 存放正式字符串的位置
+@param[in]      save    检查函数的即时结果 */
 static void innodb_buffer_pool_size_update(THD *thd, SYS_VAR *, void *var_ptr,
                                            const void *save) {
+  // 获取用户请求的缓冲池大小
   longlong requested_buffer_pool_size = *static_cast<const longlong *>(save);
   ulint aligned_buffer_pool_size = 0u;
 
   /* Since this function can be called at any time, we must allow change
 in status code only if no other resize is in progress */
+  in status code only if no other resize is in progress */
+  /* 由于此函数可以在任何时候被调用,我们必须确保只有在没有其他调整大小操作
+  正在进行时才允许更改状态码 */
   if (buf_pool_resize_status_code.load() == BUF_POOL_RESIZE_COMPLETE ||
       buf_pool_resize_status_code.load() == BUF_POOL_RESIZE_FAILED) {
     /* No other resize is in progress */
+    // 没有其他调整大小操作正在进行
+    
+    // 更新缓冲池调整大小状态信息
     snprintf(export_vars.innodb_buffer_pool_resize_status,
              sizeof(export_vars.innodb_buffer_pool_resize_status),
              "Requested to resize buffer pool.");
+    // 设置调整大小操作的状态码为开始状态
     buf_pool_resize_status_code.store(BUF_POOL_RESIZE_START);
+    // 设置进度为0
     buf_pool_resize_status_progress.store(0);
 
+    // 验证请求的缓冲池大小
     if (innodb_buffer_pool_size_validate(thd, requested_buffer_pool_size,
                                          aligned_buffer_pool_size)) {
+      // 验证成功,触发缓冲池调整大小事件
       os_event_set(srv_buf_resize_event);
 
+      // 记录信息到日志
       ib::info(ER_IB_MSG_573)
           << export_vars.innodb_buffer_pool_resize_status
           << " (new size: " << aligned_buffer_pool_size << " bytes)";
 
+      // 更新系统变量值
       *static_cast<longlong *>(var_ptr) = aligned_buffer_pool_size;
     } else {
+      // 验证失败,更新状态信息
       snprintf(export_vars.innodb_buffer_pool_resize_status,
                sizeof(export_vars.innodb_buffer_pool_resize_status),
                "Failed to validate requested buffer pool size.");
+      // 设置状态码为失败
       buf_pool_resize_status_code.store(BUF_POOL_RESIZE_FAILED);
+      // 设置进度为100%
       buf_pool_resize_status_progress.store(100);
     }
   } else {
     /* Resize operation is in progress */
+    // 有调整大小操作正在进行,推送警告信息
     push_warning(thd, ER_BUFPOOL_RESIZE_INPROGRESS);
   }
 }
