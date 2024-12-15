@@ -1869,6 +1869,7 @@ dberr_t srv_start(bool create_new_db) {
   recv_sys_create();
   recv_sys_init();
   trx_sys_create();
+  //创建初始化锁系统
   lock_sys_create(srv_lock_table_size);
 
   /* Create i/o-handler threads: */

@@ -375,12 +375,21 @@ void hash_unlock_x_all_but(hash_table_t *table, rw_lock_t *keep_lock);
 class hash_table_t {
  public:
   hash_table_t(size_t n) {
-    const auto prime = ut::find_prime(n);
-    cells = ut::make_unique<hash_cell_t[]>(prime);
-    set_n_cells(prime);
+    /*
+    *在哈希表中使用质数作为大小的原因主要有以下几点：
+    *减少冲突：质数大小可以帮助分散哈希值，从而减少不同键映射到同一索引的概率。这是因为质数的特性使得在进行模运算时，能够更均匀地分布哈希值。
+    *提高性能：当哈希表的大小是质数时，哈希函数的性能通常会更好，尤其是在使用线性探测或其他开放寻址方法时。质数可以避免某些模式导致的性能下降。
+    *3. 避免特定模式：如果哈希表的大小是某个数的倍数，可能会导致某些特定的输入模式频繁冲突。使用质数可以避免这种情况。
+    *扩展性：在动态扩展哈希表时，选择下一个质数作为新大小可以确保在扩展后仍然保持良好的性能。
+    *因此，选择质数作为哈希表的大小是一个常见的优化策略，有助于提高哈希表的效率和性能。
+    *
+    */
+    const auto prime = ut::find_prime(n); // 找到大于或等于n的质数
+    cells = ut::make_unique<hash_cell_t[]>(prime); // 创建一个大小为prime的hash_cell_t数组
+    set_n_cells(prime); // 设置哈希表的单元数量为prime
 
-    /* Initialize the cell array */
-    hash_table_clear(this);
+    /* 初始化单元数组 */
+    hash_table_clear(this); // 清空哈希表中的所有单元
   }
   ~hash_table_t() { ut_ad(magic_n == HASH_TABLE_MAGIC_N); }
 

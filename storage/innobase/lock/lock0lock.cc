@@ -165,6 +165,7 @@ bool owns_shared_global_latch() {
 }
 
 bool owns_page_shard(const page_id_t &page_id) {
+  // 检查锁系统是否拥有指定页面的分片锁
   return lock_sys->latches.owns_page_shard(page_id);
 }
 
@@ -295,35 +296,38 @@ bool lock_sec_rec_cons_read_sees(
 }
 
 /** Creates the lock system at database start. */
+/** 创建锁系统，在数据库启动时调用。 */
 void lock_sys_create(
-    ulint n_cells) /*!< in: number of slots in lock hash table */
 {
-  ulint lock_sys_sz;
+  ulint lock_sys_sz; // 锁系统的大小
 
-  lock_sys_sz = sizeof(*lock_sys) + srv_max_n_threads * sizeof(srv_slot_t);
+  lock_sys_sz = sizeof(*lock_sys) + srv_max_n_threads * sizeof(srv_slot_t); // 计算锁系统的总大小
 
   lock_sys = static_cast<lock_sys_t *>(
-      ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, lock_sys_sz));
+      ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, lock_sys_sz)); // 分配锁系统内存
 
-  new (lock_sys) lock_sys_t{};
+  new (lock_sys) lock_sys_t{}; // 在分配的内存中构造锁系统对象
 
-  void *ptr = &lock_sys[1];
+  void *ptr = &lock_sys[1]; // 获取指向等待线程的指针
 
-  lock_sys->waiting_threads = static_cast<srv_slot_t *>(ptr);
+  lock_sys->waiting_threads = static_cast<srv_slot_t *>(ptr); // 初始化等待线程
 
-  lock_sys->last_slot = lock_sys->waiting_threads;
+  lock_sys->last_slot = lock_sys->waiting_threads; // 设置最后一个槽位为等待线程
 
-  mutex_create(LATCH_ID_LOCK_SYS_WAIT, &lock_sys->wait_mutex);
+  mutex_create(LATCH_ID_LOCK_SYS_WAIT, &lock_sys->wait_mutex); // 创建等待互斥锁
 
-  lock_sys->timeout_event = os_event_create();
+  lock_sys->timeout_event = os_event_create(); // 创建超时事件
 
-  lock_sys->rec_hash = ut::new_<hash_table_t>(n_cells);
-  lock_sys->prdt_hash = ut::new_<hash_table_t>(n_cells);
-  lock_sys->prdt_page_hash = ut::new_<hash_table_t>(n_cells);
+  lock_sys->rec_hash = ut::new_<hash_table_t>(n_cells); // 创建行锁哈希表
+  //Predicate Locks：谓词锁。行级锁，锁定特定条件的行。
+  // 与某个查询的谓词（如 WHERE 子句）相关联。它们用于防止其他事务在满足特定条件的情况下插入、更新或删除数据，从而避免幻读现象
+  lock_sys->prdt_hash = ut::new_<hash_table_t>(n_cells); // 创建Predicate Locks哈希表
+  //Predicate Page Locks：页面级锁，锁定整个页面
+  lock_sys->prdt_page_hash = ut::new_<hash_table_t>(n_cells); // 创建predicate page locks哈希表
 
-  if (!srv_read_only_mode) {
-    lock_latest_err_file = os_file_create_tmpfile();
-    ut_a(lock_latest_err_file);
+  if (!srv_read_only_mode) { // 如果不是只读模式
+    lock_latest_err_file = os_file_create_tmpfile(); // 创建临时文件以记录最新错误
+    ut_a(lock_latest_err_file); // 确保临时文件创建成功
   }
 }
 
@@ -376,38 +380,50 @@ void lock_sys_resize(ulint n_cells) {
 }
 
 /** Closes the lock system at database shutdown. */
+/** 在数据库关闭时关闭锁系统。 */
 void lock_sys_close(void) {
+  // 如果最新错误文件不为空，则关闭文件并将指针设为nullptr
   if (lock_latest_err_file != nullptr) {
     fclose(lock_latest_err_file);
     lock_latest_err_file = nullptr;
   }
 
+  // 如果锁系统不存在，则返回
   if (!lock_sys) return;
 
+  // 删除记录哈希表、预测哈希表和预测页面哈希表
   ut::delete_(lock_sys->rec_hash);
   ut::delete_(lock_sys->prdt_hash);
   ut::delete_(lock_sys->prdt_page_hash);
 
+  // 销毁超时事件
   os_event_destroy(lock_sys->timeout_event);
 
+  // 销毁等待互斥锁
   mutex_destroy(&lock_sys->wait_mutex);
 
   srv_slot_t *slot = lock_sys->waiting_threads;
 
+  // 遍历所有等待线程，销毁它们的事件
   for (uint32_t i = 0; i < srv_max_n_threads; i++, ++slot) {
     if (slot->event != nullptr) {
       os_event_destroy(slot->event);
     }
   }
+  
+  // 释放缓存的锁模式名称
   for (auto &cached_lock_mode_name : lock_cached_lock_mode_names) {
     ut::free(const_cast<char *>(cached_lock_mode_name.second));
   }
   lock_cached_lock_mode_names.clear();
 
+  // 调用锁系统的析构函数
   lock_sys->~lock_sys_t();
 
+  // 释放锁系统内存
   ut::free(lock_sys);
 
+  // 将锁系统指针设为nullptr
   lock_sys = nullptr;
 }
 
@@ -727,13 +743,16 @@ void lock_rec_trx_wait(lock_t *lock, ulint i, ulint type) {
   }
 }
 
+/** 检查指定页面上是否存在显式锁
+ @param[in] page_id 页面ID
+ @return 如果存在显式锁则返回true，否则返回false */
 bool lock_rec_expl_exist_on_page(const page_id_t &page_id) {
-  lock_t *lock;
-  locksys::Shard_latch_guard guard{UT_LOCATION_HERE, page_id};
+  lock_t *lock; // 声明锁对象
+  locksys::Shard_latch_guard guard{UT_LOCATION_HERE, page_id}; // 获取页面的分片锁
   /* Only used in ibuf pages, so rec_hash is good enough */
-  lock = lock_rec_get_first_on_page_addr(lock_sys->rec_hash, page_id);
+  lock = lock_rec_get_first_on_page_addr(lock_sys->rec_hash, page_id); // 获取页面上的第一个锁
 
-  return (lock != nullptr);
+  return (lock != nullptr); // 如果锁不为空，则返回true
 }
 
 /** Resets the record lock bitmap to zero. NOTE: does not touch the wait_lock

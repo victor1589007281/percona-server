@@ -5459,6 +5459,7 @@ static int innodb_init_params() {
     srv_n_page_cleaners = srv_buf_pool_instances;
   }
 
+// 锁系统相关哈希表的槽位/桶的数量为buffer pool大小除以page size的5倍的第一个质子数
   srv_lock_table_size = 5 * (srv_buf_pool_size / UNIV_PAGE_SIZE);
 
   return 0;

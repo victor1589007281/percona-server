@@ -89,21 +89,31 @@ static inline lock_t *lock_rec_get_next_on_page(
   return ((lock_t *)lock_rec_get_next_on_page_const(lock));
 }
 
+/** Gets the first record lock on a page, where the page is identified by a
+ pointer to it.
+ @return        first lock, NULL if none exists */
 static inline lock_t *lock_rec_get_first_on_page_addr(
-    hash_table_t *lock_hash, const page_id_t &page_id) {
-  ut_ad(locksys::owns_page_shard(page_id));
+    hash_table_t *lock_hash, const page_id_t &page_id) { // lock_hash: 锁哈希表, page_id: 页的ID
+/*
+锁分片（Lock Sharding）是一种用于提高并发性能的技术，特别是在多线程或多进程环境中。
+它的基本思想是将锁的范围划分为多个部分（或“分片”），
+每个分片可以独立地被不同的线程或进程获取和释放。
+这种方式可以减少锁的竞争，从而提高系统的吞吐量和响应速度。
+*/
+  ut_ad(locksys::owns_page_shard(page_id)); // 确保当前线程拥有该页的锁分片
 
+  // 遍历锁哈希表，查找与给定页ID匹配的第一个记录锁
   for (lock_t *lock = static_cast<lock_t *>(hash_get_first(
-           lock_hash,
-           hash_calc_cell_id(lock_rec_hash_value(page_id), lock_hash)));
-       lock != nullptr;
-       lock = static_cast<lock_t *>(HASH_GET_NEXT(hash, lock))) {
-    if (page_id == lock->rec_lock.page_id) {
-      return (lock);
+           lock_hash, // 锁哈希表
+           hash_calc_cell_id(lock_rec_hash_value(page_id), lock_hash))); // 计算单元ID
+       lock != nullptr; // 如果锁不为空
+       lock = static_cast<lock_t *>(HASH_GET_NEXT(hash, lock))) { // 获取下一个锁
+    if (page_id == lock->rec_lock.page_id) { // 如果找到的锁的页ID与给定的页ID匹配
+      return (lock); // 返回找到的锁
     }
   }
 
-  return (nullptr);
+  return (nullptr); // 如果没有找到匹配的锁，返回NULL
 }
 
 /** Gets the first record lock on a page, where the page is identified by a

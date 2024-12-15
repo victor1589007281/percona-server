@@ -45,6 +45,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0trx.h"
 
 static inline uint64_t lock_rec_hash_value(const page_id_t &page_id) {
+  // 计算并返回页面ID的哈希值
   return page_id.hash();
 }
 

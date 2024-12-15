@@ -306,6 +306,10 @@ class Latches {
   @param[in]    page_id    The space_id and page_no of the page
   @return true iff the current thread owns exclusive global lock_sys latch or
   both a shared global lock_sys latch and mutex protecting the page shard
+  测试给定的页面分片是否可以被当前线程安全访问。
+  @param[in]    page_id    页面的空间ID和页面号
+  @return true 如果当前线程拥有独占的全局 lock_sys 锁，或者
+  同时拥有共享的全局 lock_sys 锁和保护页面分片的互斥锁
   */
   bool owns_page_shard(const page_id_t &page_id) const {
     return owns_exclusive_global_latch() ||

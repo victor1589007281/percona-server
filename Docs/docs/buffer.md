@@ -46,3 +46,15 @@ rw_lock_create()
     |->rw_lock_create_func()
         |->os_event_create()
 ```
+### 2. 锁系统
+* `srv_start`->`lock_sys_create`,在服务初始化的时候，创建lock_sys 锁系统对象。主要是创建下面这三个锁哈希表
+1. rec_hash: 行锁
+2. prdt_hash：谓词锁，锁定某个条件(WHERE)语句的行
+3. prdt_page_hash：页面锁，锁定某个页面的所有行
+* 这三个哈希表的桶的数量的计算规则为：
+```
+// 锁系统相关哈希表的槽位/桶的数量为buffer pool大小除以page size的5倍的第一个质子数
+  srv_lock_table_size = 5 * (srv_buf_pool_size / UNIV_PAGE_SIZE);
+```
+* 三个锁会按照某个规则计算出哈希值出来，比如，行锁，可以根据page_id计算出一个哈希值，判断存在性
+* 这三个锁哈希的桶在某个地方做了分片划分处理，避免并发环境下冲突，具体逻辑未知？？
