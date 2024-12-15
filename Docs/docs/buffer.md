@@ -58,3 +58,10 @@ rw_lock_create()
 ```
 * 三个锁会按照某个规则计算出哈希值出来，比如，行锁，可以根据page_id计算出一个哈希值，判断存在性
 * 这三个锁哈希的桶在某个地方做了分片划分处理，避免并发环境下冲突，具体逻辑未知？？
+
+### 3. 日志系统
+* `srv_start`->`log_sys_init`->`log_sys_create`
+1. ->`log_allocate_buffer`: redo log的主缓存，参数 `innodb_log_buffer_size`控制
+2. -> `log_allocate_write_ahead_buffer`：Write-ahead缓冲区，参数 `innodb_log_write_ahead_size`控制
+3. binlog_cache_size：binlog events缓冲区
+* 这些底层调用的是ut_allocate/ut_free

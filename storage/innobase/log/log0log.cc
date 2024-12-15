@@ -582,8 +582,8 @@ static void log_resume_writer_threads(log_t &log);
 
 /** @{ */
 
-static void log_sys_create() {
-  ut_a(log_sys == nullptr);
+static void log_sys_create() { // 创建日志系统
+  ut_a(log_sys == nullptr); // 确保日志系统尚未初始化
 
   /* The log_sys_object is pointer to aligned_pointer. That's
   temporary solution until we refactor redo log more.
@@ -594,83 +594,85 @@ static void log_sys_create() {
   exit without proper cleanup for redo log in some cases, we
   need to forbid dtor calls then. */
 
-  using log_t_aligned_pointer = std::decay_t<decltype(*log_sys_object)>;
+  using log_t_aligned_pointer = std::decay_t<decltype(*log_sys_object)>; // 定义对齐指针类型
   log_sys_object =
-      ut::new_withkey<log_t_aligned_pointer>(UT_NEW_THIS_FILE_PSI_KEY);
-  log_sys_object->alloc_withkey(UT_NEW_THIS_FILE_PSI_KEY);
+      ut::new_withkey<log_t_aligned_pointer>(UT_NEW_THIS_FILE_PSI_KEY); // 创建新的日志系统对象
+  log_sys_object->alloc_withkey(UT_NEW_THIS_FILE_PSI_KEY); // 分配内存
 
-  log_sys = *log_sys_object;
+  log_sys = *log_sys_object; // 设置全局日志系统指针
 
-  log_t &log = *log_sys;
+  log_t &log = *log_sys; // 引用日志系统
 
   /* Initialize simple value fields. */
-  log.dict_persist_margin.store(0);
-  log.periodical_checkpoints_enabled = false;
-  log.m_format = Log_format::CURRENT;
-  log.m_creator_name = LOG_HEADER_CREATOR_CURRENT;
-  log.n_log_ios_old = log.n_log_ios;
-  log.last_printout_time = time(nullptr);
-  log.m_requested_files_consumption = false;
-  log.m_writer_inside_extra_margin = false;
-  log.m_oldest_need_lsn_lowerbound = 0;
-  ut_d(log.first_block_is_correct_for_lsn = 0);
-  log.m_unused_files_count = 0;
-  log.m_encryption_metadata = {};
+  log.dict_persist_margin.store(0); // 初始化持久化边界
+  log.periodical_checkpoints_enabled = false; // 禁用定期检查点
+  log.m_format = Log_format::CURRENT; // 设置日志格式为当前格式
+  log.m_creator_name = LOG_HEADER_CREATOR_CURRENT; // 设置创建者名称
+  log.n_log_ios_old = log.n_log_ios; // 记录旧的日志 I/O 数量
+  log.last_printout_time = time(nullptr); // 记录最后打印时间
+  log.m_requested_files_consumption = false; // 设置文件消耗请求为 false
+  log.m_writer_inside_extra_margin = false; // 设置写入器在额外边界内为 false
+  log.m_oldest_need_lsn_lowerbound = 0; // 设置最旧的需要 LSN 下界为 0
+  ut_d(log.first_block_is_correct_for_lsn = 0); // 确保第一个块的 LSN 正确
+  log.m_unused_files_count = 0; // 初始化未使用文件计数
+  log.m_encryption_metadata = {}; // 初始化加密元数据
 
-  log.checkpointer_event = os_event_create();
-  log.closer_event = os_event_create();
-  log.write_notifier_event = os_event_create();
-  log.flush_notifier_event = os_event_create();
-  log.writer_event = os_event_create();
-  log.flusher_event = os_event_create();
-  log.old_flush_event = os_event_create();
-  os_event_set(log.old_flush_event);
-  log.writer_threads_resume_event = os_event_create();
-  os_event_set(log.writer_threads_resume_event);
-  log.sn_lock_event = os_event_create();
-  os_event_set(log.sn_lock_event);
-  log.m_files_governor_event = os_event_create();
-  log.m_files_governor_iteration_event = os_event_create();
-  log.m_file_removed_event = os_event_create();
-  log.next_checkpoint_event = os_event_create();
+  // 创建事件
+  log.checkpointer_event = os_event_create(); // 创建检查点事件
+  log.closer_event = os_event_create(); // 创建关闭事件
+  log.write_notifier_event = os_event_create(); // 创建写入通知事件
+  log.flush_notifier_event = os_event_create(); // 创建刷新通知事件
+  log.writer_event = os_event_create(); // 创建写入器事件
+  log.flusher_event = os_event_create(); // 创建刷新器事件
+  log.old_flush_event = os_event_create(); // 创建旧刷新事件
+  os_event_set(log.old_flush_event); // 设置旧刷新事件
+  log.writer_threads_resume_event = os_event_create(); // 创建写入线程恢复事件
+  os_event_set(log.writer_threads_resume_event); // 设置写入线程恢复事件
+  log.sn_lock_event = os_event_create(); // 创建序列号锁事件
+  os_event_set(log.sn_lock_event); // 设置序列号锁事件
+  log.m_files_governor_event = os_event_create(); // 创建文件管理事件
+  log.m_files_governor_iteration_event = os_event_create(); // 创建文件管理迭代事件
+  log.m_file_removed_event = os_event_create(); // 创建文件移除事件
+  log.next_checkpoint_event = os_event_create(); // 创建下一个检查点事件
 
-  mutex_create(LATCH_ID_LOG_CHECKPOINTER, &log.checkpointer_mutex);
-  mutex_create(LATCH_ID_LOG_CLOSER, &log.closer_mutex);
-  mutex_create(LATCH_ID_LOG_WRITER, &log.writer_mutex);
-  mutex_create(LATCH_ID_LOG_FLUSHER, &log.flusher_mutex);
-  mutex_create(LATCH_ID_LOG_WRITE_NOTIFIER, &log.write_notifier_mutex);
-  mutex_create(LATCH_ID_LOG_FLUSH_NOTIFIER, &log.flush_notifier_mutex);
-  mutex_create(LATCH_ID_LOG_LIMITS, &log.limits_mutex);
-  mutex_create(LATCH_ID_LOG_FILES, &log.m_files_mutex);
-  mutex_create(LATCH_ID_LOG_SN_MUTEX, &log.sn_x_lock_mutex);
+  // 创建互斥锁
+  mutex_create(LATCH_ID_LOG_CHECKPOINTER, &log.checkpointer_mutex); // 创建检查点互斥锁
+  mutex_create(LATCH_ID_LOG_CLOSER, &log.closer_mutex); // 创建关闭互斥锁
+  mutex_create(LATCH_ID_LOG_WRITER, &log.writer_mutex); // 创建写入互斥锁
+  mutex_create(LATCH_ID_LOG_FLUSHER, &log.flusher_mutex); // 创建刷新互斥锁
+  mutex_create(LATCH_ID_LOG_WRITE_NOTIFIER, &log.write_notifier_mutex); // 创建写入通知互斥锁
+  mutex_create(LATCH_ID_LOG_FLUSH_NOTIFIER, &log.flush_notifier_mutex); // 创建刷新通知互斥锁
+  mutex_create(LATCH_ID_LOG_LIMITS, &log.limits_mutex); // 创建限制互斥锁
+  mutex_create(LATCH_ID_LOG_FILES, &log.m_files_mutex); // 创建文件互斥锁
+  mutex_create(LATCH_ID_LOG_SN_MUTEX, &log.sn_x_lock_mutex); // 创建序列号互斥锁
 
 #ifdef UNIV_PFS_RWLOCK
   /* pfs_psi is separated from sn_lock_inst,
   because not needed for non debug build. */
   log.pfs_psi =
-      PSI_RWLOCK_CALL(init_rwlock)(log_sn_lock_key.m_value, &log.pfs_psi);
+      PSI_RWLOCK_CALL(init_rwlock)(log_sn_lock_key.m_value, &log.pfs_psi); // 初始化读写锁
 #endif /* UNIV_PFS_RWLOCK */
 #ifdef UNIV_DEBUG
   /* initialize rw_lock without pfs_psi */
   log.sn_lock_inst = static_cast<rw_lock_t *>(
-      ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*log.sn_lock_inst)));
-  new (log.sn_lock_inst) rw_lock_t;
-  rw_lock_create_func(log.sn_lock_inst, LATCH_ID_LOG_SN, UT_LOCATION_HERE);
+      ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(*log.sn_lock_inst))); // 分配序列号锁内存
+  new (log.sn_lock_inst) rw_lock_t; // 初始化序列号锁
+  rw_lock_create_func(log.sn_lock_inst, LATCH_ID_LOG_SN, UT_LOCATION_HERE); // 创建序列号锁
 #endif /* UNIV_DEBUG */
 
   /* Allocate buffers. */
-  log_allocate_buffer(log);
-  log_allocate_write_ahead_buffer(log);
-  log_allocate_recent_written(log);
-  log_allocate_recent_closed(log);
-  log_allocate_flush_events(log);
-  log_allocate_write_events(log);
+  log_allocate_buffer(log); // 分配日志缓冲区
+  log_allocate_write_ahead_buffer(log); // 分配写入前缓冲区
+  log_allocate_recent_written(log); // 分配最近写入的缓冲区
+  log_allocate_recent_closed(log); // 分配最近关闭的缓冲区
+  log_allocate_flush_events(log); // 分配刷新事件
+  log_allocate_write_events(log); // 分配写入事件
 
-  log_reset_encryption_buffer(log);
+  log_reset_encryption_buffer(log); // 重置加密缓冲区
 
-  log_calc_buf_size(log);
+  log_calc_buf_size(log); // 计算缓冲区大小
 
-  log_consumer_register(log, &(log.m_checkpoint_consumer));
+  log_consumer_register(log, &(log.m_checkpoint_consumer)); // 注册检查点消费者
 }
 
 dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
@@ -1289,26 +1291,38 @@ static void log_calc_buf_size(log_t &log) {
 
 /** @{ */
 
+/** 
+ * 分配日志缓冲区
+ * 
+ * @param[out] log  redo log
+ */
 static void log_allocate_buffer(log_t &log) {
-  ut_a(srv_log_buffer_size >= INNODB_LOG_BUFFER_SIZE_MIN);
-  ut_a(srv_log_buffer_size <= INNODB_LOG_BUFFER_SIZE_MAX);
-  ut_a(srv_log_buffer_size >= 4 * UNIV_PAGE_SIZE);
+  ut_a(srv_log_buffer_size >= INNODB_LOG_BUFFER_SIZE_MIN); // 确保日志缓冲区大小不小于最小值
+  ut_a(srv_log_buffer_size <= INNODB_LOG_BUFFER_SIZE_MAX); // 确保日志缓冲区大小不大于最大值
+  ut_a(srv_log_buffer_size >= 4 * UNIV_PAGE_SIZE); // 确保日志缓冲区大小至少为4个页面大小
 
 #ifdef UNIV_PFS_MEMORY
+  // 使用 PSI 内存键分配日志缓冲区
   log.buf.alloc_withkey(ut::make_psi_memory_key(log_buffer_memory_key),
                         ut::Count{srv_log_buffer_size});
 #else
+  // 不使用 PSI 内存键分配日志缓冲区
   log.buf.alloc_withkey(ut::make_psi_memory_key(PSI_NOT_INSTRUMENTED),
                         ut::Count{srv_log_buffer_size});
 #endif
 }
 
-static void log_deallocate_buffer(log_t &log) { log.buf.dealloc(); }
+
+static void log_deallocate_buffer(log_t &log) { 
+    log.buf.dealloc(); // 释放日志缓冲区
+}
 
 static void log_allocate_write_ahead_buffer(log_t &log) {
+  // 确保写前缓冲区大小在允许的范围内
   ut_a(srv_log_write_ahead_size >= INNODB_LOG_WRITE_AHEAD_SIZE_MIN);
   ut_a(srv_log_write_ahead_size <= INNODB_LOG_WRITE_AHEAD_SIZE_MAX);
 
+  // 设置写前缓冲区大小并分配内存
   log.write_ahead_buf_size = srv_log_write_ahead_size;
   log.write_ahead_buf.alloc_withkey(UT_NEW_THIS_FILE_PSI_KEY,
                                     ut::Count{log.write_ahead_buf_size});
@@ -1738,6 +1752,7 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
     }
   }
 
+//初始化日志系统
   log_sys_create();
   ut_a(log_sys != nullptr);
   log_t &log = *log_sys;

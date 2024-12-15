@@ -1751,27 +1751,38 @@ inline void aligned_delete(T *ptr) noexcept {
      assert(ptr[3]->_x == 6  && ptr[3]->_y == 7);
      assert(ptr[4]->_x == 10 && ptr[4]->_y == 100);
  */
+/** 
+ * 动态分配存储空间，用于在给定对齐要求下构造类型 T 的对象数组。
+ * 使用提供的参数构造对象。 
+ * @param[in] key PSI 内存键，用于 PFS 内存监控。
+ * @param[in] alignment 存储分配的对齐要求。
+ * @param[in] args 要传递给 T 构造函数的参数。
+ * @return 指向分配存储的第一个元素的指针。如果动态存储分配失败，将抛出 std::bad_alloc 异常。
+ */
 template <typename T, typename... Args>
 inline T *aligned_new_arr_withkey(PSI_memory_key_t key, std::size_t alignment,
                                   Args &&... args) {
+  // 使用给定的 PSI 内存键和对齐方式分配内存
   auto mem = aligned_alloc_withkey(key, sizeof(T) * sizeof...(args), alignment);
-  if (unlikely(!mem)) throw std::bad_alloc();
+  if (unlikely(!mem)) throw std::bad_alloc(); // 如果内存分配失败，抛出异常
 
-  size_t idx = 0;
+  size_t idx = 0; // 初始化索引
   try {
+    // 使用提供的参数构造 T 的对象
     (...,
      detail::construct<T>(mem, sizeof(T) * idx++, std::forward<Args>(args)));
   } catch (...) {
+    // 如果构造过程中发生异常，销毁已构造的对象
     for (size_t offset = (idx - 1) * sizeof(T); offset != 0;
          offset -= sizeof(T)) {
       reinterpret_cast<T *>(reinterpret_cast<std::uintptr_t>(mem) + offset -
                             sizeof(T))
-          ->~T();
+          ->~T(); // 调用析构函数
     }
-    aligned_free(mem);
-    throw;
+    aligned_free(mem); // 释放内存
+    throw; // 重新抛出异常
   }
-  return static_cast<T *>(mem);
+  return static_cast<T *>(mem); // 返回指向分配内存的指针
 }
 
 /** Dynamically allocates storage for an array of T's at address aligned to the
@@ -2109,12 +2120,12 @@ class aligned_array_pointer {
       Underlying instances of type T are accessed through the conversion
       operator.
 
-      @param[in] key PSI memory key to be used for PFS memory instrumentation.
-      @param[in] count Number of T elements in an array.
+      @param[in] key PSI memory key to be used for PFS memory instrumentation.  // 用于PFS内存监控的PSI内存键
+      @param[in] count Number of T elements in an array.  // 数组中T元素的数量
     */
   void alloc_withkey(PSI_memory_key_t key, Count count) {
-    ut_ad(ptr == nullptr);
-    ptr = ut::aligned_new_arr_withkey<T>(key, Alignment, count);
+    ut_ad(ptr == nullptr);  // 确保指针为空
+    ptr = ut::aligned_new_arr_withkey<T>(key, Alignment, count);  // 使用给定的PSI内存键和对齐方式分配数组
   }
 
   /** Allocates sufficiently large memory of dynamic storage duration to fit
