@@ -222,6 +222,7 @@ class MutexMonitor {
 extern MutexMonitor *mutex_monitor;
 
 #ifndef UNIV_HOTBACKUP
+
 /**
 Creates, or rather, initializes a mutex object in a specified memory
 location (which must be appropriately aligned). The mutex is initialized
@@ -232,6 +233,12 @@ Add the mutex instance to the global mutex list.
 @param[in]      id              The mutex ID (Latch ID)
 @param[in]      file_name       Filename from where it was called
 @param[in]      line            Line number in filename from where called */
+创建或初始化一个互斥对象在指定的内存位置（必须适当对齐）。互斥量在重置状态下初始化。只有在包含它的内存块被释放时，才需要显式释放互斥量。
+将互斥实例添加到全局互斥列表中。
+@param[in,out]  mutex           需要初始化的互斥量
+@param[in]      id              互斥量 ID（锁 ID）
+@param[in]      file_name       调用该函数的文件名
+@param[in]      line            文件中的行号 */
 template <typename Mutex>
 void mutex_init(Mutex *mutex, latch_id_t id, const char *file_name,
                 uint32_t line) {

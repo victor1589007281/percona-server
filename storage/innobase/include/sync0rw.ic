@@ -464,6 +464,13 @@ static inline void rw_lock_sx_unlock_func(IF_DEBUG(ulint pass, )
 
 #ifdef UNIV_PFS_RWLOCK
 
+/** 
+ * 创建性能模式下的读写锁
+ * @param key 性能模式的键
+ * @param lock 指向读写锁的指针
+ * @param id 调试用的锁ID（如果启用调试）
+ * @param clocation 请求位置
+ */
 static inline void pfs_rw_lock_create_func(mysql_pfs_key_t key, rw_lock_t *lock,
                                            IF_DEBUG(latch_id_t id, )
                                                ut::Location clocation) {
@@ -475,6 +482,7 @@ static inline void pfs_rw_lock_create_func(mysql_pfs_key_t key, rw_lock_t *lock,
   /* The actual function to initialize an rwlock */
   rw_lock_create_func(lock, IF_DEBUG(id, ) clocation);
 }
+
 /** Performance schema instrumented wrap function for rw_lock_x_lock_func()
  NOTE! Please use the corresponding macro rw_lock_x_lock(), not directly
  this function!

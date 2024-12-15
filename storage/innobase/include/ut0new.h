@@ -591,19 +591,23 @@ constexpr bool WITH_PFS_MEMORY = false;
 
 /** Dynamically allocates storage of given size. Instruments the memory with
     given PSI memory key in case PFS memory support is enabled.
+/** 动态分配给定大小的存储空间。使用提供的 PSI 内存键进行内存监控（如果启用 PFS 内存支持）。
 
     @param[in] key PSI memory key to be used for PFS memory instrumentation.
     @param[in] size Size of storage (in bytes) requested to be allocated.
     @return Pointer to the allocated storage. nullptr if dynamic storage
     allocation failed.
+    @param[in] key PSI 内存键，用于 PFS 内存监控。
+    @param[in] size 请求分配的存储大小（以字节为单位）。
+    @return 指向分配存储的指针。如果动态存储分配失败，则返回 nullptr。
 
     Example:
      int *x = static_cast<int*>(ut::malloc_withkey(key, 10*sizeof(int)));
  */
 inline void *malloc_withkey(PSI_memory_key_t key, std::size_t size) noexcept {
-  using impl = detail::select_malloc_impl_t<WITH_PFS_MEMORY, false>;
-  using malloc_impl = detail::Alloc_<impl>;
-  return malloc_impl::alloc<false>(size, key());
+  using impl = detail::select_malloc_impl_t<WITH_PFS_MEMORY, false>; // 选择内存分配实现
+  using malloc_impl = detail::Alloc_<impl>; // 定义内存分配实现类型
+  return malloc_impl::alloc<false>(size, key()); // 调用分配实现进行内存分配
 }
 
 /** Dynamically allocates storage of given size.
@@ -730,12 +734,18 @@ inline void free(void *ptr) noexcept {
 /** Dynamically allocates storage for an object of type T. Constructs the object
     of type T with provided Args. Instruments the memory with given PSI memory
     key in case PFS memory support is enabled.
+/** 动态分配类型 T 的存储空间。使用提供的参数构造对象 T。
+    Instruments the memory with given PSI memory key in case PFS memory support is enabled.
 
     @param[in] key PSI memory key to be used for PFS memory instrumentation.
     @param[in] args Arguments one wishes to pass over to T constructor(s)
     @return Pointer to the allocated storage. Throws std::bad_alloc exception
     if dynamic storage allocation could not be fulfilled. Re-throws whatever
     exception that may have occurred during the construction of T, in which case
+    @param[in] key PSI 内存键，用于 PFS 内存监控。
+    @param[in] args 传递给 T 构造函数的参数。
+    @return 指向分配存储的指针。如果动态存储分配失败，则抛出 std::bad_alloc 异常。
+    Re-throws whatever exception that may have occurred during the construction of T, in which case
     it automatically cleans up the raw memory allocated for it.
 
     Example 1:
@@ -756,15 +766,15 @@ inline void free(void *ptr) noexcept {
  */
 template <typename T, typename... Args>
 inline T *new_withkey(PSI_memory_key_t key, Args &&... args) {
-  auto mem = ut::malloc_withkey(key, sizeof(T));
-  if (unlikely(!mem)) throw std::bad_alloc();
+  auto mem = ut::malloc_withkey(key, sizeof(T)); // 使用给定的 PSI 内存键分配 T 类型的内存
+  if (unlikely(!mem)) throw std::bad_alloc(); // 如果内存分配失败，抛出异常
   try {
-    new (mem) T(std::forward<Args>(args)...);
+    new (mem) T(std::forward<Args>(args)...); // 在分配的内存中构造对象 T
   } catch (...) {
-    ut::free(mem);
-    throw;
+    ut::free(mem); // 如果构造失败，释放内存
+    throw; // 重新抛出异常
   }
-  return static_cast<T *>(mem);
+  return static_cast<T *>(mem); // 返回指向分配内存的指针
 }
 
 /** Dynamically allocates storage for an object of type T. Constructs the object

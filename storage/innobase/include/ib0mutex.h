@@ -389,16 +389,16 @@ struct TTASEventMutex {
 
   /** Called when the mutex is "created". Note: Not from the constructor
   but when the mutex is initialised.
-  @param[in]    id              Mutex ID
-  @param[in]    filename        File where mutex was created
-  @param[in]    line            Line in filename */
+  @param[in]    id              Mutex ID  // 互斥锁的ID
+  @param[in]    filename        File where mutex was created  // 创建互斥锁的文件
+  @param[in]    line            Line in filename  // 文件中的行号 */
   void init(latch_id_t id, const char *filename, uint32_t line) UNIV_NOTHROW {
-    ut_a(m_event == nullptr);
-    ut_a(!is_locked());
+    ut_a(m_event == nullptr);  // 确保事件指针为空
+    ut_a(!is_locked());  // 确保互斥锁未被锁定
 
-    m_event = os_event_create();
+    m_event = os_event_create();  // 创建操作系统事件
 
-    m_policy.init(*this, id, filename, line);
+    m_policy.init(*this, id, filename, line);  // 初始化策略
   }
 
   /** This is the real destructor. This mutex can be created in BSS and

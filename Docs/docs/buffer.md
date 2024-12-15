@@ -25,3 +25,24 @@ mysql> show variables like "%connection_memory%";
 
 ### 3. 线程内存的管理结构 MEM_ROOT
 ![alt text](image.png)
+
+## 二、内存
+
+http://mysql.taobao.org/monthly/2022/11/02/
+
+### 1. os_event_t
+大多数锁、互斥量的构建和初始化最终都会相应到os_event_t的构造，但是零散的、临时的mutex等并不会造成很大的内存压力。但是在buf_block_t的初始化中就有mutex和rw_lock的初始化，其生命周期和bp相当，数量和buf_block_t相等，会占据很大一部分内存.
+<br>os_event_create的底层实现是调用了malloc的方式
+* buf_block_init()
+```
+mutex_create()
+    |->mutex_init()
+        |->TTASEventMutex::init()
+          |->os_event_create()
+```
+```
+rw_lock_create()
+    |->pfs_rw_lock_create_func()
+    |->rw_lock_create_func()
+        |->os_event_create()
+```

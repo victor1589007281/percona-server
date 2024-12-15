@@ -187,6 +187,10 @@ static rw_lock_debug_t *rw_lock_debug_create(void) {
 static void rw_lock_debug_free(rw_lock_debug_t *info) { ut::free(info); }
 #endif /* UNIV_DEBUG */
 
+/** 创建读写锁的函数
+ @param lock 指向 rw_lock_t 的指针
+ @param id 调试用的锁定 ID
+ @param clocation 锁的创建位置 */
 void rw_lock_create_func(rw_lock_t *lock,
                          IF_DEBUG(latch_id_t id, ) ut::Location clocation) {
 #if !defined(UNIV_PFS_RWLOCK)
@@ -198,47 +202,47 @@ void rw_lock_create_func(rw_lock_t *lock,
   /* If this is the very first time a synchronization object is
   created, then the following call initializes the sync system. */
 
-  lock->lock_word = X_LOCK_DECR;
-  lock->waiters = false;
+  lock->lock_word = X_LOCK_DECR; // 初始化锁的状态为解锁
+  lock->waiters = false; // 初始化等待者标志为 false
 
-  lock->recursive.store(false, std::memory_order_relaxed);
-  lock->sx_recursive = 0;
-  lock->writer_thread = std::thread::id{};
+  lock->recursive.store(false, std::memory_order_relaxed); // 初始化递归标志
+  lock->sx_recursive = 0; // 初始化 SX 递归计数
+  lock->writer_thread = std::thread::id{}; // 初始化写线程 ID
 
 #ifdef UNIV_DEBUG
-  lock->m_rw_lock = true;
+  lock->m_rw_lock = true; // 设置为读写锁
 
-  lock->m_id = id;
-  ut_a(lock->m_id != LATCH_ID_NONE);
+  lock->m_id = id; // 设置调试 ID
+  ut_a(lock->m_id != LATCH_ID_NONE); // 确保 ID 有效
 
 #endif /* UNIV_DEBUG */
 
-  lock->clocation = clocation;
+  lock->clocation = clocation; // 设置锁的创建位置
 
   /* This should hold in practice. If it doesn't then we need to
   split the source file anyway. Or create the locks on lines
   less than 65536. cline is uint16_t. */
   ut_ad(clocation.line <=
-        std::numeric_limits<decltype(lock->clocation.line)>::max());
+        std::numeric_limits<decltype(lock->clocation.line)>::max()); // 确保行号有效
 
-  lock->count_os_wait = 0;
-  lock->last_s_file_name = "not yet reserved";
-  lock->last_x_file_name = "not yet reserved";
-  lock->last_s_line = 0;
-  lock->last_x_line = 0;
-  lock->event = os_event_create();
-  lock->wait_ex_event = os_event_create();
+  lock->count_os_wait = 0; // 初始化操作系统等待计数
+  lock->last_s_file_name = "not yet reserved"; // 初始化最后 S 锁文件名
+  lock->last_x_file_name = "not yet reserved"; // 初始化最后 X 锁文件名
+  lock->last_s_line = 0; // 初始化最后 S 锁行号
+  lock->last_x_line = 0; // 初始化最后 X 锁行号
+  lock->event = os_event_create(); // 创建事件
+  lock->wait_ex_event = os_event_create(); // 创建等待事件
 
-  lock->is_block_lock = false;
+  lock->is_block_lock = false; // 初始化为非阻塞锁
 
-  mutex_enter(&rw_lock_list_mutex);
+  mutex_enter(&rw_lock_list_mutex); // 进入互斥锁
 
   ut_ad(UT_LIST_GET_FIRST(rw_lock_list) == nullptr ||
-        UT_LIST_GET_FIRST(rw_lock_list)->magic_n == rw_lock_t::MAGIC_N);
+        UT_LIST_GET_FIRST(rw_lock_list)->magic_n == rw_lock_t::MAGIC_N); // 确保锁列表有效
 
-  UT_LIST_ADD_FIRST(rw_lock_list, lock);
+  UT_LIST_ADD_FIRST(rw_lock_list, lock); // 将新锁添加到锁列表
 
-  mutex_exit(&rw_lock_list_mutex);
+  mutex_exit(&rw_lock_list_mutex); // 退出互斥锁
 }
 
 /** Calling this function is obligatory only if the memory buffer containing

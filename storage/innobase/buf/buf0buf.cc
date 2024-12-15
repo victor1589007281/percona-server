@@ -764,53 +764,58 @@ static void pfs_register_buffer_block(
 #endif /* PFS_GROUP_BUFFER_SYNC */
 
 /** Initializes a buffer control block when the buf_pool is created. */
+
+/** 初始化缓冲区控制块，当 buf_pool 被创建时调用。 */
 static void buf_block_init(
-    buf_pool_t *buf_pool, /*!< in: buffer pool instance */
-    buf_block_t *block,   /*!< in: pointer to control block */
-    byte *frame)          /*!< in: pointer to buffer frame */
 {
   UNIV_MEM_DESC(frame, UNIV_PAGE_SIZE);
 
   /* This function should only be executed at database startup or by
   buf_pool_resize(). Either way, adaptive hash index must not exist. */
+  /* 该函数仅在数据库启动时或通过 buf_pool_resize() 执行。
+  无论如何，自适应哈希索引都不应存在。 */
   block->ahi.assert_empty_on_init();
 
   block->frame = frame;
 
   block->page.buf_pool_index = buf_pool_index(buf_pool);
-  block->page.state = BUF_BLOCK_NOT_USED;
-  block->page.buf_fix_count.store(0);
-  block->page.init_io_fix();
-  block->page.reset_flush_observer();
-  block->page.m_space = nullptr;
-  block->page.m_version = 0;
+  block->page.state = BUF_BLOCK_NOT_USED; // 设置块的状态为未使用
+  block->page.buf_fix_count.store(0); // 初始化缓冲固定计数
+  block->page.init_io_fix(); // 初始化 IO 修复
+  block->page.reset_flush_observer(); // 重置刷新观察者
+  block->page.m_space = nullptr; // 设置空间为 nullptr
+  block->page.m_version = 0; // 初始化版本为 0
 
-  block->modify_clock = 0;
+  block->modify_clock = 0; // 初始化修改时钟
 
-  ut_d(block->page.file_page_was_freed = false);
+  ut_d(block->page.file_page_was_freed = false); // 确保文件页面未被释放
 
-  block->ahi.index = nullptr;
-  block->made_dirty_with_no_latch = false;
+  block->ahi.index = nullptr; // 设置自适应哈希索引为 nullptr
+  block->made_dirty_with_no_latch = false; // 设置为未锁定的脏块
 
-  ut_d(block->page.in_page_hash = false);
-  ut_d(block->page.in_zip_hash = false);
-  ut_d(block->page.in_flush_list = false);
-  ut_d(block->page.in_free_list = false);
-  ut_d(block->page.in_LRU_list = false);
-  ut_d(block->in_unzip_LRU_list = false);
-  ut_d(block->in_withdraw_list = false);
+  ut_d(block->page.in_page_hash = false); // 确保页面不在页面哈希中
+  ut_d(block->page.in_zip_hash = false); // 确保页面不在压缩哈希中
+  ut_d(block->page.in_flush_list = false); // 确保页面不在刷新列表中
+  ut_d(block->page.in_free_list = false); // 确保页面不在空闲列表中
+  ut_d(block->page.in_LRU_list = false); // 确保页面不在 LRU 列表中
+  ut_d(block->in_unzip_LRU_list = false); // 确保页面不在解压 LRU 列表中
+  ut_d(block->in_withdraw_list = false); // 确保页面不在撤回列表中
 
-  page_zip_des_init(&block->page.zip);
+  page_zip_des_init(&block->page.zip); // 初始化页面压缩描述
 
-  mutex_create(LATCH_ID_BUF_BLOCK_MUTEX, &block->mutex);
+  mutex_create(LATCH_ID_BUF_BLOCK_MUTEX, &block->mutex); // 创建互斥锁
 
 #if defined PFS_SKIP_BUFFER_MUTEX_RWLOCK || defined PFS_GROUP_BUFFER_SYNC
   /* If PFS_SKIP_BUFFER_MUTEX_RWLOCK is defined, skip registration
   of buffer block rwlock with performance schema.
+  /* 如果定义了 PFS_SKIP_BUFFER_MUTEX_RWLOCK，则跳过在性能架构中注册
+  缓冲块的 rwlock。
 
   If PFS_GROUP_BUFFER_SYNC is defined, skip the registration
   since buffer block rwlock will be registered later in
   pfs_register_buffer_block(). */
+  如果定义了 PFS_GROUP_BUFFER_SYNC，则跳过注册，因为缓冲块的 rwlock
+  将在 pfs_register_buffer_block() 中注册。 */
 
   rw_lock_create(PFS_NOT_INSTRUMENTED, &block->lock, LATCH_ID_BUF_BLOCK_LOCK);
 
@@ -826,10 +831,11 @@ static void buf_block_init(
 
 #endif /* PFS_SKIP_BUFFER_MUTEX_RWLOCK || PFS_GROUP_BUFFER_SYNC */
 
-  block->lock.is_block_lock = true;
+  block->lock.is_block_lock = true; // 设置为块锁
 
-  ut_ad(rw_lock_validate(&(block->lock)));
+  ut_ad(rw_lock_validate(&(block->lock))); // 验证 rw_lock
 }
+
 /* We maintain our private view of innobase_should_madvise_buf_pool() which we
 initialize at the beginning of buf_pool_init() and then update when the
 @@global.innodb_buffer_pool_in_core_file changes.
