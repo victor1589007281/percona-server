@@ -164,65 +164,72 @@ void Thd_mem_cnt::disable() {
 /**
    Increase memory counter at 'alloc' operation. Update
    global memory counter.
+   在'alloc'操作中增加内存计数器。更新全局内存计数器。
 
    @param size   amount of memory allocated.
+   @param size   分配的内存大小。
 */
 void Thd_mem_cnt::alloc_cnt(size_t size) {
-  mem_counter += size;
-  max_conn_mem = std::max(max_conn_mem, mem_counter);
+  mem_counter += size;  // 增加当前连接的内存计数
+  max_conn_mem = std::max(max_conn_mem, mem_counter);  // 更新最大连接内存
 
-  if (!m_enabled) {
-    return;
+  if (!m_enabled) {  // 如果内存计数器未启用
+    return;  // 直接返回
   }
 
-  assert(!opt_initialize && m_thd != nullptr);
-  assert(!m_thd->kill_immunizer || !m_thd->kill_immunizer->is_active() ||
+  assert(!opt_initialize && m_thd != nullptr);  // 确保未初始化并且THD对象有效
+  assert(!m_thd->kill_immunizer || !m_thd->kill_immunizer->is_active() ||  // 确保未处于杀死免疫状态
          !is_error_mode());
-  assert(m_thd->is_killable);
+  assert(m_thd->is_killable);  // 确保当前线程可被杀死
 
 #ifndef NDEBUG
-  if (is_error_mode() && fail_on_alloc(m_thd)) {
-    m_thd->is_mem_cnt_error_issued = true;
-    generate_error(ER_DA_CONN_LIMIT, m_thd->variables.conn_mem_limit,
+  if (is_error_mode() && fail_on_alloc(m_thd)) {  // 如果处于错误模式并且分配失败
+    m_thd->is_mem_cnt_error_issued = true;  // 标记内存计数错误已发出
+    generate_error(ER_DA_CONN_LIMIT, m_thd->variables.conn_mem_limit,  // 生成连接限制错误
                    mem_counter);
   }
 #endif
 
-  if (mem_counter > m_thd->variables.conn_mem_limit) {
+  // connection级别的报错
+  if (mem_counter > m_thd->variables.conn_mem_limit) {  // 如果当前内存计数超过连接限制
 #ifndef NDEBUG
     // Used for testing the entering to idle state
     // after successful statement execution (see mem_cnt_common_debug.test).
+    // 用于测试在成功执行语句后进入空闲状态（见mem_cnt_common_debug.test）。
     if (!DBUG_EVALUATE_IF("mem_cnt_no_error_on_exec_session", 1, 0))
 #endif
-      (void)generate_error(ER_DA_CONN_LIMIT, m_thd->variables.conn_mem_limit,
+      (void)generate_error(ER_DA_CONN_LIMIT, m_thd->variables.conn_mem_limit,  // 生成连接限制错误
                            mem_counter);
   }
 
-  if ((curr_mode & MEM_CNT_UPDATE_GLOBAL_COUNTER) &&
-      m_thd->variables.conn_global_mem_tracking &&
-      max_conn_mem > glob_mem_counter) {
+  // 三个条件分别指代：开启全局更新、开启内存追踪、存量大于提前量
+  if ((curr_mode & MEM_CNT_UPDATE_GLOBAL_COUNTER) &&  // 如果当前模式要求更新全局计数器
+      m_thd->variables.conn_global_mem_tracking &&  // 如果全局内存跟踪已启用
+      max_conn_mem > glob_mem_counter) {  // 如果当前最大连接内存超过全局计数器
     const ulonglong curr_mem =
         (max_conn_mem / m_thd->variables.conn_mem_chunk_size + 1) *
-        m_thd->variables.conn_mem_chunk_size;
-    assert(curr_mem > glob_mem_counter && curr_mem > mem_counter);
-    ulonglong delta = curr_mem - glob_mem_counter;
-    ulonglong global_conn_mem_counter_save;
-    ulonglong global_conn_mem_limit_save;
+        m_thd->variables.conn_mem_chunk_size;  // 计算当前内存
+    assert(curr_mem > glob_mem_counter && curr_mem > mem_counter);  // 确保当前内存大于全局计数器和当前计数器
+    ulonglong delta = curr_mem - glob_mem_counter;  // 计算增量
+    ulonglong global_conn_mem_counter_save;  // 保存全局连接内存计数器
+    ulonglong global_conn_mem_limit_save;  // 保存全局连接内存限制
     {
-      MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);
-      global_conn_mem_counter += delta;
-      global_conn_mem_counter_save = global_conn_mem_counter;
-      global_conn_mem_limit_save = global_conn_mem_limit;
+      MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);  // 锁定全局连接内存限制
+      global_conn_mem_counter += delta;  // 更新全局连接内存计数器
+      global_conn_mem_counter_save = global_conn_mem_counter;  // 保存当前全局连接内存计数器
+      global_conn_mem_limit_save = global_conn_mem_limit;  // 保存当前全局连接内存限制
     }
-    glob_mem_counter = curr_mem;
-    max_conn_mem = std::max(max_conn_mem, glob_mem_counter);
-    if (global_conn_mem_counter_save > global_conn_mem_limit_save) {
+    glob_mem_counter = curr_mem;  // 更新全局内存计数器
+    max_conn_mem = std::max(max_conn_mem, glob_mem_counter);  // 更新最大连接内存
+    // global级别的报错
+    if (global_conn_mem_counter_save > global_conn_mem_limit_save) {  // 如果全局连接内存计数器超过限制
 #ifndef NDEBUG
       // Used for testing the entering to idle state
       // after successful statement execution (see mem_cnt_common_debug.test).
+      // 用于测试在成功执行语句后进入空闲状态（见mem_cnt_common_debug.test）。
       if (DBUG_EVALUATE_IF("mem_cnt_no_error_on_exec_global", 1, 0)) return;
 #endif
-      (void)generate_error(ER_DA_GLOBAL_CONN_LIMIT, global_conn_mem_limit_save,
+      (void)generate_error(ER_DA_GLOBAL_CONN_LIMIT, global_conn_mem_limit_save,  // 生成全局连接限制错误
                            global_conn_mem_counter_save);
     }
   }
@@ -233,6 +240,7 @@ void Thd_mem_cnt::alloc_cnt(size_t size) {
 
    @param size   amount of memory freed.
 */
+//只对connection级别的mem_counter做减法
 void Thd_mem_cnt::free_cnt(size_t size) {
   if (mem_counter >= size) {
     mem_counter -= size;
@@ -245,55 +253,58 @@ void Thd_mem_cnt::free_cnt(size_t size) {
 /**
    Function resets current memory counter mode and adjusts
    global memory counter according to thread memory counter.
+   函数重置当前内存计数器模式，并根据线程内存计数器调整全局内存计数器。
 
    @returns -1 if OOM error, 0 otherwise.
+   @returns -1 如果发生内存不足错误，0 否则。
 */
 int Thd_mem_cnt::reset() {
-  restore_mode();
-  max_conn_mem = mem_counter;
-  if (m_thd->variables.conn_global_mem_tracking &&
-      (curr_mode & MEM_CNT_UPDATE_GLOBAL_COUNTER)) {
-    ulonglong delta;
-    ulonglong global_conn_mem_counter_save;
-    ulonglong global_conn_mem_limit_save;
-    if (glob_mem_counter > mem_counter) {
-      delta = glob_mem_counter - mem_counter;
-      MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);
-      assert(global_conn_mem_counter >= delta);
-      global_conn_mem_counter -= delta;
-      global_conn_mem_counter_save = global_conn_mem_counter;
-      global_conn_mem_limit_save = global_conn_mem_limit;
-    } else {
-      delta = mem_counter - glob_mem_counter;
-      MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);
-      global_conn_mem_counter += delta;
-      global_conn_mem_counter_save = global_conn_mem_counter;
-      global_conn_mem_limit_save = global_conn_mem_limit;
+  restore_mode();  // 恢复模式
+  max_conn_mem = mem_counter;  // 将最大连接内存设置为当前内存计数
+  if (m_thd->variables.conn_global_mem_tracking &&  // 如果启用了全局内存跟踪
+      (curr_mode & MEM_CNT_UPDATE_GLOBAL_COUNTER)) {  // 如果当前模式要求更新全局计数器
+    ulonglong delta;  // 存储增量
+    ulonglong global_conn_mem_counter_save;  // 保存全局连接内存计数器
+    ulonglong global_conn_mem_limit_save;  // 保存全局连接内存限制
+    if (glob_mem_counter > mem_counter) {  // 如果全局内存计数器大于当前内存计数器
+      delta = glob_mem_counter - mem_counter;  // 计算增量
+      MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);  // 锁定全局连接内存限制
+      assert(global_conn_mem_counter >= delta);  // 确保全局连接内存计数器大于等于增量
+      global_conn_mem_counter -= delta;  // 更新全局连接内存计数器
+      global_conn_mem_counter_save = global_conn_mem_counter;  // 保存当前全局连接内存计数器
+      global_conn_mem_limit_save = global_conn_mem_limit;  // 保存当前全局连接内存限制
+    } else {  // 如果当前内存计数器大于全局内存计数器
+      delta = mem_counter - glob_mem_counter;  // 计算增量
+      MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);  // 锁定全局连接内存限制
+      global_conn_mem_counter += delta;  // 更新全局连接内存计数器
+      global_conn_mem_counter_save = global_conn_mem_counter;  // 保存当前全局连接内存计数器
+      global_conn_mem_limit_save = global_conn_mem_limit;  // 保存当前全局连接内存限制
     }
-    glob_mem_counter = mem_counter;
-    if (is_connection_stage &&
-        (global_conn_mem_counter_save > global_conn_mem_limit_save))
-      return generate_error(ER_DA_GLOBAL_CONN_LIMIT, global_conn_mem_limit_save,
+    glob_mem_counter = mem_counter;  // 更新全局内存计数器
+    if (is_connection_stage &&  // 如果处于连接阶段
+        (global_conn_mem_counter_save > global_conn_mem_limit_save))  // 如果全局连接内存计数器超过限制
+      return generate_error(ER_DA_GLOBAL_CONN_LIMIT, global_conn_mem_limit_save,  // 生成全局连接限制错误
                             global_conn_mem_counter_save);
   }
-  if (is_connection_stage && (mem_counter > m_thd->variables.conn_mem_limit))
-    return generate_error(ER_DA_CONN_LIMIT, m_thd->variables.conn_mem_limit,
+  if (is_connection_stage && (mem_counter > m_thd->variables.conn_mem_limit))  // 如果当前内存计数超过连接限制
+    return generate_error(ER_DA_CONN_LIMIT, m_thd->variables.conn_mem_limit,  // 生成连接限制错误
                           mem_counter);
-  is_connection_stage = false;
-  return 0;
+  is_connection_stage = false;  // 重置连接阶段标志
+  return 0;  // 返回0表示成功
 }
 
 /**
    Function flushes memory counters before deleting the memory counter object.
+   在删除内存计数器对象之前，刷新内存计数器。
 */
 void Thd_mem_cnt::flush() {
-  max_conn_mem = mem_counter = 0;
-  if (glob_mem_counter > 0) {
-    MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);
-    assert(global_conn_mem_counter >= glob_mem_counter);
-    global_conn_mem_counter -= glob_mem_counter;
+  max_conn_mem = mem_counter = 0;  // 将最大连接内存和当前内存计数器设置为0
+  if (glob_mem_counter > 0) {  // 如果全局内存计数器大于0
+    MUTEX_LOCK(lock, &LOCK_global_conn_mem_limit);  // 锁定全局连接内存限制
+    assert(global_conn_mem_counter >= glob_mem_counter);  // 确保全局连接内存计数器大于等于全局内存计数器
+    global_conn_mem_counter -= glob_mem_counter;  // 从全局连接内存计数器中减去全局内存计数器
   }
-  glob_mem_counter = 0;
+  glob_mem_counter = 0;  // 将全局内存计数器设置为0
 }
 
 /**

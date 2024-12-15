@@ -268,97 +268,101 @@ extern "C" unsigned int thd_get_current_thd_terminology_use_previous();
 enum enum_mem_cnt_mode {
   /**
     Memory counter object doesn't update global memory counter and doesn't throw
-    OOM error.
+    OOM error.  // 内存计数对象不会更新全局内存计数器，也不会抛出 OOM 错误。
   */
   MEM_CNT_DEFAULT = 0U,
   /**
     if MEM_CNT_UPDATE_GLOBAL_COUNTER is set, memory counter object updates
-    global memory counter.
+    global memory counter.  // 如果设置了 MEM_CNT_UPDATE_GLOBAL_COUNTER，内存计数对象将更新全局内存计数器。
   */
   MEM_CNT_UPDATE_GLOBAL_COUNTER = (1U << 0),
   /**
   if MEM_CNT_GENERATE_ERROR is set, memory counter object generates OOM error if
-  any.
-*/
+  any.  // 如果设置了 MEM_CNT_GENERATE_ERROR，内存计数对象将在发生 OOM 错误时生成错误。
+  */
   MEM_CNT_GENERATE_ERROR = (1U << 1),
   /**
   if MEM_CNT_GENERATE_LOG_ERROR is set, memory counter object generates OOM
-  error to error log if any.
-*/
+  error to error log if any.  // 如果设置了 MEM_CNT_GENERATE_LOG_ERROR，内存计数对象将在发生 OOM 错误时生成错误日志。
+  */
   MEM_CNT_GENERATE_LOG_ERROR = (1U << 2)
 };
 
 class Thd_mem_cnt {
  private:
-  bool m_enabled{false};
-  THD *m_thd{nullptr};              // Pointer to THD object.
-  Diagnostics_area m_da{false};     // Diagnostics area.
-  ulonglong mem_counter{0};         // Amount of memory consumed by thread.
-  ulonglong max_conn_mem{0};        // Max amount memory consumed by thread.
-  ulonglong glob_mem_counter{0};    // Amount of memory added to global
-                                    // memory counter.
-  uint curr_mode{MEM_CNT_DEFAULT};  // Current memory counter mode.
-  uint orig_mode{MEM_CNT_DEFAULT};  // Original memory counter mode
-                                    // (sets at init_mode() stage).
-  bool is_connection_stage{true};   // True on connection stage,
-                                    // resets to false after successful
-                                    // connection.
- public:
-  Thd_mem_cnt() {}
-  ~Thd_mem_cnt() {
-    assert(!m_enabled);
-    assert(glob_mem_counter == 0);
-  }
-  void set_thd(THD *thd) { m_thd = thd; }
-  void enable() { m_enabled = true; }
-  void disable();
+  bool m_enabled{false};              // 是否启用内存计数
+  THD *m_thd{nullptr};                // 指向 THD 对象的指针
+  Diagnostics_area m_da{false};       // 诊断区域
+  ulonglong mem_counter{0};           // 线程消耗的内存量
+  ulonglong max_conn_mem{0};          // 线程消耗的最大内存量
+  ulonglong glob_mem_counter{0};      // 添加到全局内存计数的内存量
+  uint curr_mode{MEM_CNT_DEFAULT};    // 当前内存计数模式
+  uint orig_mode{MEM_CNT_DEFAULT};    // 原始内存计数模式（在 init_mode() 阶段设置）
+  bool is_connection_stage{true};     // 在连接阶段为真，成功连接后重置为假
 
-  void alloc_cnt(size_t size);
-  void free_cnt(size_t size);
-  int reset();
-  void flush();
+ public:
+  Thd_mem_cnt() {}                     // 构造函数
+  ~Thd_mem_cnt() {                     // 析构函数
+    assert(!m_enabled);                // 确保未启用
+    assert(glob_mem_counter == 0);     // 确保全局内存计数为零
+  }
+  
+  void set_thd(THD *thd) { m_thd = thd; }  // 设置 THD 对象指针
+  void enable() { m_enabled = true; }       // 启用内存计数
+  void disable();                            // 禁用内存计数
+
+  void alloc_cnt(size_t size);              // 分配内存计数
+  void free_cnt(size_t size);               // 释放内存计数
+  int reset();                               // 重置内存计数
+  void flush();                              // 刷新内存计数
+
   /**
     Restore original memory counter mode.
   */
-  void restore_mode() { curr_mode = orig_mode; }
+  void restore_mode() { curr_mode = orig_mode; }  // 恢复原始内存计数模式
+
   /**
     Set NO ERROR memory counter mode.
   */
-  void no_error_mode() {
+  void no_error_mode() {                     // 设置无错误内存计数模式
     curr_mode &= ~(MEM_CNT_GENERATE_ERROR | MEM_CNT_GENERATE_LOG_ERROR);
   }
+
   /**
      Function sets current memory counter mode.
 
-     @param mode_arg         current memory counter mode.
+     @param mode_arg         current memory counter mode.  // 当前内存计数模式
   */
-  void set_curr_mode(uint mode_arg) { curr_mode = mode_arg; }
+  void set_curr_mode(uint mode_arg) { curr_mode = mode_arg; }  // 设置当前内存计数模式
+
   /**
      Function sets original memory counter mode.
 
-     @param mode_arg         original memory counter mode.
+     @param mode_arg         original memory counter mode.  // 原始内存计数模式
   */
-  void set_orig_mode(uint mode_arg) { orig_mode = mode_arg; }
+  void set_orig_mode(uint mode_arg) { orig_mode = mode_arg; }  // 设置原始内存计数模式
+
   /**
     Check if memory counter error is issued.
 
-    @retval true if memory counter error is issued, false otherwise.
+    @retval true if memory counter error is issued, false otherwise.  // 如果发生内存计数错误则返回真，否则返回假
   */
-  bool is_error() const { return m_da.is_error(); }
-  void set_thd_error_status() const;
+  bool is_error() const { return m_da.is_error(); }  // 检查是否发生内存计数错误
+  void set_thd_error_status() const;                  // 设置 THD 错误状态
 
  private:
-  int generate_error(int err_no, ulonglong mem_limit, ulonglong mem_size);
+  int generate_error(int err_no, ulonglong mem_limit, ulonglong mem_size);  // 生成错误
   /**
     Check if memory counter is in error mode.
 
-    @retval true if memory counter is in error mode, false otherwise.
+    @retval true if memory counter is in error mode, false otherwise.  // 如果内存计数处于错误模式则返回真，否则返回假
   */
-  bool is_error_mode() const { return (curr_mode & MEM_CNT_GENERATE_ERROR); }
-  /**
-    Check if memory counter is in error log  mode.
+  bool is_error_mode() const { return (curr_mode & MEM_CNT_GENERATE_ERROR); }  // 检查内存计数是否处于错误模式
 
-    @retval true if memory counter is in error log mode, false otherwise.
+  /**
+    Check if memory counter is in error log mode.
+
+    @retval true if memory counter is in error log mode, false otherwise.  // 如果内存计数处于错误日志模式则返回真，否则返回假
   */
   bool is_error_log_mode() const {
     return (curr_mode & MEM_CNT_GENERATE_LOG_ERROR);
@@ -1106,8 +1110,11 @@ class THD : public MDL_context_owner,
     Controlled memory stats for this session.
     This member is the first in THD,
     to initialize Thd_mem_cnt() before allocating more memory.
+    控制此会话的内存统计信息。
+    此成员是 THD 中的第一个，
+    用于在分配更多内存之前初始化 Thd_mem_cnt()。
   */
-  Thd_mem_cnt m_mem_cnt;
+  Thd_mem_cnt m_mem_cnt;  // 该成员用于跟踪会话的内存使用情况
 
  private:
   inline bool is_stmt_prepare() const {

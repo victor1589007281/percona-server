@@ -300,17 +300,20 @@ static inline void redirecting_deallocator(void *ptr) {
 
 /**
   Allocate a sized block of memory.
+  分配一个指定大小的内存块
 
   @param size   The size of the memory block in bytes.
   @param my_flags  Failure action modifiers (bitmasks).
 
   @return A pointer to the allocated memory block, or NULL on failure.
+  @return 指向分配的内存块的指针，如果失败则返回 NULL
 */
 template <allocator_func allocator>
 void *my_raw_malloc(size_t size, myf my_flags) {
   void *point;
 
   /* Safety */
+  // 安全性检查
   if (!size) size = 1;
 
 #if defined(MY_MSCRT_DEBUG)
@@ -353,6 +356,8 @@ void *my_raw_malloc(size_t size, myf my_flags) {
 */
 template <deallocator_func deallocator>
 void my_raw_free(void *ptr) {
+  // 释放由 my_raw_malloc 函数分配的内存
+  // @param ptr: 指向要释放的内存块的指针
 #if defined(MY_MSCRT_DEBUG)
   _free_dbg(ptr, _CLIENT_BLOCK);
 #else
@@ -363,26 +368,35 @@ void my_raw_free(void *ptr) {
 #ifdef USE_MALLOC_WRAPPER
 template <allocator_func allocator>
 void *my_internal_malloc(PSI_memory_key key, size_t size, myf flags) {
-  my_memory_header *mh;
-  size_t raw_size;
+  // malloc出一块包含header信息的内存块
+  my_memory_header *mh; // 内存头部指针
+  size_t raw_size; // 原始大小
   static_assert(sizeof(my_memory_header) <= PSI_HEADER_SIZE,
-                "We must reserve enough memory to hold the header.");
+                "We must reserve enough memory to hold the header."); // 确保有足够的内存来存放头部
 
-  raw_size = PSI_HEADER_SIZE + size;
-  mh = (my_memory_header *)my_raw_malloc<allocator>(raw_size, flags);
-  if (likely(mh != nullptr)) {
-    void *user_ptr;
-    mh->m_magic = PSI_MEMORY_MAGIC;
-    mh->m_size = size;
-    mh->m_key = PSI_MEMORY_CALL(memory_alloc)(key, raw_size, &mh->m_owner);
-    user_ptr = HEADER_TO_USER(mh);
-    MEM_MALLOCLIKE_BLOCK(user_ptr, size, 0, (flags & MY_ZEROFILL));
-    return user_ptr;
+  raw_size = PSI_HEADER_SIZE + size; // 计算总的原始大小
+  mh = (my_memory_header *)my_raw_malloc<allocator>(raw_size, flags); // 分配内存
+
+// 对header数据结构初始化，调用pfs_memory_alloc_vc对head->key进行赋值
+
+  if (likely(mh != nullptr)) { // 如果内存分配成功
+    void *user_ptr; // 用户指针
+    mh->m_magic = PSI_MEMORY_MAGIC; // 设置魔法数
+    mh->m_size = size; // 设置分配的大小
+    mh->m_key = PSI_MEMORY_CALL(memory_alloc)(key, raw_size, &mh->m_owner); // 调用内存分配函数
+    user_ptr = HEADER_TO_USER(mh); // 获取用户指针
+    MEM_MALLOCLIKE_BLOCK(user_ptr, size, 0, (flags & MY_ZEROFILL)); // 记录内存分配
+    return user_ptr; // 返回用户指针
   }
-  return nullptr;
+  return nullptr; // 如果分配失败，返回空指针
 }
 
 void *my_malloc(PSI_memory_key key, size_t size, myf flags) {
+  // 分配内存的函数
+  // @param key: PSI_memory_key 类型的键，用于标识内存分配
+  // @param size: 要分配的内存块的大小（以字节为单位）
+  // @param flags: 失败操作的标志（位掩码）
+  
   return my_internal_malloc<redirecting_allocator>(key, size, flags);
 }
 
@@ -472,6 +486,11 @@ void my_std_free(void *ptr) { my_internal_free<std_deallocator>(ptr); }
 #else
 void *my_malloc(PSI_memory_key key [[maybe_unused]], size_t size,
                 myf my_flags) {
+  // 分配内存的函数
+  // @param key: PSI_memory_key 类型的键，用于标识内存分配
+  // @param size: 要分配的内存块的大小（以字节为单位）
+  // @param my_flags: 失败操作的标志（位掩码）
+  
   return my_raw_malloc<redirecting_allocator>(size, my_flags);
 }
 
@@ -531,7 +550,11 @@ void my_claim(const void *ptr [[maybe_unused]],
               bool claim [[maybe_unused]]) { /* Empty */
 }
 
-void my_free(void *ptr) { my_raw_free<redirecting_deallocator>(ptr); }
+void my_free(void *ptr) { 
+  // 释放由 my_raw_free 函数分配的内存
+  // @param ptr: 指向要释放的内存块的指针
+  my_raw_free<redirecting_deallocator>(ptr); 
+}
 
 void my_std_free(void *ptr) { my_raw_free<std_deallocator>(ptr); }
 #endif

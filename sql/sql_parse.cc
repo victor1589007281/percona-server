@@ -1348,55 +1348,68 @@ static bool shrink_packet_buffer(THD *thd, unsigned long *max_interval_packet,
 /**
   Read one command from connection and execute it (query or simple command).
   This function is called in loop from thread function.
+  从连接中读取一个命令并执行它（查询或简单命令）。
+  此函数在线程函数中循环调用。
 
   For profiling to work, it must never be called recursively.
+  为了使性能分析工作，它绝不能被递归调用。
 
   @retval
     0  success
+    0  成功
   @retval
     1  request of thread shutdown (see dispatch_command() description)
+    1  请求线程关闭（参见 dispatch_command() 描述）
 */
 
-bool do_command(THD *thd) {
-  bool return_value;
-  int rc;
-  NET *net = nullptr;
-  enum enum_server_command command = COM_SLEEP;
-  COM_DATA com_data;
-  DBUG_TRACE;
-  assert(thd->is_classic_protocol());
+bool do_command(THD *thd) {  // 执行命令的函数，参数 thd 是当前线程的句柄
+  bool return_value;  // 返回值，指示命令执行的结果
+  int rc;  // 返回代码
+  NET *net = nullptr;  // 网络连接指针
+  enum enum_server_command command = COM_SLEEP;  // 当前命令，初始为休眠状态
+  COM_DATA com_data;  // 存储命令数据的结构体
+  DBUG_TRACE;  // 调试跟踪
+  assert(thd->is_classic_protocol());  // 确保使用经典协议
 
   /*
     indicator of uninitialized lex => normal flow of errors handling
     (see my_message_sql)
+    未初始化的 lex 指示符 => 正常的错误处理流程
+    （参见 my_message_sql）
   */
-  thd->lex->set_current_query_block(nullptr);
+  thd->lex->set_current_query_block(nullptr);  // 设置当前查询块为 nullptr
 
   /*
     XXX: this code is here only to clear possible errors of init_connect.
     Consider moving to prepare_new_connection_state() instead.
     That requires making sure the DA is cleared before non-parsing statements
     such as COM_QUIT.
+    XXX: 此代码在此处仅用于清除 init_connect 的可能错误。
+    考虑将其移动到 prepare_new_connection_state() 中。
+    这需要确保在非解析语句（如 COM_QUIT）之前清除 DA。
   */
-  thd->clear_error();  // Clear error message
-  thd->get_stmt_da()->reset_diagnostics_area();
-  thd->updated_row_count = 0;
-  thd->busy_time = 0;
-  thd->cpu_time = 0;
-  thd->bytes_received = 0;
-  thd->bytes_sent = 0;
-  thd->binlog_bytes_written = 0;
+  thd->clear_error();  // 清除错误消息
+  thd->get_stmt_da()->reset_diagnostics_area();  // 重置诊断区域
+  thd->updated_row_count = 0;  // 更新的行数
+  thd->busy_time = 0;  // 忙碌时间
+  thd->cpu_time = 0;  // CPU 时间
+  thd->bytes_received = 0;  // 接收的字节数
+  thd->bytes_sent = 0;  // 发送的字节数
+  thd->binlog_bytes_written = 0;  // 写入的二进制日志字节数
 
   /*
     This thread will do a blocking read from the client which
     will be interrupted when the next command is received from
     the client, the connection is closed or "net_wait_timeout"
     number of seconds has passed.
+    此线程将从客户端进行阻塞读取，
+    当接收到下一个命令、连接关闭或“net_wait_timeout”
+    秒数已过时，将被中断。
   */
-  net = thd->get_protocol_classic()->get_net();
+  net = thd->get_protocol_classic()->get_net();  // 获取网络连接
   if (!thd->skip_wait_timeout)
-    my_net_set_read_timeout(net, thd->get_wait_timeout());
-  net_new_transaction(net);
+    my_net_set_read_timeout(net, thd->get_wait_timeout());  // 设置读取超时
+  net_new_transaction(net);  // 开始新的网络事务
 
   /*
     Synchronization point for testing of KILL_CONNECTION.
@@ -1411,19 +1424,29 @@ bool do_command(THD *thd) {
     kill. In this case it consumes a condition broadcast, but does
     not change anything else. The consumed broadcast should not
     matter here, because the read/recv() below doesn't use it.
+    测试 KILL_CONNECTION 的同步点。
+    此同步点可以在此处等待，以模拟在最后测试 thd->killed 和阻塞在 read() 之间的慢代码执行。
+
+    此测试的目标是验证在此执行点杀死连接不会挂起。
+    （Bug#37780 - main.kill 随机失败）
+
+    注意，sync 点等待本身将被杀死终止。在这种情况下，它消耗一个条件广播，但不会改变其他任何东西。
+    消耗的广播在这里不重要，因为下面的 read/recv() 不使用它。
   */
   DEBUG_SYNC(thd, "before_do_command_net_read");
 
   /* For per-query performance counters with log_slow_statement */
-  struct System_status_var query_start_status;
-  thd->clear_copy_status_var();
+  /* 用于每个查询性能计数器与 log_slow_statement */
+  struct System_status_var query_start_status;  // 查询开始状态
+  thd->clear_copy_status_var();  // 清除复制状态变量
   if (opt_log_slow_extra) {
-    thd->copy_status_var(&query_start_status);
+    thd->copy_status_var(&query_start_status);  // 复制状态变量
   }
 
-  rc = thd->m_mem_cnt.reset();
+//这里检查更新本线程以及全局的内存使用量，可能会触发内存超限报错
+  rc = thd->m_mem_cnt.reset();  // 重置内存计数
   if (rc)
-    thd->m_mem_cnt.set_thd_error_status();
+    thd->m_mem_cnt.set_thd_error_status();  // 设置线程错误状态
   else {
     /*
       Because of networking layer callbacks in place,
@@ -1435,88 +1458,102 @@ bool do_command(THD *thd) {
       when reading a new network packet.
       In particular, a new instrumented statement is started.
       See init_net_server_extension()
+      由于网络层回调的存在，此调用将维护以下仪器：
+      - 空闲事件
+      - 套接字事件
+      - 语句事件
+      - 阶段事件
+      在读取新的网络数据包时。
+      特别是，开始一个新的仪器化语句。
+      参见 init_net_server_extension()
     */
-    thd->m_server_idle = true;
-    rc = thd->get_protocol()->get_command(&com_data, &command);
-    thd->m_server_idle = false;
+    thd->m_server_idle = true;  // 设置服务器为空闲状态
+    rc = thd->get_protocol()->get_command(&com_data, &command);  // 获取命令
+    thd->m_server_idle = false;  // 重置为空闲状态
   }
 
-  if (rc) {
+  if (rc) {  // 如果获取命令失败
 #ifndef NDEBUG
-    char desc[VIO_DESCRIPTION_SIZE];
-    vio_description(net->vio, desc);
+    char desc[VIO_DESCRIPTION_SIZE];  // 描述缓冲区
+    vio_description(net->vio, desc);  // 获取网络描述
     DBUG_PRINT("info", ("Got error %d reading command from socket %s",
-                        net->error, desc));
+                        net->error, desc));  // 打印错误信息
 #endif  // NDEBUG
     /* Instrument this broken statement as "statement/com/error" */
+    /* 将此损坏的语句标记为 "statement/com/error" */
     thd->m_statement_psi = MYSQL_REFINE_STATEMENT(
         thd->m_statement_psi, com_statement_info[COM_END].m_key);
 
     /* Check if we can continue without closing the connection */
+    /* 检查我们是否可以继续而不关闭连接 */
 
-    /* The error must be set. */
-    assert(thd->is_error());
-    thd->send_statement_status();
+    /* 错误必须被设置。 */
+    assert(thd->is_error());  // 确保有错误
+    thd->send_statement_status();  // 发送语句状态
 
     /* Mark the statement completed. */
+    /* 标记语句已完成。 */
     MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
-    thd->m_statement_psi = nullptr;
-    thd->m_digest = nullptr;
+    thd->m_statement_psi = nullptr;  // 重置语句指针
+    thd->m_digest = nullptr;  // 重置摘要指针
 
     if (rc < 0) {
-      return_value = true;  // We have to close it.
-      goto out;
+      return_value = true;  // 我们必须关闭它。
+      goto out;  // 跳转到结束
     }
-    net->error = NET_ERROR_UNSET;
-    return_value = false;
-    goto out;
+    net->error = NET_ERROR_UNSET;  // 重置网络错误
+    return_value = false;  // 返回值为 false
+    goto out;  // 跳转到结束
   }
 
 #ifndef NDEBUG
-  char desc[VIO_DESCRIPTION_SIZE];
-  vio_description(net->vio, desc);
+  char desc[VIO_DESCRIPTION_SIZE];  // 描述缓冲区
+  vio_description(net->vio, desc);  // 获取网络描述
   DBUG_PRINT("info", ("Command on %s = %d (%s)", desc, command,
-                      Command_names::str_notranslate(command).c_str()));
-  expected_from_debug_flag = TDM::ANY;
+                      Command_names::str_notranslate(command).c_str()));  // 打印命令信息
+  expected_from_debug_flag = TDM::ANY;  // 设置调试标志
   DBUG_EXECUTE_IF("tdon", { expected_from_debug_flag = TDM::ON; });
   DBUG_EXECUTE_IF("tdzero", { expected_from_debug_flag = TDM::ZERO; });
   DBUG_EXECUTE_IF("tdna", { expected_from_debug_flag = TDM::NOT_AVAILABLE; });
 #endif  // NDEBUG
   DBUG_PRINT("info", ("packet: '%*.s'; command: %d",
                       (int)thd->get_protocol_classic()->get_packet_length(),
-                      thd->get_protocol_classic()->get_raw_packet(), command));
+                      thd->get_protocol_classic()->get_raw_packet(), command));  // 打印数据包信息
   if (thd->get_protocol_classic()->bad_packet)
-    assert(0);  // Should be caught earlier
+    assert(0);  // 应该在之前捕获
 
   // Reclaim some memory
+  // 回收一些内存
   thd->get_protocol_classic()->get_output_packet()->shrink(
-      thd->variables.net_buffer_length);
   /* Restore read timeout value */
-  my_net_set_read_timeout(net, thd->variables.net_read_timeout);
+      thd->variables.net_buffer_length);  // 收缩输出数据包
+  /* 恢复读取超时值 */
+  my_net_set_read_timeout(net, thd->variables.net_read_timeout);  // 恢复读取超时
 
-  thd->status_var.net_buffer_length = net->max_packet;
+  thd->status_var.net_buffer_length = net->max_packet;  // 设置网络缓冲区长度
 
   DEBUG_SYNC(thd, "before_command_dispatch");
 
-  return_value = dispatch_command(thd, &com_data, command);
+  return_value = dispatch_command(thd, &com_data, command);  // 调度命令
 
 #ifdef MYSQL_SERVER
   {
-    NET_SERVER *ext = static_cast<NET_SERVER *>(net->extension);
+    NET_SERVER *ext = static_cast<NET_SERVER *>(net->extension);  // 获取网络服务器扩展
     if (ext != nullptr)
       shrink_packet_buffer(thd, &ext->max_interval_packet,
-                           &ext->net_buffer_shrink_time);
+                           &ext->net_buffer_shrink_time);  // 收缩数据包缓冲区
   }
 #endif
 
   thd->get_protocol_classic()->get_output_packet()->shrink(
-      thd->variables.net_buffer_length);
+      thd->variables.net_buffer_length);  // 收缩输出数据包
 
 out:
   /* The statement instrumentation must be closed in all cases. */
-  assert(thd->m_digest == nullptr);
-  assert(thd->m_statement_psi == nullptr);
-  return return_value;
+  /* 语句仪器必须在所有情况下关闭。 */
+  assert(thd->m_digest == nullptr);  // 确保摘要为空
+  assert(thd->m_statement_psi == nullptr);  // 确保语句指针为空
+  return return_value;  // 返回执行结果
 }
 
 /**

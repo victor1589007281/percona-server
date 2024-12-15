@@ -1901,17 +1901,38 @@ struct System_status_var *get_thd_status_var(THD *thd, bool *aggregated) {
 }
 
 #ifndef NDEBUG
+/**
+ * 分配内存计数
+ * 
+ * @param thd 线程句柄
+ * @param size 要分配的内存大小
+ * @param key_name 内存分配的键名
+ */
 void thd_mem_cnt_alloc(THD *thd, size_t size, const char *key_name) {
   thd->current_key_name = key_name;
   thd->m_mem_cnt.alloc_cnt(size);
 }
 #else
+/**
+ * 分配内存计数
+ * 
+ * @param thd 线程句柄
+ * @param size 要分配的内存大小
+ */
 void thd_mem_cnt_alloc(THD *thd, size_t size) {
   thd->m_mem_cnt.alloc_cnt(size);
 }
 #endif
 
-void thd_mem_cnt_free(THD *thd, size_t size) { thd->m_mem_cnt.free_cnt(size); }
+/**
+ * 释放内存计数
+ * 
+ * @param thd 线程句柄
+ * @param size 要释放的内存大小
+ */
+void thd_mem_cnt_free(THD *thd, size_t size) { 
+  thd->m_mem_cnt.free_cnt(size); 
+}
 
 static void option_error_reporter(enum loglevel level, uint ecode, ...) {
   va_list args;

@@ -1061,72 +1061,100 @@ void end_connection(THD *thd) {
 
 /*
   Initialize THD to handle queries
+  初始化 THD 以处理查询
 */
 
 static void prepare_new_connection_state(THD *thd) {
-  NET *net = thd->get_protocol_classic()->get_net();
-  Security_context *sctx = thd->security_context();
+  NET *net = thd->get_protocol_classic()->get_net(); // 获取网络协议
+  Security_context *sctx = thd->security_context(); // 获取安全上下文
 
+  // 检查客户端是否支持压缩功能
   if (thd->get_protocol()->has_client_capability(CLIENT_COMPRESS) ||
       thd->get_protocol()->has_client_capability(
           CLIENT_ZSTD_COMPRESSION_ALGORITHM)) {
-    net->compress = true;  // Use compression
+    net->compress = true;  // 使用压缩
+    // 获取压缩算法
     enum enum_compression_algorithm algorithm = get_compression_algorithm(
         thd->get_protocol()->get_compression_algorithm());
     NET_SERVER *server_extn = static_cast<NET_SERVER *>(net->extension);
+    
+    // 初始化压缩上下文
     if (server_extn != nullptr)
       mysql_compress_context_init(&server_extn->compress_ctx, algorithm,
                                   thd->get_protocol()->get_compression_level());
+    
+    // 检查网络扩展是否为 nullptr
     if (net->extension == nullptr) {
-      LEX_CSTRING sctx_user = sctx->user();
-      Host_errors errors;
+      LEX_CSTRING sctx_user = sctx->user(); // 获取用户信息
+      Host_errors errors; // 错误信息
+      // 报告错误并终止连接
       my_error(ER_NEW_ABORTING_CONNECTION, MYF(0), thd->thread_id(),
                thd->db().str ? thd->db().str : "unconnected",
                sctx_user.str ? sctx_user.str : "unauthenticated",
                sctx->host_or_ip().str,
                "Unable to allocate memory for compression context: Aborting "
                "connection.");
-      thd->server_status &= ~SERVER_STATUS_CLEAR_SET;
-      thd->send_statement_status();
-      thd->killed = THD::KILL_CONNECTION;
-      errors.m_init_connect = 1;
-      inc_host_errors(thd->m_main_security_ctx.ip().str, &errors);
-      return;
+      thd->server_status &= ~SERVER_STATUS_CLEAR_SET; // 清除服务器状态
+      thd->send_statement_status(); // 发送语句状态
+      thd->killed = THD::KILL_CONNECTION; // 杀死连接
+      errors.m_init_connect = 1; // 初始化连接错误
+      inc_host_errors(thd->m_main_security_ctx.ip().str, &errors); // 增加主机错误计数
+      return; // 退出函数
     }
   }
 
   // Initializing session system variables.
-  alloc_and_copy_thd_dynamic_variables(thd, true);
+  // 初始化会话系统变量
+  alloc_and_copy_thd_dynamic_variables(thd, true); // 分配并复制动态变量
 
-  thd->set_proc_info(nullptr);
-  thd->set_command(COM_SLEEP);
-  thd->init_query_mem_roots();
+  thd->set_proc_info(nullptr); // 设置处理信息为空
+  thd->set_command(COM_SLEEP); // 设置命令为休眠
+  thd->init_query_mem_roots(); // 初始化查询内存根
+
+  // 检查当前连接是否为管理员连接
   const bool is_admin_conn =
       (sctx->check_access(SUPER_ACL) ||
        sctx->has_global_grant(STRING_WITH_LEN("CONNECTION_ADMIN")).first);
+  
+  // 设置内存计数的原始模式
+  /*
+  * SUPER用户在连接建立时的mode是MEM_CNT_UPDATE_GLOBAL_COUNTER，
+  * 而普通的用户的mode则是MEM_CNT_UPDATE_GLOBAL_COUNTER ｜ MEM_CNT_GENERATE_ERROR ｜ MEM_CNT_GENERATE_LOG_ERROR。
+  * 在进行内存计数时会使用这个判断位，决定是否产生错误并kill connection。
+  * 换言之，SUPER用户在执行查询等操作时是不会受到limit参数的限制的，而普通用户则会收到varibales的影响。
+  */
   thd->m_mem_cnt.set_orig_mode(is_admin_conn ? MEM_CNT_UPDATE_GLOBAL_COUNTER
                                              : (MEM_CNT_UPDATE_GLOBAL_COUNTER |
                                                 MEM_CNT_GENERATE_ERROR |
                                                 MEM_CNT_GENERATE_LOG_ERROR));
+  
+  // 如果有初始化连接选项且不是管理员连接
   if (opt_init_connect.length && !is_admin_conn) {
+    // 检查密码是否过期
     if (sctx->password_expired()) {
       LogErr(WARNING_LEVEL, ER_CONN_INIT_CONNECT_IGNORED, sctx->priv_user().str,
-             sctx->priv_host().str);
-      return;
+             sctx->priv_host().str); // 记录警告
+      return; // 退出函数
     }
-    // Do not print OOM error to error log.
+    
+    // 不将 OOM 错误打印到错误日志
     thd->m_mem_cnt.set_curr_mode(
         (MEM_CNT_UPDATE_GLOBAL_COUNTER | MEM_CNT_GENERATE_ERROR));
+    
+    // 执行初始化命令
     execute_init_command(thd, &opt_init_connect, &LOCK_sys_init_connect);
-    thd->m_mem_cnt.set_curr_mode(MEM_CNT_DEFAULT);
+    thd->m_mem_cnt.set_curr_mode(MEM_CNT_DEFAULT); // 恢复当前模式
+    
+    // 检查是否发生错误
     if (thd->is_error()) {
-      Host_errors errors;
-      ulong packet_length;
-      LEX_CSTRING sctx_user = sctx->user();
-      Diagnostics_area *da = thd->get_stmt_da();
-      const char *user = sctx_user.str ? sctx_user.str : "unauthenticated";
-      const char *what = "init_connect command failed";
+      Host_errors errors; // 错误信息
+      ulong packet_length; // 数据包长度
+      LEX_CSTRING sctx_user = sctx->user(); // 获取用户信息
+      Diagnostics_area *da = thd->get_stmt_da(); // 获取诊断区域
+      const char *user = sctx_user.str ? sctx_user.str : "unauthenticated"; // 用户名
+      const char *what = "init_connect command failed"; // 错误描述
 
+      // 记录错误事件
       LogEvent()
           .prio(WARNING_LEVEL)
           .subsys(LOG_SUBSYSTEM_TAG)
@@ -1143,11 +1171,11 @@ static void prepare_new_connection_state(THD *thd) {
                   sctx->host_or_ip().str, what, da->mysql_errno(),
                   da->message_text());
 
-      thd->lex->set_current_query_block(nullptr);
-      my_net_set_read_timeout(net, thd->variables.net_wait_timeout);
-      thd->clear_error();
-      net_new_transaction(net);
-      packet_length = my_net_read(net);
+      thd->lex->set_current_query_block(nullptr); // 设置当前查询块为空
+      my_net_set_read_timeout(net, thd->variables.net_wait_timeout); // 设置读取超时
+      thd->clear_error(); // 清除错误
+      net_new_transaction(net); // 开始新的网络事务
+      packet_length = my_net_read(net); // 读取网络数据包
       /*
         If my_net_read() failed, my_error() has been already called,
         and the main Diagnostics Area contains an error condition.
@@ -1158,33 +1186,34 @@ static void prepare_new_connection_state(THD *thd) {
                  sctx_user.str ? sctx_user.str : "unauthenticated",
                  sctx->host_or_ip().str, "init_connect command failed");
 
-      thd->server_status &= ~SERVER_STATUS_CLEAR_SET;
-      thd->send_statement_status();
-      thd->killed = THD::KILL_CONNECTION;
-      errors.m_init_connect = 1;
-      inc_host_errors(thd->m_main_security_ctx.ip().str, &errors);
+      thd->server_status &= ~SERVER_STATUS_CLEAR_SET; // 清除服务器状态
+      thd->send_statement_status(); // 发送语句状态
+      thd->killed = THD::KILL_CONNECTION; // 杀死连接
+      errors.m_init_connect = 1; // 初始化连接错误
+      inc_host_errors(thd->m_main_security_ctx.ip().str, &errors); // 增加主机错误计数
       NET_SERVER *server_extn = static_cast<NET_SERVER *>(net->extension);
       if (server_extn != nullptr)
-        mysql_compress_context_deinit(&server_extn->compress_ctx);
-      return;
+        mysql_compress_context_deinit(&server_extn->compress_ctx); // 释放压缩上下文
+      return; // 退出函数
     }
 
-    thd->set_proc_info(nullptr);
-    thd->init_query_mem_roots();
+    thd->set_proc_info(nullptr); // 设置处理信息为空
+    thd->init_query_mem_roots(); // 初始化查询内存根
   }
 }
 
+// 准备连接的函数
 bool thd_prepare_connection(THD *thd) {
-  thd->enable_mem_cnt();
+  thd->enable_mem_cnt(); // 启用内存计数
 
-  bool rc;
-  lex_start(thd);
-  rc = login_connection(thd);
+  bool rc; // 返回值
+  lex_start(thd); // 启动词法分析
+  rc = login_connection(thd); // 登录连接
 
-  if (rc) return rc;
+  if (rc) return rc; // 如果登录失败，返回错误代码
 
-  prepare_new_connection_state(thd);
-  return false;
+  prepare_new_connection_state(thd); // 准备新的连接状态
+  return false; // 返回成功
 }
 
 /**

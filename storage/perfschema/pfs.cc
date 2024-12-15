@@ -7749,91 +7749,99 @@ void pfs_register_memory_vc(const char *category, PSI_memory_info_v1 *info,
                    register_memory_class);
 }
 
+/**
+ * 分配内存的函数
+ * @param key 内存键
+ * @param size 要分配的内存大小
+ * @param owner 指向线程的指针，用于存储拥有该内存的线程
+ * @return 返回内存键
+ */
 PSI_memory_key pfs_memory_alloc_vc(PSI_memory_key key, size_t size,
                                    PSI_thread **owner) {
-  PSI_memory_key result_key = key;
-  PFS_thread **owner_thread = reinterpret_cast<PFS_thread **>(owner);
-  assert(owner_thread != nullptr);
+  PSI_memory_key result_key = key; // 结果键为输入键
+  PFS_thread **owner_thread = reinterpret_cast<PFS_thread **>(owner); // 将owner转换为PFS_thread指针
+  assert(owner_thread != nullptr); // 确保owner_thread不为空
 
-  if (!flag_global_instrumentation) {
-    *owner_thread = nullptr;
-    return PSI_NOT_INSTRUMENTED;
+  if (!flag_global_instrumentation) { // 如果全局仪表标志未设置
+    *owner_thread = nullptr; // 设置拥有者为nullptr
+    return PSI_NOT_INSTRUMENTED; // 返回未被仪表化的标志
   }
 
-  PFS_memory_class *klass = find_memory_class(key);
-  if (klass == nullptr) {
-    *owner_thread = nullptr;
-    return PSI_NOT_INSTRUMENTED;
+  PFS_memory_class *klass = find_memory_class(key); // 查找内存类
+  if (klass == nullptr) { // 如果未找到内存类
+    *owner_thread = nullptr; // 设置拥有者为nullptr
+    return PSI_NOT_INSTRUMENTED; // 返回未被仪表化的标志
   }
 
-  if (!klass->m_enabled) {
-    *owner_thread = nullptr;
-    return PSI_NOT_INSTRUMENTED;
+  if (!klass->m_enabled) { // 如果内存类未启用
+    *owner_thread = nullptr; // 设置拥有者为nullptr
+    return PSI_NOT_INSTRUMENTED; // 返回未被仪表化的标志
   }
 
-  uint index = klass->m_event_name_index;
+  uint index = klass->m_event_name_index; // 获取事件名称索引
+  // 启动thread监控维度、非全局监控模式
 
-  if (flag_thread_instrumentation && !klass->is_global()) {
-    PFS_thread *pfs_thread = my_thread_get_THR_PFS();
-    if (unlikely(pfs_thread == nullptr)) {
-      *owner_thread = nullptr;
-      return PSI_NOT_INSTRUMENTED;
+  if (flag_thread_instrumentation && !klass->is_global()) { // 如果线程仪表标志设置且内存类不是全局的
+    PFS_thread *pfs_thread = my_thread_get_THR_PFS(); // 获取当前线程
+    if (unlikely(pfs_thread == nullptr)) { // 如果线程为空
+      *owner_thread = nullptr; // 设置拥有者为nullptr
+      return PSI_NOT_INSTRUMENTED; // 返回未被仪表化的标志
     }
-    if (!pfs_thread->m_enabled) {
-      *owner_thread = nullptr;
-      return PSI_NOT_INSTRUMENTED;
+    if (!pfs_thread->m_enabled) { // 如果线程未启用
+      *owner_thread = nullptr; // 设置拥有者为nullptr
+      return PSI_NOT_INSTRUMENTED; // 返回未被仪表化的标志
     }
 
-    if (klass->has_enforced_memory_cnt()) {
-      result_key |= PSI_MEM_CNT_BIT;
+    if (klass->has_enforced_memory_cnt()) { // 如果内存类有强制的内存计数
+      result_key |= PSI_MEM_CNT_BIT; // 设置结果键的内存计数位
 #ifndef NDEBUG
-      pfs_thread->current_key_name = klass->m_name.str();
+      pfs_thread->current_key_name = klass->m_name.str(); // 在调试模式下设置当前键名
 #endif
     }
 
     /* Adjust session memory for this thread. */
-    if (result_key & PSI_MEM_CNT_BIT) {
-      if (pfs_thread->m_cnt_thd != nullptr) {
-        pfs_thread->mem_cnt_alloc(size);
+    if (result_key & PSI_MEM_CNT_BIT) { // 如果结果键包含内存计数位
+      if (pfs_thread->m_cnt_thd != nullptr) { // 如果线程计数不为空
+        pfs_thread->mem_cnt_alloc(size); // 记录内存分配
       }
-      pfs_thread->m_session_all_memory_stat.count_controlled_alloc(size);
-      DEBUG_TRACE_MEMORY("CA()", pfs_thread, klass, size);
+      pfs_thread->m_session_all_memory_stat.count_controlled_alloc(size); // 记录受控分配
+      DEBUG_TRACE_MEMORY("CA()", pfs_thread, klass, size); // 调试内存分配
     } else {
-      pfs_thread->m_session_all_memory_stat.count_uncontrolled_alloc(size);
-      DEBUG_TRACE_MEMORY("UA()", pfs_thread, klass, size);
+      pfs_thread->m_session_all_memory_stat.count_uncontrolled_alloc(size); // 记录不受控分配
+      DEBUG_TRACE_MEMORY("UA()", pfs_thread, klass, size); // 调试内存分配
     }
 
-    PFS_memory_safe_stat *event_name_array;
-    PFS_memory_safe_stat *stat;
-    PFS_memory_stat_alloc_delta delta_buffer;
-    PFS_memory_stat_alloc_delta *delta;
+    PFS_memory_safe_stat *event_name_array; // 事件名称数组
+    PFS_memory_safe_stat *stat; // 统计信息
+    PFS_memory_stat_alloc_delta delta_buffer; // 分配增量缓冲区
+    PFS_memory_stat_alloc_delta *delta; // 指向分配增量的指针
 
     /* Aggregate to MEMORY_SUMMARY_BY_THREAD_BY_EVENT_NAME */
-    event_name_array = pfs_thread->write_instr_class_memory_stats();
-    stat = &event_name_array[index];
-    delta = stat->count_alloc(size, &delta_buffer);
+    event_name_array = pfs_thread->write_instr_class_memory_stats(); // 获取线程的内存统计
+    stat = &event_name_array[index]; // 获取对应索引的统计信息
+    delta = stat->count_alloc(size, &delta_buffer); // 记录分配
 
-    if (delta != nullptr) {
-      pfs_thread->carry_memory_stat_alloc_delta(delta, index);
+    if (delta != nullptr) { // 如果增量不为空
+      pfs_thread->carry_memory_stat_alloc_delta(delta, index); // 传递分配增量
     }
 
     /* Flag this memory as owned by the current thread. */
-    *owner_thread = pfs_thread;
+    *owner_thread = pfs_thread; // 设置拥有者为当前线程
   } else {
-    PFS_memory_shared_stat *event_name_array;
-    PFS_memory_shared_stat *stat;
+    PFS_memory_shared_stat *event_name_array; // 事件名称数组
+    PFS_memory_shared_stat *stat; // 统计信息
 
-    DEBUG_TRACE_MEMORY("GA()", nullptr, klass, size);
+    DEBUG_TRACE_MEMORY("GA()", nullptr, klass, size); // 调试全局分配
 
     /* Aggregate to MEMORY_SUMMARY_GLOBAL_BY_EVENT_NAME */
-    event_name_array = global_instr_class_memory_array;
-    stat = &event_name_array[index];
-    stat->count_global_alloc(size);
+    event_name_array = global_instr_class_memory_array; // 获取全局内存统计
+    stat = &event_name_array[index]; // 获取对应索引的统计信息
+    stat->count_global_alloc(size); // 记录全局分配
 
-    *owner_thread = nullptr;
+    *owner_thread = nullptr; // 设置拥有者为nullptr
   }
 
-  return result_key;
+  return result_key; // 返回结果键
 }
 
 PSI_memory_key pfs_memory_realloc_vc(PSI_memory_key key, size_t old_size,
@@ -8067,6 +8075,12 @@ PSI_memory_key pfs_memory_claim_vc(PSI_memory_key key, size_t size,
   return key;
 }
 
+/**
+ * 释放内存的函数
+ * @param key 内存键
+ * @param size 要释放的内存大小
+ * @param owner 指向拥有该内存的线程
+ */
 void pfs_memory_free_vc(PSI_memory_key key, size_t size, PSI_thread *owner) {
   PFS_memory_class *klass = find_memory_class(PSI_REAL_MEM_KEY(key));
 
@@ -8081,13 +8095,13 @@ void pfs_memory_free_vc(PSI_memory_key key, size_t size, PSI_thread *owner) {
     the corresponding free must be instrumented.
   */
 
-  uint index = klass->m_event_name_index;
-  PFS_memory_stat_free_delta delta_buffer;
-  PFS_memory_stat_free_delta *delta;
+  uint index = klass->m_event_name_index; // 获取事件名称索引
+  PFS_memory_stat_free_delta delta_buffer; // 释放增量缓冲区
+  PFS_memory_stat_free_delta *delta; // 指向释放增量的指针
 
   if (flag_thread_instrumentation && !klass->is_global()) {
-    PFS_thread *pfs_thread = my_thread_get_THR_PFS();
-    PFS_thread *owner_thread = reinterpret_cast<PFS_thread *>(owner);
+    PFS_thread *pfs_thread = my_thread_get_THR_PFS(); // 获取当前线程
+    PFS_thread *owner_thread = reinterpret_cast<PFS_thread *>(owner); // 将owner转换为PFS_thread指针
     if (likely(pfs_thread != nullptr)) {
       if (pfs_thread == owner_thread) {
         /*
@@ -8097,46 +8111,46 @@ void pfs_memory_free_vc(PSI_memory_key key, size_t size, PSI_thread *owner) {
         */
 
         /* Aggregate to MEMORY_SUMMARY_BY_THREAD_BY_EVENT_NAME */
-        PFS_memory_safe_stat *event_name_array;
-        PFS_memory_safe_stat *stat;
-        event_name_array = pfs_thread->write_instr_class_memory_stats();
-        stat = &event_name_array[index];
-        delta = stat->count_free(size, &delta_buffer);
+        PFS_memory_safe_stat *event_name_array; // 事件名称数组
+        PFS_memory_safe_stat *stat; // 统计信息
+        event_name_array = pfs_thread->write_instr_class_memory_stats(); // 获取线程的内存统计
+        stat = &event_name_array[index]; // 获取对应索引的统计信息
+        delta = stat->count_free(size, &delta_buffer); // 记录释放
 
         if (delta != nullptr) {
-          pfs_thread->carry_memory_stat_free_delta(delta, index);
+          pfs_thread->carry_memory_stat_free_delta(delta, index); // 传递释放增量
         }
 
         /* Adjust session memory for this thread. */
         if (key & PSI_MEM_CNT_BIT) {
           if (pfs_thread->m_cnt_thd != nullptr) {
-            pfs_thread->mem_cnt_free(size);
+            pfs_thread->mem_cnt_free(size); // 记录内存释放
           }
-          pfs_thread->m_session_all_memory_stat.count_controlled_free(size);
-          DEBUG_TRACE_MEMORY("CF()", pfs_thread, klass, size);
+          pfs_thread->m_session_all_memory_stat.count_controlled_free(size); // 记录受控释放
+          DEBUG_TRACE_MEMORY("CF()", pfs_thread, klass, size); // 调试内存释放
         } else {
-          pfs_thread->m_session_all_memory_stat.count_uncontrolled_free(size);
-          DEBUG_TRACE_MEMORY("UF()", pfs_thread, klass, size);
+          pfs_thread->m_session_all_memory_stat.count_uncontrolled_free(size); // 记录不受控释放
+          DEBUG_TRACE_MEMORY("UF()", pfs_thread, klass, size); // 调试内存释放
         }
 
         return;
       }
 #ifdef PFS_PARANOID
       report_memory_accounting_error("pfs_memory_free_vc", pfs_thread, size,
-                                     klass, owner_thread);
+                                     klass, owner_thread); // 报告内存会计错误
 #endif
       /* Fall back to global aggregate below. */
     }
   }
 
-  DEBUG_TRACE_MEMORY("GF()", nullptr, klass, size);
-  PFS_memory_shared_stat *event_name_array;
-  PFS_memory_shared_stat *stat;
+  DEBUG_TRACE_MEMORY("GF()", nullptr, klass, size); // 调试全局释放
+  PFS_memory_shared_stat *event_name_array; // 事件名称数组
+  PFS_memory_shared_stat *stat; // 统计信息
   /* Aggregate to MEMORY_SUMMARY_GLOBAL_BY_EVENT_NAME */
-  event_name_array = global_instr_class_memory_array;
+  event_name_array = global_instr_class_memory_array; // 获取全局内存统计
   if (event_name_array) {
-    stat = &event_name_array[index];
-    (void)stat->count_free(size, &delta_buffer);
+    stat = &event_name_array[index]; // 获取对应索引的统计信息
+    (void)stat->count_free(size, &delta_buffer); // 记录全局释放
   }
   return;
 }

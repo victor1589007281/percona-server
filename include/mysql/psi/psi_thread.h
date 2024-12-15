@@ -209,81 +209,81 @@ struct PSI_thread_service_v4 {
 */
 struct PSI_thread_service_v5 {
   /** @sa register_thread_v5_t. */
-  register_thread_v5_t register_thread;
+  register_thread_v5_t register_thread;  // 注册线程
   /** @sa spawn_thread_v5_t. */
-  spawn_thread_v5_t spawn_thread;
+  spawn_thread_v5_t spawn_thread;  // 生成线程
   /** @sa new_thread_v5_t. */
-  new_thread_v5_t new_thread;
+  new_thread_v5_t new_thread;  // 新建线程
   /** @sa set_thread_id_v1_t. */
-  set_thread_id_v1_t set_thread_id;
+  set_thread_id_v1_t set_thread_id;  // 设置线程ID
   /** @sa get_current_thread_internal_id_v2_t. */
-  get_current_thread_internal_id_v2_t get_current_thread_internal_id;
+  get_current_thread_internal_id_v2_t get_current_thread_internal_id;  // 获取当前线程内部ID
   /** @sa get_thread_internal_id_v2_t. */
-  get_thread_internal_id_v2_t get_thread_internal_id;
+  get_thread_internal_id_v2_t get_thread_internal_id;  // 获取线程内部ID
   /** @sa get_thread_by_id_v2_t. */
-  get_thread_by_id_v2_t get_thread_by_id;
+  get_thread_by_id_v2_t get_thread_by_id;  // 通过ID获取线程
   /** @sa set_thread_THD_v1_t. */
-  set_thread_THD_v1_t set_thread_THD;
+  set_thread_THD_v1_t set_thread_THD;  // 设置线程THD
   /** @sa set_thread_os_id_v1_t. */
-  set_thread_os_id_v1_t set_thread_os_id;
+  set_thread_os_id_v1_t set_thread_os_id;  // 设置线程操作系统ID
   /** @sa get_thread_v1_t. */
-  get_thread_v1_t get_thread;
+  get_thread_v1_t get_thread;  // 获取线程
   /** @sa set_thread_user_v1_t. */
-  set_thread_user_v1_t set_thread_user;
+  set_thread_user_v1_t set_thread_user;  // 设置线程用户
   /** @sa set_thread_account_v1_t. */
-  set_thread_account_v1_t set_thread_account;
+  set_thread_account_v1_t set_thread_account;  // 设置线程账户
   /** @sa set_thread_db_v1_t. */
-  set_thread_db_v1_t set_thread_db;
+  set_thread_db_v1_t set_thread_db;  // 设置线程数据库
   /** @sa set_thread_command_v1_t. */
-  set_thread_command_v1_t set_thread_command;
+  set_thread_command_v1_t set_thread_command;  // 设置线程命令
   /** @sa set_connection_type_v1_t. */
-  set_connection_type_v1_t set_connection_type;
+  set_connection_type_v1_t set_connection_type;  // 设置连接类型
   /** @sa set_thread_start_time_v1_t. */
-  set_thread_start_time_v1_t set_thread_start_time;
+  set_thread_start_time_v1_t set_thread_start_time;  // 设置线程开始时间
   /** @sa set_thread_start_time_usec_v4_t. */
-  set_thread_start_time_usec_v4_t set_thread_start_time_usec;
+  set_thread_start_time_usec_v4_t set_thread_start_time_usec;  // 设置线程开始时间（微秒）
   /** @sa set_thread_rows_sent_v4_t. */
-  set_thread_rows_sent_v4_t set_thread_rows_sent;
+  set_thread_rows_sent_v4_t set_thread_rows_sent;  // 设置线程发送的行数
   /** @sa set_thread_rows_examined_v4_t. */
-  set_thread_rows_examined_v4_t set_thread_rows_examined;
+  set_thread_rows_examined_v4_t set_thread_rows_examined;  // 设置线程检查的行数
   /** @sa set_thread_info_v1_t. */
-  set_thread_info_v1_t set_thread_info;
+  set_thread_info_v1_t set_thread_info;  // 设置线程信息
   /** @sa set_thread_resource_group_v1_t. */
-  set_thread_resource_group_v1_t set_thread_resource_group;
+  set_thread_resource_group_v1_t set_thread_resource_group;  // 设置线程资源组
   /** @sa set_thread_resource_group_by_id_v1_t. */
-  set_thread_resource_group_by_id_v1_t set_thread_resource_group_by_id;
+  set_thread_resource_group_by_id_v1_t set_thread_resource_group_by_id;  // 通过ID设置线程资源组
   /** @sa set_thread_v1_t. */
-  set_thread_v1_t set_thread;
+  set_thread_v1_t set_thread;  // 设置线程
   /** @sa set_thread_peer_port_vc_t. */
-  set_thread_peer_port_v4_t set_thread_peer_port;
+  set_thread_peer_port_v4_t set_thread_peer_port;  // 设置线程对等端口
   /** @sa aggregate_thread_status_v1_t. */
-  aggregate_thread_status_v2_t aggregate_thread_status;
+  aggregate_thread_status_v2_t aggregate_thread_status;  // 聚合线程状态
   /** @sa delete_current_thread_v1_t. */
-  delete_current_thread_v1_t delete_current_thread;
+  delete_current_thread_v1_t delete_current_thread;  // 删除当前线程
   /** @sa delete_thread_v1_t. */
-  delete_thread_v1_t delete_thread;
+  delete_thread_v1_t delete_thread;  // 删除线程
   /** @sa set_thread_connect_attrs_v1_t. */
-  set_thread_connect_attrs_v1_t set_thread_connect_attrs;
+  set_thread_connect_attrs_v1_t set_thread_connect_attrs;  // 设置线程连接属性
   /** @sa get_current_thread_event_id_v2_t. */
-  get_current_thread_event_id_v2_t get_current_thread_event_id;
+  get_current_thread_event_id_v2_t get_current_thread_event_id;  // 获取当前线程事件ID
   /** @sa get_thread_event_id_v2_t. */
-  get_thread_event_id_v2_t get_thread_event_id;
+  get_thread_event_id_v2_t get_thread_event_id;  // 获取线程事件ID
   /** @sa get_thread_system_attrs_v1_t. */
-  get_thread_system_attrs_v3_t get_thread_system_attrs;
+  get_thread_system_attrs_v3_t get_thread_system_attrs;  // 获取线程系统属性
   /** @sa get_thread_system_attrs_by_id_v1_t. */
-  get_thread_system_attrs_by_id_v3_t get_thread_system_attrs_by_id;
+  get_thread_system_attrs_by_id_v3_t get_thread_system_attrs_by_id;  // 通过ID获取线程系统属性
   /** @sa register_notification_v1_t. */
-  register_notification_v3_t register_notification;
+  register_notification_v3_t register_notification;  // 注册通知
   /** @sa unregister_notification_v1_t. */
-  unregister_notification_v1_t unregister_notification;
+  unregister_notification_v1_t unregister_notification;  // 注销通知
   /** @sa notify_session_connect_v1_t. */
-  notify_session_connect_v1_t notify_session_connect;
+  notify_session_connect_v1_t notify_session_connect;  // 通知会话连接
   /** @sa notify_session_disconnect_v1_t. */
-  notify_session_disconnect_v1_t notify_session_disconnect;
+  notify_session_disconnect_v1_t notify_session_disconnect;  // 通知会话断开
   /** @sa notify_session_change_user_v1_t. */
-  notify_session_change_user_v1_t notify_session_change_user;
+  notify_session_change_user_v1_t notify_session_change_user;  // 通知会话更改用户
   /** @sa  set_mem_cnt_THD_v1_t. */
-  set_mem_cnt_THD_v1_t set_mem_cnt_THD;
+  set_mem_cnt_THD_v1_t set_mem_cnt_THD;  // 设置内存计数线程
 };
 
 /**
