@@ -2840,8 +2840,8 @@ class THD : public MDL_context_owner,
   ha_rows sent_row_count_2{0}; /* for userstat */
 
   // For user variables replication
-  Prealloced_array<Binlog_user_var_event *, 2> user_var_events;
-  MEM_ROOT *user_var_events_alloc; /* Allocate above array elements here */
+  Prealloced_array<Binlog_user_var_event *, 2> user_var_events; // 用于用户变量的复制
+  MEM_ROOT *user_var_events_alloc; /* Allocate above array elements here */ // 在此处分配上述数组元素的内存
 
   /**
     Used by MYSQL_BIN_LOG to maintain the commit queue for binary log
@@ -4689,13 +4689,18 @@ class THD : public MDL_context_owner,
     - for prepared queries, only to allocate runtime data. The parsed
     tree itself is reused between executions and thus is stored elsewhere.
   */
-  MEM_ROOT main_mem_root;
-  Diagnostics_area main_da;
-  Diagnostics_area m_parser_da; /**< cf. get_parser_da() */
-  Diagnostics_area m_query_rewrite_plugin_da;
-  Diagnostics_area *m_query_rewrite_plugin_da_ptr;
+  /**
+    这个内存根用于两个目的：
+    - 对于常规查询，用于在解析期间分配存储在 main_lex 中的结构，并在执行期间分配运行时数据（执行计划等）。
+    - 对于预编译查询，仅用于分配运行时数据。解析树本身在执行之间被重用，因此存储在其他地方。
+  */
+  MEM_ROOT main_mem_root; // 主内存根
+  Diagnostics_area main_da; // 主诊断区域
+  Diagnostics_area m_parser_da; /**< cf. get_parser_da() */ // 解析器诊断区域
+  Diagnostics_area m_query_rewrite_plugin_da; // 查询重写插件的诊断区域
+  Diagnostics_area *m_query_rewrite_plugin_da_ptr; // 查询重写插件诊断区域指针
 
-  Diagnostics_area *m_stmt_da;
+  Diagnostics_area *m_stmt_da; // 语句诊断区域指针
 
   /**
     It will be set TRUE if CURRENT_USER() is called in account management
@@ -5060,6 +5065,7 @@ class THD : public MDL_context_owner,
   }
 #endif
 };
+
 
 /**
    Return lock_tables_mode for secondary engine.

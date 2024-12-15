@@ -53,19 +53,19 @@ static constexpr bool MEM_ROOT_SINGLE_CHUNKS = true;
 static constexpr bool MEM_ROOT_SINGLE_CHUNKS = false;
 #endif
 
-MEM_ROOT::Block *MEM_ROOT::AllocBlock(size_t wanted_length,
-                                      size_t minimum_length) {
+MEM_ROOT::Block *MEM_ROOT::AllocBlock(size_t wanted_length, // 请求的内存块长度
+                                      size_t minimum_length) { // 最小内存块长度
   DBUG_TRACE;
 
-  size_t length = wanted_length;
+  size_t length = wanted_length; // 初始化长度为请求的长度
   if (m_max_capacity != 0) {
-    size_t bytes_left;
+    size_t bytes_left; // 剩余可用字节数
     if (m_allocated_size > m_max_capacity) {
-      bytes_left = 0;
+      bytes_left = 0; // 如果已分配的大小超过最大容量，剩余字节数为0
     } else {
-      bytes_left = m_max_capacity - m_allocated_size;
+      bytes_left = m_max_capacity - m_allocated_size; // 计算剩余字节数
     }
-    if (wanted_length > bytes_left) {
+    if (wanted_length > bytes_left) { // 如果请求的长度超过剩余字节数
       if (m_error_for_capacity_exceeded) {
         my_error(EE_CAPACITY_EXCEEDED, MYF(0),
                  static_cast<ulonglong>(m_max_capacity));
@@ -75,34 +75,35 @@ MEM_ROOT::Block *MEM_ROOT::AllocBlock(size_t wanted_length,
         // many, since we don't know when the next safe point will be).
       } else if (minimum_length <= bytes_left) {
         // Make one final chunk with all that we have left.
-        length = bytes_left;
+        length = bytes_left; // 使用剩余的所有字节
       } else {
         // We don't have enough memory left to satisfy minimum_length.
-        return nullptr;
+        return nullptr; // 如果剩余字节数不足以满足最小长度，返回nullptr
       }
     }
   }
 
-  const size_t bytes_to_alloc = length + ALIGN_SIZE(sizeof(Block));
+  const size_t bytes_to_alloc = length + ALIGN_SIZE(sizeof(Block)); // 计算需要分配的字节数
   Block *new_block = static_cast<Block *>(
-      my_malloc(m_psi_key, bytes_to_alloc, MYF(MY_WME | ME_FATALERROR)));
+      my_malloc(m_psi_key, bytes_to_alloc, MYF(MY_WME | ME_FATALERROR))); // 分配内存
   if (new_block == nullptr) {
-    if (m_error_handler) (m_error_handler)();
-    return nullptr;
+    if (m_error_handler) (m_error_handler)(); // 如果分配失败，调用错误处理函数
+    return nullptr; // 返回nullptr
   }
-  new_block->end = pointer_cast<char *>(new_block) + bytes_to_alloc;
+  new_block->end = pointer_cast<char *>(new_block) + bytes_to_alloc; // 设置新块的结束指针
 
-  m_allocated_size += length;
+  m_allocated_size += length; // 更新已分配的内存大小
 
   // Make the default block size 50% larger next time.
   // This ensures O(1) total mallocs (assuming Clear() is not called).
+  //在每次分配完毕后，m_block_size都会调整为当前的1.5倍，避免后续频繁的调用alloc
   if (!MEM_ROOT_SINGLE_CHUNKS) {
-    m_block_size += m_block_size / 2;
+    m_block_size += m_block_size / 2; // 将默认块大小增加50%
   }
-  return new_block;
+  return new_block; // 返回新分配的内存块
 }
 
-void *MEM_ROOT::AllocSlow(size_t length) {
+void *MEM_ROOT::AllocSlow(size_t length) { // 分配慢速内存的函数，参数为所需的长度
   DBUG_TRACE;
   DBUG_PRINT("enter", ("root: %p", this));
 
@@ -110,6 +111,7 @@ void *MEM_ROOT::AllocSlow(size_t length) {
   // otherwise, the fast path in Alloc() would not have sent us here.
   // We plan to allocate a block of <block_size> bytes; see if that
   // would be enough or not.
+  // 本次申请的内存很大或是要求是独占一块内存的形式
   if (length >= m_block_size || MEM_ROOT_SINGLE_CHUNKS) {
     // The next block we'd allocate would _not_ be big enough
     // (or we're in Valgrind/ASAN mode, and want everything in single chunks).
@@ -117,7 +119,7 @@ void *MEM_ROOT::AllocSlow(size_t length) {
     // since the new block isn't going to be used for the next allocation
     // anyway, we can just as well keep the previous one.
     Block *new_block =
-        AllocBlock(/*wanted_length=*/length, /*minimum_length=*/length);
+        AllocBlock(/*wanted_length=*/length, /*minimum_length=*/length); // 请求分配新的内存块
     if (new_block == nullptr) return nullptr;
 
     if (m_current_block == nullptr) {
@@ -125,83 +127,84 @@ void *MEM_ROOT::AllocSlow(size_t length) {
       // However, it will be full, so we won't be allocating from it
       // unless ClearForReuse() is called.
       new_block->prev = nullptr;
-      m_current_block = new_block;
-      m_current_free_end = new_block->end;
-      m_current_free_start = m_current_free_end;
+      m_current_block = new_block; // 设置当前块为新分配的块
+      m_current_free_end = new_block->end; // 更新当前可用内存的结束位置
+      m_current_free_start = m_current_free_end; // 更新当前可用内存的起始位置
     } else {
       // Insert the new block in the second-to-last position.
-      new_block->prev = m_current_block->prev;
+      new_block->prev = m_current_block->prev; // 将新块插入到当前块的前面
       m_current_block->prev = new_block;
     }
 
-    return pointer_cast<char *>(new_block) + ALIGN_SIZE(sizeof(*new_block));
+    return pointer_cast<char *>(new_block) + ALIGN_SIZE(sizeof(*new_block)); // 返回新分配内存的指针
   } else {
+    // 常规情况
     // The normal case: Throw away the current block, allocate a new block,
     // and use that to satisfy the new allocation.
-    if (ForceNewBlock(/*minimum_length=*/length)) {
+    if (ForceNewBlock(/*minimum_length=*/length)) { // 强制分配新块
       return nullptr;
     }
-    char *new_mem = m_current_free_start;
-    m_current_free_start += length;
-    return new_mem;
+    char *new_mem = m_current_free_start; // 获取当前可用内存的起始位置
+    m_current_free_start += length; // 更新当前可用内存的起始位置
+    return new_mem; // 返回当前可用内存的指针
   }
 }
 
-bool MEM_ROOT::ForceNewBlock(size_t minimum_length) {
+bool MEM_ROOT::ForceNewBlock(size_t minimum_length) { // 强制分配新块，参数为最小长度
   if (MEM_ROOT_SINGLE_CHUNKS) {
-    assert(m_block_size == m_orig_block_size);
+    assert(m_block_size == m_orig_block_size); // 确保块大小未改变
   }
   Block *new_block = AllocBlock(/*wanted_length=*/ALIGN_SIZE(m_block_size),
-                                minimum_length);  // Will modify block_size.
-  if (new_block == nullptr) return true;
+                                minimum_length);  // 请求分配新的内存块，可能会修改块大小
+  if (new_block == nullptr) return true; // 如果分配失败，返回true
 
-  new_block->prev = m_current_block;
-  m_current_block = new_block;
+  new_block->prev = m_current_block; // 将新块的前一个块指向当前块
+  m_current_block = new_block; // 更新当前块为新分配的块
 
   char *new_mem =
-      pointer_cast<char *>(new_block) + ALIGN_SIZE(sizeof(*new_block));
-  m_current_free_start = new_mem;
-  m_current_free_end = new_block->end;
-  return false;
+      pointer_cast<char *>(new_block) + ALIGN_SIZE(sizeof(*new_block)); // 获取新内存的起始位置
+  m_current_free_start = new_mem; // 更新当前可用内存的起始位置
+  m_current_free_end = new_block->end; // 更新当前可用内存的结束位置
+  return false; // 返回false，表示成功
 }
 
-void MEM_ROOT::Clear() {
+void MEM_ROOT::Clear() { // 清空内存块
   DBUG_TRACE;
   DBUG_PRINT("enter", ("root: %p", this));
 
   // Already cleared, or memset() to zero, so just ignore.
-  if (m_current_block == nullptr) return;
+  if (m_current_block == nullptr) return; // 如果当前块为空，直接返回
 
-  Block *start = m_current_block;
+  Block *start = m_current_block; // 保存当前块的起始位置
 
-  m_current_block = nullptr;
-  m_block_size = m_orig_block_size;
-  m_current_free_start = &s_dummy_target;
-  m_current_free_end = &s_dummy_target;
-  m_allocated_size = 0;
+  m_current_block = nullptr; // 清空当前块
+  m_block_size = m_orig_block_size; // 重置块大小
+  m_current_free_start = &s_dummy_target; // 更新当前可用内存的起始位置
+  m_current_free_end = &s_dummy_target; // 更新当前可用内存的结束位置
+  m_allocated_size = 0; // 重置已分配内存大小
 
-  FreeBlocks(start);
+  FreeBlocks(start); // 释放之前的块
 }
 
-void MEM_ROOT::ClearForReuse() {
+void MEM_ROOT::ClearForReuse() { // 清空内存块以便重用
   DBUG_TRACE;
 
   if (MEM_ROOT_SINGLE_CHUNKS) {
-    Clear();
+    Clear(); // 如果是单块模式，调用Clear()清空
     return;
   }
 
   // Already cleared, or memset() to zero, so just ignore.
-  if (m_current_block == nullptr) return;
+  if (m_current_block == nullptr) return; // 如果当前块为空，直接返回
 
   // Keep the last block, which is usually the biggest one.
   m_current_free_start = pointer_cast<char *>(m_current_block) +
-                         ALIGN_SIZE(sizeof(*m_current_block));
-  Block *start = m_current_block->prev;
-  m_current_block->prev = nullptr;
-  m_allocated_size = m_current_free_end - m_current_free_start;
+                         ALIGN_SIZE(sizeof(*m_current_block)); // 更新当前可用内存的起始位置
+  Block *start = m_current_block->prev; // 保存当前块的前一个块
+  m_current_block->prev = nullptr; // 清空当前块的前一个块指针
+  m_allocated_size = m_current_free_end - m_current_free_start; // 更新已分配内存大小
 
-  FreeBlocks(start);
+  FreeBlocks(start); // 释放之前的块
 }
 
 void MEM_ROOT::FreeBlocks(Block *start) {
