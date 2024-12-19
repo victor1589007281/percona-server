@@ -200,66 +200,71 @@ void threadpool_remove_connection(THD *thd) {
 
 /**
  Process a single client request or a single batch.
+ 处理单个客户端请求或单个批处理。
 */
-int threadpool_process_request(THD *thd) {
-  int retval = 0;
-  Worker_thread_context worker_context;
+int threadpool_process_request(THD *thd) { // thd: 线程上下文
+  int retval = 0; // 返回值，初始为0
+  Worker_thread_context worker_context; // 创建工作线程上下文
 
-  thread_attach(thd);
+  thread_attach(thd); // 附加线程
 
-  if (thd->killed == THD::KILL_CONNECTION) {
+  if (thd->killed == THD::KILL_CONNECTION) { // 检查是否被杀死
     /*
-      killed flag was set by timeout handler
-      or KILL command. Return error.
+      killed 标志由超时处理程序或 KILL 命令设置。返回错误。
     */
-    retval = 1;
-    goto end;
+    retval = 1; // 设置返回值为1
+    goto end; // 跳转到结束部分
   }
 
   /*
     In the loop below, the flow is essentially the copy of thead-per-connections
     logic, see do_handle_one_connection() in sql_connect.c
+    在下面的循环中，流程基本上是线程每连接逻辑的副本，
+    参见 sql_connect.c 中的 do_handle_one_connection()
 
     The goal is to execute a single query, thus the loop is normally executed
     only once. However for SSL connections, it can be executed multiple times
     (SSL can preread and cache incoming data, and vio->has_data() checks if it
     was the case).
+    目标是执行单个查询，因此循环通常只执行一次。
+    但是对于 SSL 连接，它可以多次执行
+    （SSL 可以预读取和缓存传入数据，vio->has_data() 检查是否发生这种情况）。
   */
-  for (;;) {
-    Vio *vio;
-    thd_set_net_read_write(thd, 0);
+  for (;;) { // 无限循环
+    Vio *vio; // Vio 指针
+    thd_set_net_read_write(thd, 0); // 设置网络读写状态为0
 
-    if ((retval = do_command(thd)) != 0) goto end;
+    if ((retval = do_command(thd)) != 0) goto end; // 执行命令并检查返回值
 
-    if (!thd_connection_alive(thd)) {
-      retval = 1;
-      goto end;
+    if (!thd_connection_alive(thd)) { // 检查连接是否存活
+      retval = 1; // 设置返回值为1
+      goto end; // 跳转到结束部分
     }
 
-    vio = thd->get_protocol_classic()->get_vio();
-    if (!vio->has_data(vio)) {
-      /* More info on this debug sync is in sql_parse.cc*/
-      DEBUG_SYNC(thd, "before_do_command_net_read");
-      thd_set_net_read_write(thd, 1);
-      goto end;
+    vio = thd->get_protocol_classic()->get_vio(); // 获取 Vio 对象
+    if (!vio->has_data(vio)) { // 检查是否有数据
+      /* 更多关于此调试同步的信息在 sql_parse.cc 中 */
+      DEBUG_SYNC(thd, "before_do_command_net_read"); // 调试同步
+      thd_set_net_read_write(thd, 1); // 设置网络读写状态为1
+      goto end; // 跳转到结束部分
     }
-    if (!thd->m_server_idle) {
-      MYSQL_SOCKET_SET_STATE(vio->mysql_socket, PSI_SOCKET_STATE_IDLE);
-      MYSQL_START_IDLE_WAIT(thd->m_idle_psi, &thd->m_idle_state);
-      thd->m_server_idle = true;
+    if (!thd->m_server_idle) { // 检查服务器是否空闲
+      MYSQL_SOCKET_SET_STATE(vio->mysql_socket, PSI_SOCKET_STATE_IDLE); // 设置套接字状态为空闲
+      MYSQL_START_IDLE_WAIT(thd->m_idle_psi, &thd->m_idle_state); // 开始空闲等待
+      thd->m_server_idle = true; // 设置服务器为空闲状态
     }
   }
 
-end:
-  if (!retval && !thd->m_server_idle) {
+end: // 结束部分
+  if (!retval && !thd->m_server_idle) { // 检查返回值和服务器状态
     MYSQL_SOCKET_SET_STATE(thd->get_protocol_classic()->get_vio()->mysql_socket,
-                           PSI_SOCKET_STATE_IDLE);
-    MYSQL_START_IDLE_WAIT(thd->m_idle_psi, &thd->m_idle_state);
-    thd->m_server_idle = true;
+                           PSI_SOCKET_STATE_IDLE); // 设置套接字状态为空闲
+    MYSQL_START_IDLE_WAIT(thd->m_idle_psi, &thd->m_idle_state); // 开始空闲等待
+    thd->m_server_idle = true; // 设置服务器为空闲状态
   }
 
-  return retval;
+  return retval; // 返回结果
 }
 
 THD_event_functions tp_event_functions = {tp_wait_begin, tp_wait_end,
-                                          tp_post_kill_notification};
+                                          tp_post_kill_notification}; // 事件函数结构体

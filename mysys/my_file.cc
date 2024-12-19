@@ -272,8 +272,10 @@ uint my_set_max_open_files(uint files) {
 
 /**
   Constructs static objects.
+  构造静态对象。
 */
 void MyFileInit() {
+  // 使用指定的内存分配器创建 FileInfoVector 的新实例，并将其指针赋值给 fivp
   fivp =
       new FileInfoVector(Malloc_allocator<FileInfo>{key_memory_my_file_info});
 }

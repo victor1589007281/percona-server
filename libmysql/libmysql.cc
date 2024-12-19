@@ -125,24 +125,25 @@ struct MYSQL_STMT_EXT {
     1  could not initialize environment (out of memory or thread keys)
 */
 
-int STDCALL mysql_server_init(int argc [[maybe_unused]],
-                              char **argv [[maybe_unused]],
-                              char **groups [[maybe_unused]]) {
-  int result = 0;
-  if (!mysql_client_init) {
-    mysql_client_init = true;
-    org_my_init_done = my_init_done;
-    if (my_init()) /* Will init threads */
-      return 1;
-    init_client_errs();
-    if (mysql_client_plugin_init()) return 1;
-    ssl_start();
+// 初始化 MySQL 客户端库
+int STDCALL mysql_server_init(int argc [[maybe_unused]], // 参数个数，未使用
+                              char **argv [[maybe_unused]], // 参数数组，未使用
+                              char **groups [[maybe_unused]]) { // 组数组，未使用
+  int result = 0; // 初始化结果为 0
+  if (!mysql_client_init) { // 如果 MySQL 客户端尚未初始化
+    mysql_client_init = true; // 设置为已初始化
+    org_my_init_done = my_init_done; // 保存原始初始化状态
+    if (my_init()) /* Will init threads */ // 调用 my_init() 初始化线程
+      return 1; // 如果初始化失败，返回 1
+    init_client_errs(); // 初始化客户端错误
+    if (mysql_client_plugin_init()) return 1; // 初始化插件，如果失败返回 1
+    ssl_start(); // 启动 SSL
 
-    if (!mysql_port) {
-      char *env;
-      struct servent *serv_ptr [[maybe_unused]];
+    if (!mysql_port) { // 如果 MySQL 端口未设置
+      char *env; // 环境变量
+      struct servent *serv_ptr [[maybe_unused]]; // 服务指针，未使用
 
-      mysql_port = MYSQL_PORT;
+      mysql_port = MYSQL_PORT; // 设置 MySQL 端口为默认值
 
       /*
         if builder specifically requested a default port, use that
@@ -155,29 +156,30 @@ int STDCALL mysql_server_init(int argc [[maybe_unused]],
       */
 
 #if MYSQL_PORT_DEFAULT == 0
-      if ((serv_ptr = getservbyname("mysql", "tcp")))
-        mysql_port = (uint)ntohs((ushort)serv_ptr->s_port);
+      if ((serv_ptr = getservbyname("mysql", "tcp"))) // 获取服务名称为 mysql 的端口
+        mysql_port = (uint)ntohs((ushort)serv_ptr->s_port); // 转换并设置端口
 #endif
-      if ((env = getenv("MYSQL_TCP_PORT"))) mysql_port = (uint)atoi(env);
+      if ((env = getenv("MYSQL_TCP_PORT"))) mysql_port = (uint)atoi(env); // 从环境变量获取端口
     }
 
-    if (!mysql_unix_port) {
-      char *env;
+    if (!mysql_unix_port) { // 如果 UNIX 端口未设置
+      char *env; // 环境变量
 #ifdef _WIN32
-      mysql_unix_port = const_cast<char *>(MYSQL_NAMEDPIPE);
+      mysql_unix_port = const_cast<char *>(MYSQL_NAMEDPIPE); // 在 Windows 上使用命名管道
 #else
-      mysql_unix_port = const_cast<char *>(MYSQL_UNIX_ADDR);
+      mysql_unix_port = const_cast<char *>(MYSQL_UNIX_ADDR); // 在其他系统上使用 UNIX 地址
 #endif
-      if ((env = getenv("MYSQL_UNIX_PORT"))) mysql_unix_port = env;
+      if ((env = getenv("MYSQL_UNIX_PORT"))) mysql_unix_port = env; // 从环境变量获取 UNIX 端口
     }
-    mysql_debug(NullS);
+    mysql_debug(NullS); // 调试信息
 #if defined(SIGPIPE) && !defined(_WIN32)
-    (void)signal(SIGPIPE, SIG_IGN);
+    (void)signal(SIGPIPE, SIG_IGN); // 忽略 SIGPIPE 信号
 #endif
   } else
-    result = (int)my_thread_init(); /* Init if new thread */
-  return result;
+    result = (int)my_thread_init(); /* Init if new thread */ // 如果已经初始化，调用线程初始化
+  return result; // 返回结果
 }
+
 
 /*
   Free all memory and resources used by the client library

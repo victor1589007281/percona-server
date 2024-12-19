@@ -266,71 +266,78 @@ bool Async_conn_failover_manager::set_channel_conn_details(
   mi->channel_unlock();
   return error;
 }
-
 int Async_conn_failover_manager::get_source_quorum_status(MYSQL *mysql,
                                                           Master_info *mi) {
+  // 返回值初始化为0
   int ret = 0;
-  MYSQL_RES *source_res = nullptr;
-  MYSQL_ROW source_row = nullptr;
-  std::vector<SENDER_CONN_MERGE_TUPLE> source_conn_merged_list{};
-  bool error{false}, connected_source_in_sender_list{false};
+  MYSQL_RES *source_res = nullptr; // 存储查询结果的指针
+  MYSQL_ROW source_row = nullptr;   // 存储行数据的指针
+  std::vector<SENDER_CONN_MERGE_TUPLE> source_conn_merged_list{}; // 存储合并的源连接元组列表
+  bool error{false}, connected_source_in_sender_list{false}; // 错误标志和连接源标志
 
-  mi->reset_network_error();
+  mi->reset_network_error(); // 重置网络错误
 
   /*
     Get stored primary details for channel from
     replication_asynchronous_connection_failover table.
+    从 replication_asynchronous_connection_failover 表中获取通道的存储主详细信息。
   */
   std::tie(error, source_conn_merged_list) =
       Source_IO_monitor::get_instance()->get_senders_details(mi->get_channel());
   if (error) {
-    return 2;
+    return 2; // 如果发生错误，返回2
   }
 
+  // 遍历源连接合并列表
   for (auto source_conn_detail : source_conn_merged_list) {
-    std::string host{}, managed_name{};
-    uint port{0};
+    std::string host{}, managed_name{}; // 主机和管理名称
+    uint port{0}; // 端口
 
+    // 解包源连接详细信息
     std::tie(std::ignore, host, port, std::ignore, std::ignore, managed_name,
              std::ignore, std::ignore) = source_conn_detail;
+    // 检查主机和端口是否匹配，并且管理名称不为空
     if (host.compare(mi->host) == 0 && port == mi->port &&
         !managed_name.empty()) {
-      connected_source_in_sender_list = true;
-      break;
+      connected_source_in_sender_list = true; // 标记为已连接的源
+      break; // 退出循环
     }
   }
 
-  if (!connected_source_in_sender_list) return 0;
+  if (!connected_source_in_sender_list) return 0; // 如果没有连接的源，返回0
 
+  // 获取查询字符串
   std::string query = Source_IO_monitor::get_instance()->get_query(
       enum_sql_query_tag::CONFIG_MODE_QUORUM_IO);
 
+  // 执行查询并处理结果
   if (!mysql_real_query(mysql, query.c_str(), query.length()) &&
       (source_res = mysql_store_result(mysql)) &&
       (source_row = mysql_fetch_row(source_res))) {
     auto quorum_status{
-        static_cast<enum_conf_mode_quorum_status>(std::stoi(source_row[0]))};
+        static_cast<enum_conf_mode_quorum_status>(std::stoi(source_row[0]))}; // 获取法定人数状态
     if (quorum_status == enum_conf_mode_quorum_status::MANAGED_GR_HAS_QUORUM) {
-      ret = 0;
+      ret = 0; // 如果有法定人数，返回0
     } else if (quorum_status ==
                enum_conf_mode_quorum_status::MANAGED_GR_HAS_ERROR) {
       LogErr(ERROR_LEVEL, ER_RPL_ASYNC_CHANNEL_CANT_CONNECT_NO_QUORUM, mi->host,
-             mi->port, "", mi->get_channel());
-      ret = 1;
+             mi->port, "", mi->get_channel()); // 记录错误日志
+      ret = 1; // 返回1表示有错误
     }
   } else if (mysql_errno(mysql) != ER_UNKNOWN_SYSTEM_VARIABLE) {
+    // 处理查询错误
     if (is_network_error(mysql_errno(mysql))) {
-      mi->set_network_error();
-      ret = 2;
+      mi->set_network_error(); // 设置网络错误
+      ret = 2; // 返回2表示网络错误
     } else {
       LogErr(WARNING_LEVEL, ER_RPL_ASYNC_EXECUTING_QUERY,
              "The IO thread failed to detect if the source belongs to the "
              "group majority",
-             mi->host, mi->port, "", mi->get_channel());
-      ret = 1;
+             mi->host, mi->port, "", mi->get_channel()); // 记录警告日志
+      ret = 1; // 返回1表示有错误
     }
   }
 
-  if (source_res) mysql_free_result(source_res);
-  return ret;
+  if (source_res) mysql_free_result(source_res); // 释放查询结果
+  return ret; // 返回结果
 }

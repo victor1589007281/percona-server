@@ -7562,16 +7562,16 @@ int mysqld_main(int argc, char **argv)
 #endif
 {
   // Substitute the full path to the executable in argv[0]
-  substitute_progpath(argv);
-  sysd::notify_connect();
-  sysd::notify("STATUS=Server startup in progress\n");
+  substitute_progpath(argv); // 替换argv[0]中的可执行文件的完整路径
+  sysd::notify_connect(); // 通知系统连接
+  sysd::notify("STATUS=Server startup in progress\n"); // 通知系统服务器启动中
 
   /*
     Perform basic thread library and malloc initialization,
     to be able to read defaults files and parse options.
   */
-  my_progname = argv[0];
-  calculate_mysql_home_from_my_progname();
+  my_progname = argv[0]; // 将程序名称设置为命令行参数中的第一个参数
+  calculate_mysql_home_from_my_progname(); // 根据程序名称计算MySQL的安装目录
 
 #ifndef _WIN32
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
@@ -8452,6 +8452,7 @@ int mysqld_main(int argc, char **argv)
 
   binlog_unsafe_map_init();
 
+// 初始化 ReplicaInitializer 对象。启动IO/SQL线程
   ReplicaInitializer replica_initializer(opt_initialize, opt_skip_replica_start,
                                          rpl_channel_filters,
                                          &opt_replica_skip_errors);

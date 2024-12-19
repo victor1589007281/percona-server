@@ -314,18 +314,27 @@ void Global_THD_manager::do_for_all_thd(Do_THD_Impl *func) {
   }
 }
 
+// ToDo 线程 分区？？
 THD_ptr Global_THD_manager::find_thd(Find_THD_Impl *func) {
+  // 创建一个 Find_THD 对象，用于查找 THD
   Find_THD find_thd(func);
+  // 遍历所有分区
   for (int i = 0; i < NUM_PARTITIONS; i++) {
+    // 锁定当前分区的线程列表
     MUTEX_LOCK(lock, &LOCK_thd_list[i]);
+    // 在当前分区的线程列表中查找符合条件的 THD
     THD_array::const_iterator it =
         std::find_if(thd_list[i].begin(), thd_list[i].end(), find_thd);
+    // 如果找到了符合条件的 THD
     if (it != thd_list[i].end()) {
+      // 创建一个 THD_ptr 指针指向找到的 THD
       THD_ptr thd_ptr(*it);
+      // 如果该 THD 没有被处理，则返回该指针
       if (!thd_ptr->is_being_disposed()) return thd_ptr;
-      break;
+      break; // 如果 THD 已被处理，跳出循环
     }
   }
+  // 如果没有找到符合条件的 THD，返回空指针
   return THD_ptr{nullptr};
 }
 

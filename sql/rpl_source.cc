@@ -894,186 +894,221 @@ bool show_replicas(THD *thd) {
   } while (0)
 
 bool com_binlog_dump(THD *thd, char *packet, size_t packet_length) {
-  DBUG_TRACE;
-  ulong pos;
-  ushort flags = 0;
-  const uchar *packet_position = (uchar *)packet;
-  size_t packet_bytes_todo = packet_length;
+  DBUG_TRACE; // 调试跟踪
+  ulong pos; // 位置
+  ushort flags = 0; // 标志
+  const uchar *packet_position = (uchar *)packet; // 数据包位置
+  size_t packet_bytes_todo = packet_length; // 剩余数据包字节数
 
-  assert(!thd->status_var_aggregated);
-  thd->status_var.com_other++;
-  thd->enable_slow_log = opt_log_slow_admin_statements;
-  if (check_global_access(thd, REPL_SLAVE_ACL)) return false;
+  assert(!thd->status_var_aggregated); // 确保状态变量未聚合
+  thd->status_var.com_other++; // 增加其他命令计数
+  thd->enable_slow_log = opt_log_slow_admin_statements; // 启用慢日志
+  if (check_global_access(thd, REPL_SLAVE_ACL)) return false; // 检查全局访问权限
 
   /*
     4 bytes is too little, but changing the protocol would break
     compatibility.  This has been fixed in the new protocol. @see
     com_binlog_dump_gtid().
   */
-  READ_INT(pos, 4);
-  READ_INT(flags, 2);
-  READ_INT(thd->server_id, 4);
+  READ_INT(pos, 4); // 读取位置
+  READ_INT(flags, 2); // 读取标志
+  READ_INT(thd->server_id, 4); // 读取服务器ID
 
   DBUG_PRINT("info",
-             ("pos=%lu flags=%d server_id=%d", pos, flags, thd->server_id));
+             ("pos=%lu flags=%d server_id=%d", pos, flags, thd->server_id)); // 打印调试信息
 
-  kill_zombie_dump_threads(thd);
+  kill_zombie_dump_threads(thd); // 杀死僵尸转储线程
 
   query_logger.general_log_print(thd, thd->get_command(), "Log: '%s'  Pos: %ld",
-                                 packet + 10, (long)pos);
+                                 packet + 10, (long)pos); // 记录查询日志
   mysql_binlog_send(thd, thd->mem_strdup(packet + 10), (my_off_t)pos, nullptr,
-                    flags);
+                    flags); // 发送二进制日志
 
-  unregister_replica(thd, true, true /*need_lock_slave_list=true*/);
+  unregister_replica(thd, true, true /*need_lock_slave_list=true*/); // 注销副本
   /*  fake COM_QUIT -- if we get here, the thread needs to terminate */
-  return true;
+  return true; // 返回成功
 
-error_malformed_packet:
-  my_error(ER_MALFORMED_PACKET, MYF(0));
-  return true;
+error_malformed_packet: // 错误处理
+  my_error(ER_MALFORMED_PACKET, MYF(0)); // 报告数据包格式错误
+  return true; // 返回成功
 }
 
 bool com_binlog_dump_gtid(THD *thd, char *packet, size_t packet_length) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
   /*
     Before going GA, we need to make this protocol extensible without
     breaking compatitibilty. /Alfranio.
   */
-  ushort flags = 0;
-  uint32 data_size = 0;
-  uint64 pos = 0;
-  char name[FN_REFLEN + 1];
-  uint32 name_size = 0;
-  char *gtid_string = nullptr;
-  const uchar *packet_position = (uchar *)packet;
-  size_t packet_bytes_todo = packet_length;
+  ushort flags = 0; // 标志
+  uint32 data_size = 0; // 数据大小
+  uint64 pos = 0; // 位置
+  char name[FN_REFLEN + 1]; // 名称
+  uint32 name_size = 0; // 名称大小
+  char *gtid_string = nullptr; // GTID 字符串
+  const uchar *packet_position = (uchar *)packet; // 数据包位置
+  size_t packet_bytes_todo = packet_length; // 剩余数据包字节数
   Sid_map sid_map(
-      nullptr /*no sid_lock because this is a completely local object*/);
-  Gtid_set slave_gtid_executed(&sid_map);
+      nullptr /*no sid_lock because this is a completely local object*/); // SID 映射
+  Gtid_set slave_gtid_executed(&sid_map); // 从服务器 GTID 集
 
-  assert(!thd->status_var_aggregated);
-  thd->status_var.com_other++;
-  thd->enable_slow_log = opt_log_slow_admin_statements;
-  if (check_global_access(thd, REPL_SLAVE_ACL)) return false;
+  assert(!thd->status_var_aggregated); // 确保状态变量未聚合
+  thd->status_var.com_other++; // 增加其他命令计数
+  thd->enable_slow_log = opt_log_slow_admin_statements; // 启用慢日志
+  if (check_global_access(thd, REPL_SLAVE_ACL)) return false; // 检查全局访问权限
 
-  READ_INT(flags, 2);
-  READ_INT(thd->server_id, 4);
-  READ_INT(name_size, 4);
-  READ_STRING(name, name_size, sizeof(name));
-  READ_INT(pos, 8);
+  READ_INT(flags, 2); // 读取标志
+  READ_INT(thd->server_id, 4); // 读取服务器ID
+  READ_INT(name_size, 4); // 读取名称大小
+  READ_STRING(name, name_size, sizeof(name)); // 读取名称
+  READ_INT(pos, 8); // 读取位置
   DBUG_PRINT("info", ("pos=%" PRIu64 " flags=%d server_id=%d", pos, flags,
-                      thd->server_id));
-  READ_INT(data_size, 4);
-  CHECK_PACKET_SIZE(data_size);
+                      thd->server_id)); // 打印调试信息
+  READ_INT(data_size, 4); // 读取数据大小
+  CHECK_PACKET_SIZE(data_size); // 检查数据包大小
   if (slave_gtid_executed.add_gtid_encoding(packet_position, data_size) !=
-      RETURN_STATUS_OK)
-    return true;
-  slave_gtid_executed.to_string(&gtid_string);
+      RETURN_STATUS_OK) // 添加 GTID 编码
+    return true; // 返回成功
+  slave_gtid_executed.to_string(&gtid_string); // 转换 GTID 为字符串
   DBUG_PRINT("info",
              ("Slave %d requested to read %s at position %" PRIu64 " gtid set "
               "'%s'.",
-              thd->server_id, name, pos, gtid_string));
+              thd->server_id, name, pos, gtid_string)); // 打印从服务器请求信息
 
-  kill_zombie_dump_threads(thd);
+  kill_zombie_dump_threads(thd); // 杀死僵尸转储线程
   query_logger.general_log_print(thd, thd->get_command(),
                                  "Log: '%s' Pos: %" PRIu64 " GTIDs: '%s'", name,
-                                 pos, gtid_string);
-  my_free(gtid_string);
-  mysql_binlog_send(thd, name, (my_off_t)pos, &slave_gtid_executed, flags);
+                                 pos, gtid_string); // 记录查询日志
+  my_free(gtid_string); // 释放 GTID 字符串内存
+  mysql_binlog_send(thd, name, (my_off_t)pos, &slave_gtid_executed, flags); // 发送二进制日志
 
-  unregister_replica(thd, true, true /*need_lock_slave_list=true*/);
+  unregister_replica(thd, true, true /*need_lock_slave_list=true*/); // 注销副本
   /*  fake COM_QUIT -- if we get here, the thread needs to terminate */
-  return true;
+  return true; // 返回成功
 
-error_malformed_packet:
-  my_error(ER_MALFORMED_PACKET, MYF(0));
-  return true;
+error_malformed_packet: // 错误处理
+  my_error(ER_MALFORMED_PACKET, MYF(0)); // 报告数据包格式错误
+  return true; // 返回成功
 }
+
 
 void mysql_binlog_send(THD *thd, char *log_ident, my_off_t pos,
                        Gtid_set *slave_gtid_executed, uint32 flags) {
+  // 创建一个 Binlog_sender 对象，负责发送二进制日志
+  // THD *thd: 当前线程的上下文
+  // char *log_ident: 日志标识符
+  // my_off_t pos: 日志位置
+  // Gtid_set *slave_gtid_executed: 从服务器已执行的 GTID 集
+  // uint32 flags: 发送标志
   Binlog_sender sender(thd, log_ident, pos, slave_gtid_executed, flags);
 
+  // 运行发送器，开始发送二进制日志
   sender.run();
 }
 
+/**
+  An auxiliary function extracts user variables from alternatives.
+  辅助函数从替代项中提取用户变量。
+
+  @param[in]    thd  THD to access user variables
+                  THD，用于访问用户变量
+  @param[in]    alt1 First alternative variable name
+                  第一个替代变量名
+  @param[in]    alt2 Second alternative variable name
+                  第二个替代变量名
+
+  @return       if found, returns the user variable entry; otherwise, returns NULL.
+                如果找到，返回用户变量条目；否则返回 NULL。
+*/
 const user_var_entry *get_user_var_from_alternatives(const THD *thd,
                                                      const std::string alt1,
                                                      const std::string alt2) {
-  mysql_mutex_assert_owner(&thd->LOCK_thd_data);
-  const auto &uv = thd->user_vars;
-  auto it = uv.find(alt1);
-  if (it == uv.end()) it = uv.find(alt2);
-  if (it == uv.end()) return nullptr;
-  return it->second.get();
+  mysql_mutex_assert_owner(&thd->LOCK_thd_data); // 确保当前线程拥有 thd 的数据锁
+  const auto &uv = thd->user_vars; // 获取用户变量
+  auto it = uv.find(alt1); // 查找第一个替代变量
+  if (it == uv.end()) it = uv.find(alt2); // 如果未找到，查找第二个替代变量
+  if (it == uv.end()) return nullptr; // 如果仍未找到，返回空指针
+  return it->second.get(); // 返回找到的用户变量
 }
 
 /**
   An auxiliary function extracts slave UUID.
+  辅助函数提取从服务器的 UUID。
 
   @param[in]    thd  THD to access a user variable
+                  THD，用于访问用户变量
   @param[out]   value String to return UUID value.
+                  用于返回 UUID 值的字符串
 
   @return       if success value is returned else NULL is returned.
+                如果成功返回值，否则返回 NULL。
 */
 String *get_replica_uuid(THD *thd, String *value) {
-  if (value == nullptr) return nullptr;
+  if (value == nullptr) return nullptr; // 如果值为空，返回空指针
 
   /* Protects thd->user_vars. */
-  MUTEX_LOCK(lock_guard, &thd->LOCK_thd_data);
+  MUTEX_LOCK(lock_guard, &thd->LOCK_thd_data); // 保护 thd->user_vars
 
   // Get user_var.
   const auto &uv =
-      get_user_var_from_alternatives(thd, "replica_uuid", "slave_uuid");
+      get_user_var_from_alternatives(thd, "replica_uuid", "slave_uuid"); // 获取用户变量
 
   // Get value of user_var.
-  if (uv && uv->length() > 0) {
-    value->copy(uv->ptr(), uv->length(), nullptr);
-    return value;
+  if (uv && uv->length() > 0) { // 如果用户变量存在且长度大于 0
+    value->copy(uv->ptr(), uv->length(), nullptr); // 复制用户变量的值
+    return value; // 返回值
   }
-  return nullptr;
+  return nullptr; // 返回空指针
 }
 
 /**
   Callback function used by kill_zombie_dump_threads() function to
   to find zombie dump thread from the thd list.
+  回调函数，用于通过 kill_zombie_dump_threads() 函数在 thd 列表中查找僵尸转储线程。
 
   @note It acquires LOCK_thd_data mutex when it finds matching thd.
+  @note 当找到匹配的 thd 时，它会获取 LOCK_thd_data 互斥锁。
   It is the responsibility of the caller to release this mutex.
+  释放此互斥锁的责任在于调用者。
 */
 class Find_zombie_dump_thread : public Find_THD_Impl {
  public:
   Find_zombie_dump_thread(String value) : m_replica_uuid(value) {}
+  // 构造函数，初始化 m_replica_uuid
   bool operator()(THD *thd) override {
-    THD *cur_thd = current_thd;
+    THD *cur_thd = current_thd; // 获取当前线程
+    // 检查 thd 是否不是当前线程，并且命令是 COM_BINLOG_DUMP 或 COM_BINLOG_DUMP_GTID
     if (thd != cur_thd && (thd->get_command() == COM_BINLOG_DUMP ||
                            thd->get_command() == COM_BINLOG_DUMP_GTID)) {
-      String tmp_uuid;
-      bool is_zombie_thread = false;
-      get_replica_uuid(thd, &tmp_uuid);
+      String tmp_uuid; // 临时 UUID
+      bool is_zombie_thread = false; // 是否为僵尸线程
+      get_replica_uuid(thd, &tmp_uuid); // 获取 thd 的从服务器 UUID（从用户参数中提取）
       if (m_replica_uuid.length()) {
+        // 检查当前线程是否为僵尸线程
+        // tmp_uuid.length()：检查从服务器的 UUID 是否存在且长度大于 0
+        // strncmp()：比较当前线程的 UUID 和 m_replica_uuid（当前从服务器的 UUID）
+        // 如果两者的 UUID 相同，则 is_zombie_thread 被设置为 true，表示该线程是一个僵尸线程
         is_zombie_thread =
-            (tmp_uuid.length() &&
-             !strncmp(m_replica_uuid.c_ptr(), tmp_uuid.c_ptr(), UUID_LENGTH));
+            (tmp_uuid.length() &&  // 检查 tmp_uuid 是否存在且长度大于 0
+             !strncmp(m_replica_uuid.c_ptr(), tmp_uuid.c_ptr(), UUID_LENGTH)); // 比较 UUID
       } else {
         /*
           Check if it is a 5.5 slave's dump thread i.e., server_id should be
           same && dump thread should not contain 'UUID'.
+          检查是否为 5.5 从服务器的转储线程，即 server_id 应该相同且转储线程不应包含 'UUID'。
         */
         is_zombie_thread =
             ((thd->server_id == cur_thd->server_id) && !tmp_uuid.length());
       }
-      if (is_zombie_thread) return true;
+      if (is_zombie_thread) return true; // 如果是僵尸线程，返回 true
     }
-    return false;
+    return false; // 否则返回 false
   }
 
  private:
-  String m_replica_uuid;
+  String m_replica_uuid; // 从服务器 UUID
 };
 
 /*
-
   Kill all Binlog_dump threads which previously talked to the same slave
   ("same" means with the same UUID(for slave versions >= 5.6) or same server id
   (for slave versions < 5.6). Indeed, if the slave stops, if the
@@ -1091,34 +1126,49 @@ class Find_zombie_dump_thread : public Find_THD_Impl {
     @param thd newly connected dump thread object
 
 */
+/*
+1. 背景：
+在主从复制架构中，从服务器会向主服务器请求 binlog（binary log）数据，以保持数据同步。
+当从服务器发送请求（如 COM_BINLOG_DUMP）时，主服务器会创建一个线程来处理这个请求。
+2. 僵尸线程：
+如果从服务器在等待 binlog 更新时停止（例如，网络问题或从服务器崩溃），
+那么与之相关的线程可能会继续存在，处于等待状态。
+这些线程被称为“僵尸线程”，因为它们不再有效，但仍然占用资源。
+3. 函数的作用：
+查找僵尸线程：函数会检查当前连接的从服务器的 UUID（唯一标识符）和服务器 ID。
+            如果这两个值都为零，说明没有有效的从服务器连接，函数会直接返回。
+杀死僵尸线程：如果找到与当前从服务器相同的线程（即之前的连接），
+            函数会将其标记为“重复的从服务器 ID”，并唤醒该线程以终止它。
+            这是为了确保在从服务器重新连接时，不会有多个线程同时处理相同的请求，
+            从而避免资源浪费和潜在的冲突。
+*/
+void kill_zombie_dump_threads(THD *thd) { // 杀死与同一从服务器通信的所有 Binlog_dump 线程
+  String replica_uuid; // 从服务器的 UUID
+  get_replica_uuid(thd, &replica_uuid); // 获取从服务器的 UUID
+  if (replica_uuid.length() == 0 && thd->server_id == 0) return; // 如果 UUID 和 server_id 都为 0，则返回
 
-void kill_zombie_dump_threads(THD *thd) {
-  String replica_uuid;
-  get_replica_uuid(thd, &replica_uuid);
-  if (replica_uuid.length() == 0 && thd->server_id == 0) return;
-
-  Find_zombie_dump_thread find_zombie_dump_thread(replica_uuid);
+  Find_zombie_dump_thread find_zombie_dump_thread(replica_uuid); // 创建查找僵尸线程的对象
   THD_ptr tmp_ptr =
-      Global_THD_manager::get_instance()->find_thd(&find_zombie_dump_thread);
-  if (tmp_ptr) {
+      Global_THD_manager::get_instance()->find_thd(&find_zombie_dump_thread); // 查找与从服务器相同的线程
+  if (tmp_ptr) { // 如果找到相应的线程
     /*
       Here we do not call kill_one_thread() as
       it will be slow because it will iterate through the list
       again. We just to do kill the thread ourselves.
     */
-    if (log_error_verbosity > 2) {
-      if (replica_uuid.length()) {
+    if (log_error_verbosity > 2) { // 如果日志错误详细级别大于 2
+      if (replica_uuid.length()) { // 如果 UUID 存在
         LogErr(INFORMATION_LEVEL, ER_RPL_ZOMBIE_ENCOUNTERED, "UUID",
-               replica_uuid.c_ptr(), "UUID", tmp_ptr->thread_id());
+               replica_uuid.c_ptr(), "UUID", tmp_ptr->thread_id()); // 记录日志
       } else {
         char numbuf[32];
-        snprintf(numbuf, sizeof(numbuf), "%u", thd->server_id);
+        snprintf(numbuf, sizeof(numbuf), "%u", thd->server_id); // 将 server_id 转换为字符串
         LogErr(INFORMATION_LEVEL, ER_RPL_ZOMBIE_ENCOUNTERED, "server_id",
-               numbuf, "server_id", tmp_ptr->thread_id());
+               numbuf, "server_id", tmp_ptr->thread_id()); // 记录日志
       }
     }
-    tmp_ptr->duplicate_slave_id = true;
-    tmp_ptr->awake(THD::KILL_QUERY);
+    tmp_ptr->duplicate_slave_id = true; // 标记为重复的从服务器 ID
+    tmp_ptr->awake(THD::KILL_QUERY); // 唤醒线程以杀死查询  自杀
   }
 }
 

@@ -1549,77 +1549,77 @@ extern "C" int thd_is_background_thread(const THD *thd) {
 }
 
 /**
-  Awake a thread.
+  Awake a thread. // 唤醒一个线程
 
-  @param[in]  state_to_set    value for THD::killed
+  @param[in]  state_to_set    value for THD::killed // 要设置的状态值，表示线程是否被杀死
 
-  This is normally called from another thread's THD object.
+  This is normally called from another thread's THD object. // 这通常是从另一个线程的THD对象调用的
 
-  @note Do always call this while holding LOCK_thd_data.
+  @note Do always call this while holding LOCK_thd_data. // 注意：在持有LOCK_thd_data时调用此函数。
 */
 
 void THD::awake(THD::killed_state state_to_set) {
-  DBUG_TRACE;
-  DBUG_PRINT("enter", ("this: %p current_thd: %p", this, current_thd));
-  THD_CHECK_SENTRY(this);
-  mysql_mutex_assert_owner(&LOCK_thd_data);
+  DBUG_TRACE; // 调试跟踪
+  DBUG_PRINT("enter", ("this: %p current_thd: %p", this, current_thd)); // 打印当前线程信息
+  THD_CHECK_SENTRY(this); // 检查线程的有效性
+  mysql_mutex_assert_owner(&LOCK_thd_data); // 确保当前线程拥有锁
 
-  /* Shutdown clone vio always, to wake up clone waiting for remote. */
+  /* Shutdown clone vio always, to wake up clone waiting for remote. // 始终关闭克隆的vio，以唤醒等待远程的克隆。 */
   shutdown_clone_vio();
 
   /*
     If THD is in kill immune mode (i.e. operation on new DD tables is in
-    progress) then just save state_to_set with THD::kill_immunizer object.
+    progress) then just save state_to_set with THD::kill_immunizer object. // 如果THD处于免杀模式（即正在操作新的DD表），则仅将state_to_set保存到THD::kill_immunizer对象中。
 
     While exiting kill immune mode, awake() is called again with the killed
-    state saved in THD::kill_immunizer object.
+    state saved in THD::kill_immunizer object. // 在退出免杀模式时，再次调用awake()，并使用保存在THD::kill_immunizer对象中的杀死状态。
   */
   if (kill_immunizer && kill_immunizer->is_active()) {
-    kill_immunizer->save_killed_state(state_to_set);
-    return;
+    kill_immunizer->save_killed_state(state_to_set); // 保存杀死状态
+    return; // 返回
   }
 
   /*
     Set killed flag if the connection is being killed (state_to_set
     is KILL_CONNECTION) or the connection is processing a query
-    (state_to_set is KILL_QUERY and m_server_idle flag is not set).
+    (state_to_set is KILL_QUERY and m_server_idle flag is not set). // 如果连接正在被杀死（state_to_set为KILL_CONNECTION）或连接正在处理查询（state_to_set为KILL_QUERY且m_server_idle标志未设置），则设置杀死标志。
     If the connection is idle and state_to_set is KILL QUERY, the
     the killed flag is not set so that it doesn't affect the next
-    command incorrectly.
+    command incorrectly. // 如果连接处于空闲状态且state_to_set为KILL QUERY，则不设置杀死标志，以免影响下一个命令。
   */
-  if (this->m_server_idle && state_to_set == KILL_QUERY) { /* nothing */
+  if (this->m_server_idle && state_to_set == KILL_QUERY) { /* nothing */ // 如果当前线程空闲且状态为KILL_QUERY，则不做任何操作
   } else {
-    killed = state_to_set;
+    killed = state_to_set; // 设置杀死状态
   }
 
   if (state_to_set != THD::KILL_QUERY && state_to_set != THD::KILL_TIMEOUT) {
     if (this != current_thd || kill_immunizer) {
-      assert(!kill_immunizer || !kill_immunizer->is_active());
+      assert(!kill_immunizer || !kill_immunizer->is_active()); // 确保kill_immunizer未激活
 
-      if (active_vio) vio_cancel(active_vio, SHUT_RDWR);
+      if (active_vio) vio_cancel(active_vio, SHUT_RDWR); // 取消活动的vio
     }
 
-    /* Send an event to the scheduler that a thread should be killed. */
+    /* Send an event to the scheduler that a thread should be killed. // 发送事件给调度器，表示线程应该被杀死。 */
     if (!slave_thread)
-      MYSQL_CALLBACK(this->scheduler, post_kill_notification, (this));
+      MYSQL_CALLBACK(this->scheduler, post_kill_notification, (this)); // 调用调度器的回调
   }
 
-  /* Interrupt target waiting inside a storage engine. */
-  if (state_to_set != THD::NOT_KILLED) ha_kill_connection(this);
+  /* Interrupt target waiting inside a storage engine. // 中断在存储引擎内部等待的目标。 */
+  if (state_to_set != THD::NOT_KILLED) ha_kill_connection(this); // 如果状态不是未杀死，则杀死连接
 
   if (state_to_set == THD::KILL_TIMEOUT) {
-    assert(!status_var_aggregated);
-    status_var.max_execution_time_exceeded++;
+    assert(!status_var_aggregated); // 确保状态变量未聚合
+    status_var.max_execution_time_exceeded++; // 增加超时计数
   }
 
-  /* Broadcast a condition to kick the target if it is waiting on it. */
+  /* Broadcast a condition to kick the target if it is waiting on it. // 广播条件以唤醒正在等待的目标。 */
   if (is_killable) {
-    mysql_mutex_lock(&LOCK_current_cond);
+    mysql_mutex_lock(&LOCK_current_cond); // 锁定当前条件
     /*
       This broadcast could be up in the air if the victim thread
       exits the cond in the time between read and broadcast, but that is
       ok since all we want to do is to make the victim thread get out
-      of waiting on current_cond.
+      of waiting on current_cond. // 如果受害线程在读取和广播之间退出条件，则此广播可能会失效，但这没关系，因为我们只想让受害线程退出当前条件的等待。
       If we see a non-zero current_cond: it cannot be an old value (because
       then exit_cond() should have run and it can't because we have mutex); so
       it is the true value but maybe current_mutex is not yet non-zero (we're
@@ -1638,18 +1638,19 @@ void THD::awake(THD::killed_state state_to_set) {
       enter_cond(). This should make the signaling as safe as possible.
       However, there is still a small chance of failure on platforms with
       instruction or memory write reordering.
+      inversion"). So we test the mutex too to not lock 0. // 如果我们看到非零的current_cond：它不能是旧值（因为exit_cond()应该已经运行，而它不能因为我们有互斥锁）；所以它是真实值，但可能current_mutex尚未非零（我们正在进入条件中，存在“内存顺序反转”）。因此，我们也测试互斥锁以避免锁定0。
     */
     if (current_cond.load() && current_mutex.load()) {
       DBUG_EXECUTE_IF("before_dump_thread_acquires_current_mutex", {
         const char act[] =
-            "now signal dump_thread_signal wait_for go_dump_thread";
-        assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
+            "now signal dump_thread_signal wait_for go_dump_thread"; // 现在信号转储线程信号，等待转储线程
+        assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act))); // 确保没有调试同步操作
       };);
-      mysql_mutex_lock(current_mutex);
-      mysql_cond_broadcast(current_cond);
-      mysql_mutex_unlock(current_mutex);
+      mysql_mutex_lock(current_mutex); // 锁定当前互斥锁
+      mysql_cond_broadcast(current_cond); // 广播当前条件
+      mysql_mutex_unlock(current_mutex); // 解锁当前互斥锁
     }
-    mysql_mutex_unlock(&LOCK_current_cond);
+    mysql_mutex_unlock(&LOCK_current_cond); // 解锁当前条件
   }
 }
 

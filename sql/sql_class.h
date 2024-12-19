@@ -1524,15 +1524,21 @@ class THD : public MDL_context_owner,
     Asserts that the protocol is of type text or binary and then
     returns the m_protocol casted to Protocol_classic. This method
     is needed to prevent misuse of pluggable protocols by legacy code
+    // 断言协议是文本或二进制类型，然后返回将 m_protocol 转换为 Protocol_classic 的结果。
+    // 此方法用于防止旧代码错误使用可插拔协议。
   */
   const Protocol_classic *get_protocol_classic() const {
     assert(is_classic_protocol());
+    // 断言当前协议是经典协议
     return pointer_cast<const Protocol_classic *>(m_protocol);
+    // 返回指向 Protocol_classic 的指针
   }
 
   Protocol_classic *get_protocol_classic() {
     assert(is_classic_protocol());
+    // 断言当前协议是经典协议
     return pointer_cast<Protocol_classic *>(m_protocol);
+    // 返回指向 Protocol_classic 的指针
   }
 
  private:
@@ -3246,11 +3252,16 @@ class THD : public MDL_context_owner,
   void store_globals();
   void restore_globals();
 
+  /**
+    设置当前活动的 Vio 对象。
+
+    @param vio 指向 Vio 对象的指针，表示当前活动的网络连接。
+  */
   inline void set_active_vio(Vio *vio) {
-    mysql_mutex_lock(&LOCK_thd_data);
-    active_vio = vio;
-    vio_set_thread_id(vio, pthread_self());
-    mysql_mutex_unlock(&LOCK_thd_data);
+    mysql_mutex_lock(&LOCK_thd_data); // 锁定线程数据以确保线程安全
+    active_vio = vio; // 将活动 Vio 设置为传入的 Vio 对象
+    vio_set_thread_id(vio, pthread_self()); // 设置当前线程的 ID
+    mysql_mutex_unlock(&LOCK_thd_data); // 解锁线程数据
   }
 
   inline void set_ssl(Vio *vio) {

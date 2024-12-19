@@ -822,14 +822,15 @@ class Relay_log_info : public Rpl_info {
 
   /**
     Adds a GTID set to received GTID set.
+    将一个 GTID 集合添加到接收到的 GTID 集合中。
 
-    @param gtid_set the gtid_set to add
+    @param gtid_set 要添加的 gtid_set
 
-    @return RETURN_STATUS_OK or RETURN_STATUS_REPORTED_ERROR.
+    @return RETURN_STATUS_OK 或 RETURN_STATUS_REPORTED_ERROR。
   */
-  enum_return_status add_gtid_set(const Gtid_set *gtid_set);
+  enum_return_status add_gtid_set(const Gtid_set *gtid_set); // 添加 GTID 集合的函数声明
 
-  const Gtid_set *get_gtid_set() const { return gtid_set; }
+  const Gtid_set *get_gtid_set() const { return gtid_set; } // 获取当前的 GTID 集合
 
   bool reinit_sql_thread_io_cache(const char *log, bool need_data_lock);
 

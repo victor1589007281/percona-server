@@ -1316,26 +1316,38 @@ void free_rows(MYSQL_DATA *cur) {
   }
 }
 
+/**
+  处理与服务器的高级命令
+
+  @param mysql           连接句柄
+  @param command         服务器命令
+  @param header          命令头
+  @param header_length   命令头长度
+  @param arg             命令参数
+  @param arg_length      命令参数长度
+  @param skip_check      是否跳过检查
+  @param stmt            语句句柄
+*/
 bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
                           const uchar *header, size_t header_length,
                           const uchar *arg, size_t arg_length, bool skip_check,
                           MYSQL_STMT *stmt) {
-  NET *net = &mysql->net;
-  bool result = true;
-  bool stmt_skip = stmt ? stmt->state != MYSQL_STMT_INIT_DONE : false;
-  DBUG_TRACE;
+  NET *net = &mysql->net; // 获取网络结构
+  bool result = true; // 结果标志
+  bool stmt_skip = stmt ? stmt->state != MYSQL_STMT_INIT_DONE : false; // 检查语句状态
+  DBUG_TRACE; // 调试跟踪
 
   if (mysql->net.vio == nullptr || net->error == NET_ERROR_SOCKET_UNUSABLE) {
-    /* Do reconnect if possible */
+    /* 尝试重新连接 */
     if (!mysql->reconnect || mysql_reconnect(mysql) || stmt_skip) {
       set_mysql_error(mysql, CR_SERVER_LOST, unknown_sqlstate);
-      return true; /* reconnect == false OR reconnect failed */
+      return true; /* reconnect == false 或者重连失败 */
     }
-    /* reconnect succeeded */
+    /* 重新连接成功 */
     assert(mysql->net.vio != nullptr);
   }
 
-  /* turn off non blocking operations */
+  /* 关闭非阻塞操作 */
   if (!vio_is_blocking(mysql->net.vio))
     vio_set_blocking_flag(mysql->net.vio, true);
 
@@ -1346,21 +1358,23 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     return true;
   }
 
-  net_clear_error(net);
-  mysql->info = nullptr;
-  mysql->affected_rows = ~(my_ulonglong)0;
+  net_clear_error(net); // 清除网络错误
+  mysql->info = nullptr; // 清空信息
+  mysql->affected_rows = ~(my_ulonglong)0; // 重置受影响的行数
   /*
     Do not check the socket/protocol buffer as the
     result/error/timeout of a previous command might not have been read.
     This can happen if a client sends a query but does not reap the result
     before attempting to close the connection or wait_timeout occurs on
     the server.
+    不检查套接字/协议缓冲区，因为之前命令的结果/错误/超时可能尚未读取。
+    这可能发生在客户端发送查询但在尝试关闭连接或服务器发生 wait_timeout 之前未处理结果的情况下。
   */
-  net_clear(&mysql->net, false);
+  net_clear(&mysql->net, false); // 清除网络状态
 
-  MYSQL_TRACE_STAGE(mysql, READY_FOR_COMMAND);
+  MYSQL_TRACE_STAGE(mysql, READY_FOR_COMMAND); // 设置为准备命令阶段
   MYSQL_TRACE(SEND_COMMAND, mysql,
-              (command, header_length, arg_length, header, arg));
+              (command, header_length, arg_length, header, arg)); // 记录发送命令
 
   /*
     If auto-reconnect mode is enabled check if connection is still alive before
@@ -1370,6 +1384,10 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     when it is too late to reconnect. Note that such scenario can still occur if
     connection gets killed after this check but before command is sent to
     server. But this should be rare.
+    如果启用了自动重连模式，请在发送新命令之前检查连接是否仍然存活。
+    否则，send() 可能不会注意到连接已被服务器关闭（例如，由于 KILL 语句），
+    连接消失的事实将在尝试读取命令结果时被注意到，那时重连已经太晚。
+    注意，这种情况仍然可能发生，如果连接在此检查后但在命令发送到服务器之前被杀死。
   */
   if ((command != COM_QUIT) && mysql->reconnect && !vio_is_connected(net->vio))
     net->error = NET_ERROR_SOCKET_UNUSABLE;
@@ -1386,21 +1404,26 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
       /*
         Write error, try to read and see if the server gave an error
         before closing the connection. Most likely Unix Domain Socket.
+        写入错误，尝试读取并查看服务器是否在关闭连接之前给出了错误。
+        最有可能是 Unix 域套接字。
       */
       if (net->vio) {
         my_net_set_read_timeout(net, 1);
         /*
           cli_safe_read will also set error variables in net,
           and we are already in error state.
+          cli_safe_read 也会在 net 中设置错误变量，
+          我们已经处于错误状态。
         */
         if (cli_safe_read(mysql, nullptr) == packet_error) {
           if (!mysql->reconnect) goto end;
         }
         /* Can this happen in any other case than COM_QUIT? */
+        /* 除了 COM_QUIT，是否可以在其他任何情况下发生？ */
         if (!mysql->reconnect) assert(command == COM_QUIT);
       }
     }
-    end_server(mysql);
+    end_server(mysql); // 结束服务器连接
     if (mysql_reconnect(mysql) || stmt_skip) goto end;
 
     MYSQL_TRACE(SEND_COMMAND, mysql,
@@ -1412,7 +1435,7 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     }
   }
 
-  MYSQL_TRACE(PACKET_SENT, mysql, (header_length + arg_length));
+  MYSQL_TRACE(PACKET_SENT, mysql, (header_length + arg_length)); // 记录数据包发送
 
 #if defined(CLIENT_PROTOCOL_TRACING)
   switch (command) {
@@ -1427,6 +1450,8 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     /*
             No server reply is expected after these commands so we reamin
             ready for the next command.
+            这些命令不期望服务器回复，因此我们保持
+            为下一个命令准备好。
      */
     case COM_STMT_SEND_LONG_DATA:
     case COM_STMT_CLOSE:
@@ -1435,8 +1460,7 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
       break;
 
     /*
-            These replication commands are not supported and we bail out
-            by pretending that connection has been closed.
+            这些复制命令不受支持，我们假装连接已关闭。
      */
     case COM_BINLOG_DUMP:
     case COM_BINLOG_DUMP_GTID:
@@ -1447,6 +1471,7 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     /*
             After COM_CHANGE_USER a regular authentication exchange
             is performed.
+            在 COM_CHANGE_USER 之后，执行常规身份验证交换。
      */
     case COM_CHANGE_USER:
       MYSQL_TRACE_STAGE(mysql, AUTHENTICATE);
@@ -1455,6 +1480,7 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     /*
             Server replies to COM_STATISTICS with a single packet
             containing a string with statistics information.
+            服务器回复 COM_STATISTICS，返回一个包含统计信息的字符串的单个数据包。
      */
     case COM_STATISTICS:
       MYSQL_TRACE_STAGE(mysql, WAIT_FOR_PACKET);
@@ -1463,6 +1489,8 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     /*
             For all other commands we expect server to send regular reply
             which is either OK, ERR or a result-set header.
+            对于所有其他命令，我们期望服务器发送常规回复，
+            该回复可以是 OK、ERR 或结果集头。
      */
     default:
       MYSQL_TRACE_STAGE(mysql, WAIT_FOR_RESULT);
@@ -1470,17 +1498,18 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
   }
 #endif
 
-  result = false;
+  result = false; // 默认结果为 false
   if (!skip_check) {
     result = ((mysql->packet_length =
                    cli_safe_read_with_ok(mysql, true, nullptr)) == packet_error
                   ? 1
-                  : 0);
+                  : 0); // 读取数据包并检查结果
 
 #if defined(CLIENT_PROTOCOL_TRACING)
     /*
       Return to READY_FOR_COMMAND protocol stage in case server reports error
       or sends OK packet.
+      如果服务器报告错误或发送 OK 数据包，则返回到准备命令协议阶段。
     */
     if (result || mysql->net.read_pos[0] == 0x00)
       MYSQL_TRACE_STAGE(mysql, READY_FOR_COMMAND);
@@ -1488,9 +1517,10 @@ bool cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
   }
 
 end:
-  DBUG_PRINT("exit", ("result: %d", result));
-  return result;
+  DBUG_PRINT("exit", ("result: %d", result)); // 调试退出
+  return result; // 返回结果
 }
+
 
 net_async_status cli_advanced_command_nonblocking(
     MYSQL *mysql, enum enum_server_command command, const uchar *header,
@@ -3254,45 +3284,60 @@ static MYSQL_METHODS client_methods = {
   Init MySQL structure or allocate one
 ****************************************************************************/
 
+/**
+  初始化 MySQL 结构或分配一个新的 MySQL 结构
+
+  @param mysql 指向 MySQL 连接的指针，如果为 NULL，则分配一个新的 MySQL 结构
+  @retval 返回指向 MySQL 结构的指针，如果分配失败则返回 NULL
+*/
 MYSQL *STDCALL mysql_init(MYSQL *mysql) {
+  // 初始化 MySQL 服务器，返回 0 表示成功
   if (mysql_server_init(0, nullptr, nullptr)) return nullptr;
+
+  // 如果 mysql 为 NULL，则分配一个新的 MySQL 结构
   if (!mysql) {
     if (!(mysql = (MYSQL *)my_malloc(key_memory_MYSQL, sizeof(*mysql),
                                      MYF(MY_WME | MY_ZEROFILL)))) {
+      // 分配内存失败，设置错误信息
       set_mysql_error(nullptr, CR_OUT_OF_MEMORY, unknown_sqlstate);
       return nullptr;
     }
-    mysql->free_me = true;
+    mysql->free_me = true; // 标记需要释放内存
   } else
-    memset(mysql, 0, sizeof(*(mysql)));
-  mysql->charset = default_client_charset_info;
+    memset(mysql, 0, sizeof(*(mysql))); // 清零现有的 MySQL 结构
+
+  mysql->charset = default_client_charset_info; // 设置默认字符集
   mysql->field_alloc = (MEM_ROOT *)my_malloc(
-      key_memory_MYSQL, sizeof(*mysql->field_alloc), MYF(MY_WME | MY_ZEROFILL));
+      key_memory_MYSQL, sizeof(*mysql->field_alloc), MYF(MY_WME | MY_ZEROFILL)); // 分配字段内存
   if (!mysql->field_alloc) {
+    // 分配内存失败，设置错误信息
     set_mysql_error(nullptr, CR_OUT_OF_MEMORY, unknown_sqlstate);
-    if (mysql->free_me) my_free(mysql);
+    if (mysql->free_me) my_free(mysql); // 释放内存
     return nullptr;
   }
-  my_stpcpy(mysql->net.sqlstate, not_error_sqlstate);
+  my_stpcpy(mysql->net.sqlstate, not_error_sqlstate); // 设置 SQL 状态
 
   /*
     Only enable LOAD DATA INFILE by default if configured with option
     ENABLED_LOCAL_INFILE
+    仅在配置了 ENABLED_LOCAL_INFILE 选项时，默认启用 LOAD DATA INFILE
   */
-
 #if defined(ENABLED_LOCAL_INFILE) && !defined(MYSQL_SERVER)
-  mysql->options.client_flag |= CLIENT_LOCAL_FILES;
+  mysql->options.client_flag |= CLIENT_LOCAL_FILES; // 启用本地文件选项
 #endif
 
 #if defined(_WIN32)
+  // 在 Windows 上设置共享内存基础名称
   mysql->options.shared_memory_base_name = my_strdup(
       key_memory_mysql_options, def_shared_memory_base_name, MYF(MY_WME));
 #endif
 
-  mysql->options.report_data_truncation = true; /* default */
+  mysql->options.report_data_truncation = true; /* default */ // 默认报告数据截断
 
   /* Initialize extensions. */
+  /* 初始化扩展 */
   if (!(mysql->extension = mysql_extension_init(mysql))) {
+    // 初始化扩展失败，设置错误信息
     set_mysql_error(nullptr, CR_OUT_OF_MEMORY, unknown_sqlstate);
     return nullptr;
   }
@@ -3311,24 +3356,39 @@ MYSQL *STDCALL mysql_init(MYSQL *mysql) {
     will not see a behaviour change.
     - existing apps which explicitly asked for no reconnection
     (mysql.reconnect=0) will not see a behaviour change.
+    默认情况下，我们不重新连接，因为这可能会悄悄地损坏数据（重新连接后，
+    可能会丢失表锁、用户变量、会话变量（事务在 mysql_reconnect() 中专门处理））。
+    这是一个变化：< 5.0.3 mysql->reconnect 默认设置为 1。
+    这种变化对现有应用程序的影响：
+    - 依赖默认值的现有应用程序将看到行为变化；
+    他们必须在 mysql_real_connect() 之后设置 reconnect=1。
+    - 显式请求重新连接的现有应用程序（唯一的方式是
+    在 mysql_real_connect() 之后将 mysql.reconnect 设置为 1）将不会看到行为变化。
+    - 显式请求不重新连接的现有应用程序（mysql.reconnect=0）将不会看到行为变化。
   */
-  mysql->reconnect = false;
+  mysql->reconnect = false; // 默认不重新连接
+
 #if !defined(MYSQL_SERVER)
-  ENSURE_EXTENSIONS_PRESENT(&mysql->options);
-  mysql->options.extension->ssl_mode = SSL_MODE_PREFERRED;
+  ENSURE_EXTENSIONS_PRESENT(&mysql->options); // 确保扩展存在
+  mysql->options.extension->ssl_mode = SSL_MODE_PREFERRED; // 设置 SSL 模式为首选
 #endif
   /* by default connection_compressed should be OFF */
+
+  /* 默认情况下，连接压缩应为关闭 */
   ENSURE_EXTENSIONS_PRESENT(&mysql->options);
-  mysql->options.extension->connection_compressed = false;
+  mysql->options.extension->connection_compressed = false; // 设置连接压缩为关闭
+
   /*
     Set the client methods to use. It can be overridden just before
     calling the mysql_real_connect(). May be the ideal way is to pass through
     the argument but that will break the ABI.
+    设置要使用的客户端方法。可以在调用 mysql_real_connect() 之前覆盖。
+    理想的方式是通过参数传递，但这会破坏 ABI。
   */
-  mysql->methods = &client_methods;
-  mysql->resultset_metadata = RESULTSET_METADATA_FULL;
-  ASYNC_DATA(mysql)->async_op_status = ASYNC_OP_UNSET;
-  return mysql;
+  mysql->methods = &client_methods; // 设置客户端方法
+  mysql->resultset_metadata = RESULTSET_METADATA_FULL; // 设置结果集元数据
+  ASYNC_DATA(mysql)->async_op_status = ASYNC_OP_UNSET; // 设置异步操作状态
+  return mysql; // 返回初始化后的 MySQL 结构
 }
 
 /*
@@ -6325,36 +6385,55 @@ MYSQL *cli_connect(mysql_async_connect *ctx) {
   return connect_helper(ctx);
 }
 
+/**
+  该函数用于建立与 MySQL 数据库的连接。
+
+  @param mysql 连接句柄。
+  @param host 主机名或 IP 地址。
+  @param user 登录 ID，用于连接到主机。
+  @param passwd 该登录 ID 的密码。
+  @param db 连接后要使用的默认数据库，可以为 0。
+  @param port 连接使用的端口号。
+  @param unix_socket 用于连接的套接字文件。
+  @param client_flag 指示客户端可以处理的标志。
+
+  @retval 返回连接的 MYSQL 句柄。
+*/
 MYSQL *STDCALL mysql_real_connect(MYSQL *mysql, const char *host,
                                   const char *user, const char *passwd,
                                   const char *db, uint port,
                                   const char *unix_socket, ulong client_flag) {
-  DBUG_TRACE;
-  mysql_async_connect ctx;
-  memset(&ctx, 0, sizeof(ctx));
+  DBUG_TRACE; // 调试跟踪
+  mysql_async_connect ctx; // 创建一个异步连接上下文
+  memset(&ctx, 0, sizeof(ctx)); // 清空上下文
 
-  ctx.mysql = mysql;
-  ctx.host = host;
-  ctx.port = port;
-  ctx.db = db;
-  ctx.user = user;
-  ENSURE_EXTENSIONS_PRESENT(&mysql->options);
+  ctx.mysql = mysql; // 设置 MySQL 连接句柄
+  ctx.host = host; // 设置主机名
+  ctx.port = port; // 设置端口号
+  ctx.db = db; // 设置数据库
+  ctx.user = user; // 设置用户名
+  ENSURE_EXTENSIONS_PRESENT(&mysql->options); // 确保扩展存在
+
   /* password will be extracted from mysql options */
+  // 从 MySQL 选项中提取密码
   if (mysql->options.extension->client_auth_info[0].password)
-    ctx.passwd = mysql->options.extension->client_auth_info[0].password;
+    ctx.passwd = mysql->options.extension->client_auth_info[0].password; // 如果存在密码，则使用它
   else
-    ctx.passwd = passwd;
-  ctx.unix_socket = unix_socket;
+    ctx.passwd = passwd; // 否则使用传入的密码
+
+  ctx.unix_socket = unix_socket; // 设置 Unix 套接字
   if (0 != (client_flag & CLIENT_NO_SCHEMA)) {
     fprintf(stderr,
             "WARNING: CLIENT_NO_SCHEMA is deprecated and will be removed in a "
-            "future version.\n");
+            "future version.\n"); // 警告信息
   }
-  mysql->options.client_flag |= client_flag;
-  ctx.client_flag = mysql->options.client_flag;
-  ctx.ssl_state = SSL_NONE;
-  return (*mysql->methods->connect_method)(&ctx);
+  mysql->options.client_flag |= client_flag; // 更新客户端标志
+  ctx.client_flag = mysql->options.client_flag; // 设置上下文中的客户端标志
+  ctx.ssl_state = SSL_NONE; // 初始化 SSL 状态为 NONE
+
+  return (*mysql->methods->connect_method)(&ctx); // 调用连接方法并返回结果
 }
+
 
 /**
   This API attempts to initialize all the context needed to make an asynchronous
@@ -7289,69 +7368,87 @@ static mysql_state_machine_status csm_send_one_init_command(
 }
 #endif
 
-bool mysql_reconnect(MYSQL *mysql) {
-  MYSQL tmp_mysql;
-  DBUG_TRACE;
-  assert(mysql);
-  DBUG_PRINT("enter", ("mysql->reconnect: %d", mysql->reconnect));
 
+/**
+  尝试重新连接到 MySQL 服务器。
+  
+  @param mysql 连接句柄。
+  
+  @retval false 重新连接成功。
+  @retval true  重新连接失败。
+*/
+bool mysql_reconnect(MYSQL *mysql) {
+  MYSQL tmp_mysql; // 临时 MySQL 连接对象
+  DBUG_TRACE; // 调试跟踪
+  assert(mysql); // 确保 mysql 不为空
+  DBUG_PRINT("enter", ("mysql->reconnect: %d", mysql->reconnect)); // 打印当前重连状态
+
+  // 如果当前在事务中或没有主机信息，则允许下次重连
   if ((mysql->server_status & SERVER_STATUS_IN_TRANS) || !mysql->host_info) {
-    /* Allow reconnect next time */
-    mysql->server_status &= ~SERVER_STATUS_IN_TRANS;
+    mysql->server_status &= ~SERVER_STATUS_IN_TRANS; // 清除事务状态
     if (mysql->net.last_errno == 0)
-      set_mysql_error(mysql, CR_SERVER_LOST, unknown_sqlstate);
-    return true;
+      set_mysql_error(mysql, CR_SERVER_LOST, unknown_sqlstate); // 设置错误信息
+    return true; // 返回重连失败
   }
-  mysql_init(&tmp_mysql);
-  mysql_close_free_options(&tmp_mysql);
-  tmp_mysql.options = mysql->options;
-  tmp_mysql.options.my_cnf_file = tmp_mysql.options.my_cnf_group = nullptr;
+  
+  mysql_init(&tmp_mysql); // 初始化临时 MySQL 连接
+  mysql_close_free_options(&tmp_mysql); // 关闭并释放临时连接的选项
+  tmp_mysql.options = mysql->options; // 复制当前连接的选项
+  tmp_mysql.options.my_cnf_file = tmp_mysql.options.my_cnf_group = nullptr; // 清空配置文件和组
+
 #ifdef MYSQL_SERVER
+  // 在 MySQL 服务器模式下，保存服务器扩展
   NET_SERVER *server_extn = MYSQL_EXTENSION_PTR(&tmp_mysql)->server_extn =
       MYSQL_EXTENSION_PTR(mysql)->server_extn;
-  MYSQL_EXTENSION_PTR(mysql)->server_extn = nullptr;
+  MYSQL_EXTENSION_PTR(mysql)->server_extn = nullptr; // 清空当前连接的服务器扩展
 #endif
+
+  // 尝试重新连接
   if (!mysql_real_connect(&tmp_mysql, mysql->host, mysql->user, mysql->passwd,
                           mysql->db, mysql->port, mysql->unix_socket,
                           mysql->client_flag | CLIENT_REMEMBER_OPTIONS)) {
 #ifdef MYSQL_SERVER
-    MYSQL_EXTENSION_PTR(mysql)->server_extn = server_extn;
+    MYSQL_EXTENSION_PTR(mysql)->server_extn = server_extn; // 恢复服务器扩展
 #endif
-    memset(&tmp_mysql.options, 0, sizeof(tmp_mysql.options));
-    mysql->net.last_errno = tmp_mysql.net.last_errno;
-    my_stpcpy(mysql->net.last_error, tmp_mysql.net.last_error);
-    my_stpcpy(mysql->net.sqlstate, tmp_mysql.net.sqlstate);
-    return true;
-  }
-  if (mysql_set_character_set(&tmp_mysql, mysql->charset->csname)) {
-    DBUG_PRINT("error", ("mysql_set_character_set() failed"));
-#ifdef MYSQL_SERVER
-    MYSQL_EXTENSION_PTR(mysql)->server_extn = server_extn;
-#endif
-    memset(&tmp_mysql.options, 0, sizeof(tmp_mysql.options));
-    mysql_close(&tmp_mysql);
-    mysql->net.last_errno = tmp_mysql.net.last_errno;
-    my_stpcpy(mysql->net.last_error, tmp_mysql.net.last_error);
-    my_stpcpy(mysql->net.sqlstate, tmp_mysql.net.sqlstate);
-    return true;
+    memset(&tmp_mysql.options, 0, sizeof(tmp_mysql.options)); // 清空临时连接的选项
+    mysql->net.last_errno = tmp_mysql.net.last_errno; // 记录错误号
+    my_stpcpy(mysql->net.last_error, tmp_mysql.net.last_error); // 记录错误信息
+    my_stpcpy(mysql->net.sqlstate, tmp_mysql.net.sqlstate); // 记录 SQL 状态
+    return true; // 返回重连失败
   }
 
-  DBUG_PRINT("info", ("reconnect succeded"));
-  tmp_mysql.reconnect = true;
-  tmp_mysql.free_me = mysql->free_me;
+  // 设置字符集
+  if (mysql_set_character_set(&tmp_mysql, mysql->charset->csname)) {
+    DBUG_PRINT("error", ("mysql_set_character_set() failed")); // 打印错误信息
+#ifdef MYSQL_SERVER
+    MYSQL_EXTENSION_PTR(mysql)->server_extn = server_extn; // 恢复服务器扩展
+#endif
+    memset(&tmp_mysql.options, 0, sizeof(tmp_mysql.options)); // 清空临时连接的选项
+    mysql_close(&tmp_mysql); // 关闭临时连接
+    mysql->net.last_errno = tmp_mysql.net.last_errno; // 记录错误号
+    my_stpcpy(mysql->net.last_error, tmp_mysql.net.last_error); // 记录错误信息
+    my_stpcpy(mysql->net.sqlstate, tmp_mysql.net.sqlstate); // 记录 SQL 状态
+    return true; // 返回重连失败
+  }
+
+  DBUG_PRINT("info", ("reconnect succeeded")); // 打印重连成功信息
+  tmp_mysql.reconnect = true; // 设置临时连接为已重连
+  tmp_mysql.free_me = mysql->free_me; // 复制释放标志
 
   /* Move prepared statements (if any) over to the new mysql object */
-  tmp_mysql.stmts = mysql->stmts;
-  mysql->stmts = nullptr;
+  // 将准备好的语句（如果有）转移到新的 MySQL 对象
+  tmp_mysql.stmts = mysql->stmts; // 复制语句
+  mysql->stmts = nullptr; // 清空当前连接的语句
 
   /* Don't free options as these are now used in tmp_mysql */
-  memset(&mysql->options, 0, sizeof(mysql->options));
-  mysql->free_me = false;
-  mysql_close(mysql);
-  *mysql = std::move(tmp_mysql);
-  net_clear(&mysql->net, true);
-  mysql->affected_rows = ~(my_ulonglong)0;
-  return false;
+  // 不释放选项，因为这些选项现在在 tmp_mysql 中使用
+  memset(&mysql->options, 0, sizeof(mysql->options)); // 清空当前连接的选项
+  mysql->free_me = false; // 设置不释放当前连接
+  mysql_close(mysql); // 关闭当前连接
+  *mysql = std::move(tmp_mysql); // 移动临时连接到当前连接
+  net_clear(&mysql->net, true); // 清除网络状态
+  mysql->affected_rows = ~(my_ulonglong)0; // 设置受影响的行数
+  return false; // 返回重连成功
 }
 
 /**
@@ -7371,41 +7468,41 @@ bool mysql_reconnect(MYSQL *mysql) {
   If rpl->fix_gtid_set is not NULL it will be called to fill
   packet gtid set data (rpl->gtid_set is ignored).
 
-  @param  mysql  Connection handle.
-  @param  rpl    Replication stream information.
+  @param  mysql  Connection handle.  // 连接句柄
+  @param  rpl    Replication stream information.  // 复制流信息
 
-  @retval  -1  Error.
-  @retval  0   Success.
+  @retval  -1  Error.  // 错误
+  @retval  0   Success.  // 成功
 */
 int STDCALL mysql_binlog_open(MYSQL *mysql, MYSQL_RPL *rpl) {
-  DBUG_TRACE;
-  assert(mysql);
-  assert(rpl);
+  DBUG_TRACE;  // 调试跟踪
+  assert(mysql);  // 确保 mysql 不为空
+  assert(rpl);  // 确保 rpl 不为空
 
-  enum enum_server_command command;
-  uchar *command_buffer = nullptr;
-  size_t command_size = 0;
+  enum enum_server_command command;  // 定义服务器命令枚举
+  uchar *command_buffer = nullptr;  // 命令缓冲区指针
+  size_t command_size = 0;  // 命令大小
 
   /*
     No need to check mysql->net.vio here as
     it'll be checked in the simple_command().
   */
 
-  if (!rpl->file_name) {
-    rpl->file_name = const_cast<char *>("");
-    rpl->file_name_length = 0;
-  } else if (rpl->file_name_length == 0)
-    rpl->file_name_length = strlen(rpl->file_name);
+  if (!rpl->file_name) {  // 如果文件名为空
+    rpl->file_name = const_cast<char *>("");  // 将文件名设置为空字符串
+    rpl->file_name_length = 0;  // 文件名长度为0
+  } else if (rpl->file_name_length == 0)  // 如果文件名长度为0
+    rpl->file_name_length = strlen(rpl->file_name);  // 设置文件名长度
 
-  if (rpl->file_name_length > UINT_MAX) {
-    set_mysql_error(mysql, CR_FILE_NAME_TOO_LONG, unknown_sqlstate);
-    return -1;
+  if (rpl->file_name_length > UINT_MAX) {  // 如果文件名长度超过最大值
+    set_mysql_error(mysql, CR_FILE_NAME_TOO_LONG, unknown_sqlstate);  // 设置错误信息
+    return -1;  // 返回错误
   }
 
-  if (rpl->flags & MYSQL_RPL_GTID) {
-    command = COM_BINLOG_DUMP_GTID;
+  if (rpl->flags & MYSQL_RPL_GTID) {  // 如果标志包含 GTID
+    command = COM_BINLOG_DUMP_GTID;  // 设置命令为 COM_BINLOG_DUMP_GTID
 
-#define GTID_ENCODED_DATA_SIZE 8
+#define GTID_ENCODED_DATA_SIZE 8  // 定义 GTID 编码数据大小
 
     size_t alloc_size = rpl->file_name_length + ::BINLOG_FLAGS_INFO_SIZE +
                         ::BINLOG_SERVER_ID_INFO_SIZE +
@@ -7413,83 +7510,82 @@ int STDCALL mysql_binlog_open(MYSQL *mysql, MYSQL_RPL *rpl) {
                         ::BINLOG_DATA_SIZE_INFO_SIZE +
                         (rpl->gtid_set_encoded_size ? rpl->gtid_set_encoded_size
                                                     : GTID_ENCODED_DATA_SIZE) +
-                        1;
+                        1;  // 计算分配大小
 
     if (!(command_buffer = (uchar *)my_malloc(PSI_NOT_INSTRUMENTED, alloc_size,
-                                              MYF(MY_WME)))) {
-      set_mysql_error(mysql, CR_OUT_OF_MEMORY, unknown_sqlstate);
-      return -1;
+                                              MYF(MY_WME)))) {  // 分配命令缓冲区
+      set_mysql_error(mysql, CR_OUT_OF_MEMORY, unknown_sqlstate);  // 设置内存不足错误
+      return -1;  // 返回错误
     }
 
-    uchar *ptr = command_buffer;
+    uchar *ptr = command_buffer;  // 指向命令缓冲区的指针
 
-    int2store(ptr, rpl->flags);  // Note: we use low 16 bits
-    ptr += ::BINLOG_FLAGS_INFO_SIZE;
-    int4store(ptr, rpl->server_id);
-    ptr += ::BINLOG_SERVER_ID_INFO_SIZE;
-    int4store(ptr, static_cast<uint32>(rpl->file_name_length));
-    ptr += ::BINLOG_NAME_SIZE_INFO_SIZE;
-    memcpy(ptr, rpl->file_name, rpl->file_name_length);
-    ptr += rpl->file_name_length;
-    int8store(ptr, rpl->start_position);
-    ptr += ::BINLOG_POS_INFO_SIZE;
-    if (rpl->gtid_set_encoded_size) {
-      int4store(ptr, static_cast<uint32>(rpl->gtid_set_encoded_size));
-      ptr += ::BINLOG_DATA_SIZE_INFO_SIZE;
-      if (rpl->fix_gtid_set)
-        rpl->fix_gtid_set(rpl, ptr);
+    int2store(ptr, rpl->flags);  // Note: we use low 16 bits  // 存储标志
+    ptr += ::BINLOG_FLAGS_INFO_SIZE;  // 移动指针
+    int4store(ptr, rpl->server_id);  // 存储服务器ID
+    ptr += ::BINLOG_SERVER_ID_INFO_SIZE;  // 移动指针
+    int4store(ptr, static_cast<uint32>(rpl->file_name_length));  // 存储文件名长度
+    ptr += ::BINLOG_NAME_SIZE_INFO_SIZE;  // 移动指针
+    memcpy(ptr, rpl->file_name, rpl->file_name_length);  // 复制文件名
+    ptr += rpl->file_name_length;  // 移动指针
+    int8store(ptr, rpl->start_position);  // 存储起始位置
+    ptr += ::BINLOG_POS_INFO_SIZE;  // 移动指针
+    if (rpl->gtid_set_encoded_size) {  // 如果 GTID 集编码大小存在
+      int4store(ptr, static_cast<uint32>(rpl->gtid_set_encoded_size));  // 存储 GTID 集编码大小
+      ptr += ::BINLOG_DATA_SIZE_INFO_SIZE;  // 移动指针
+      if (rpl->fix_gtid_set)  // 如果存在修复 GTID 集的函数
+        rpl->fix_gtid_set(rpl, ptr);  // 调用修复函数
       else
-        memcpy(ptr, rpl->gtid_set_arg, rpl->gtid_set_encoded_size);
-      ptr += rpl->gtid_set_encoded_size;
-    } else {
-      /* No GTID set data, store 0 as its length. */
-      int4store(ptr, static_cast<uint32>(GTID_ENCODED_DATA_SIZE));
-      ptr += ::BINLOG_DATA_SIZE_INFO_SIZE;
-      int8store(ptr, static_cast<uint64>(0));
-      ptr += GTID_ENCODED_DATA_SIZE;
+        memcpy(ptr, rpl->gtid_set_arg, rpl->gtid_set_encoded_size);  // 复制 GTID 集
+      ptr += rpl->gtid_set_encoded_size;  // 移动指针
+    } else {  // 如果没有 GTID 集数据，存储长度为0
+      int4store(ptr, static_cast<uint32>(GTID_ENCODED_DATA_SIZE));  // 存储 GTID 编码数据大小
+      ptr += ::BINLOG_DATA_SIZE_INFO_SIZE;  // 移动指针
+      int8store(ptr, static_cast<uint64>(0));  // 存储0
+      ptr += GTID_ENCODED_DATA_SIZE;  // 移动指针
     }
 
-    command_size = ptr - command_buffer;
-    assert(command_size == (alloc_size - 1));
-  } else {
-    command = COM_BINLOG_DUMP;
+    command_size = ptr - command_buffer;  // 计算命令大小
+    assert(command_size == (alloc_size - 1));  // 断言命令大小正确
+  } else {  // 如果不是 GTID
+    command = COM_BINLOG_DUMP;  // 设置命令为 COM_BINLOG_DUMP
     size_t alloc_size = rpl->file_name_length + ::BINLOG_POS_OLD_INFO_SIZE +
                         ::BINLOG_FLAGS_INFO_SIZE +
-                        ::BINLOG_SERVER_ID_INFO_SIZE + 1;
+                        ::BINLOG_SERVER_ID_INFO_SIZE + 1;  // 计算分配大小
 
     if (!(command_buffer = (uchar *)my_malloc(PSI_NOT_INSTRUMENTED, alloc_size,
-                                              MYF(MY_WME)))) {
-      set_mysql_error(mysql, CR_OUT_OF_MEMORY, unknown_sqlstate);
-      return -1;
+                                              MYF(MY_WME)))) {  // 分配命令缓冲区
+      set_mysql_error(mysql, CR_OUT_OF_MEMORY, unknown_sqlstate);  // 设置内存不足错误
+      return -1;  // 返回错误
     }
 
-    uchar *ptr = command_buffer;
+    uchar *ptr = command_buffer;  // 指向命令缓冲区的指针
 
     /*
       COM_BINLOG_DUMP accepts only 4 bytes for the position, so
       we are forced to cast to uint32.
     */
-    int4store(ptr, (uint32)rpl->start_position);
-    ptr += ::BINLOG_POS_OLD_INFO_SIZE;
-    int2store(ptr, rpl->flags);  // note: we use low 16 bits
-    ptr += ::BINLOG_FLAGS_INFO_SIZE;
-    int4store(ptr, rpl->server_id);
-    ptr += ::BINLOG_SERVER_ID_INFO_SIZE;
-    memcpy(ptr, rpl->file_name, rpl->file_name_length);
-    ptr += rpl->file_name_length;
+    int4store(ptr, (uint32)rpl->start_position);  // 存储起始位置
+    ptr += ::BINLOG_POS_OLD_INFO_SIZE;  // 移动指针
+    int2store(ptr, rpl->flags);  // note: we use low 16 bits  // 存储标志
+    ptr += ::BINLOG_FLAGS_INFO_SIZE;  // 移动指针
+    int4store(ptr, rpl->server_id);  // 存储服务器ID
+    ptr += ::BINLOG_SERVER_ID_INFO_SIZE;  // 移动指针
+    memcpy(ptr, rpl->file_name, rpl->file_name_length);  // 复制文件名
+    ptr += rpl->file_name_length;  // 移动指针
 
-    command_size = ptr - command_buffer;
-    assert(command_size == (alloc_size - 1));
+    command_size = ptr - command_buffer;  // 计算命令大小
+    assert(command_size == (alloc_size - 1));  // 断言命令大小正确
   }
 
-  if (simple_command(mysql, command, command_buffer, command_size, 1)) {
-    my_free(command_buffer);
-    return -1;
+  if (simple_command(mysql, command, command_buffer, command_size, 1)) {  // 发送简单命令
+    my_free(command_buffer);  // 释放命令缓冲区
+    return -1;  // 返回错误
   }
 
-  my_free(command_buffer);
+  my_free(command_buffer);  // 释放命令缓冲区
 
-  return 0;
+  return 0;  // 返回成功
 }
 
 /**

@@ -244,14 +244,20 @@ static THD *init_new_thd(Channel_info *channel_info) {
 
 extern "C" {
 static void *handle_connection(void *arg) {
+  // 获取全局线程管理器实例
   Global_THD_manager *thd_manager = Global_THD_manager::get_instance();
+  // 获取连接处理管理器实例
   Connection_handler_manager *handler_manager =
       Connection_handler_manager::get_instance();
+  // 将参数转换为 Channel_info 类型
   Channel_info *channel_info = static_cast<Channel_info *>(arg);
+  // 标记是否重用 pthread
   bool pthread_reused [[maybe_unused]] = false;
 
+  // 初始化线程
   if (my_thread_init()) {
     connection_errors_internal++;
+    // 发送错误并关闭通道
     channel_info->send_error_and_close_channel(ER_OUT_OF_RESOURCES, 0, false);
     handler_manager->inc_aborted_connects();
     Connection_handler_manager::dec_connection_count();
@@ -261,12 +267,13 @@ static void *handle_connection(void *arg) {
   }
 
   for (;;) {
+    // 初始化新的 THD 对象
     THD *thd = init_new_thd(channel_info);
     if (thd == nullptr) {
       connection_errors_internal++;
       handler_manager->inc_aborted_connects();
       Connection_handler_manager::dec_connection_count();
-      break;  // We are out of resources, no sense in continuing.
+      break;  // 资源不足，停止继续
     }
 
     DBUG_EXECUTE_IF("after_thread_setup", {
@@ -280,6 +287,8 @@ static void *handle_connection(void *arg) {
         Reusing existing pthread:
         Create new instrumentation for the new THD job,
         and attach it to this running pthread.
+        重用现有的 pthread：
+        为新的 THD 作业创建新的仪器，并将其附加到正在运行的 pthread。
       */
       PSI_thread *psi = PSI_THREAD_CALL(new_thread)(key_thread_one_connection,
                                                     0 /* no sequence number */,
@@ -291,8 +300,10 @@ static void *handle_connection(void *arg) {
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
     /* Find the instrumented thread */
+    /* 查找仪器化线程 */
     PSI_thread *psi = PSI_THREAD_CALL(get_thread)();
     /* Save it within THD, so it can be inspected */
+    /* 将其保存在 THD 中，以便进行检查 */
     thd->set_psi(psi);
 #endif /* HAVE_PSI_THREAD_INTERFACE */
     mysql_thread_set_psi_id(thd->thread_id());
@@ -301,20 +312,25 @@ static void *handle_connection(void *arg) {
     mysql_socket_set_thread_owner(socket);
     thd_manager->add_thd(thd);
 
+    // 准备连接
     if (thd_prepare_connection(thd))
       handler_manager->inc_aborted_connects();
     else {
+      // 处理连接的命令
       while (thd_connection_alive(thd)) {
         if (do_command(thd)) break;
       }
       end_connection(thd);
     }
+    // 关闭连接
     close_connection(thd, 0, false, false);
 
+    // 重置诊断区域
     thd->get_stmt_da()->reset_diagnostics_area();
     thd->release_resources();
 
     // Clean up errors now, before possibly waiting for a new connection.
+    // 在可能等待新连接之前清理错误
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     ERR_remove_thread_state(0);
 #endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
@@ -323,6 +339,7 @@ static void *handle_connection(void *arg) {
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
     /* Decouple THD and the thread instrumentation. */
+    /* 解耦 THD 和线程仪器。 */
     thd->set_psi(nullptr);
     mysql_thread_set_psi_THD(nullptr);
 #endif /* HAVE_PSI_THREAD_INTERFACE */
@@ -331,17 +348,21 @@ static void *handle_connection(void *arg) {
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
     /* Delete the instrumentation for the job that just completed. */
+    /* 删除刚完成作业的仪器。 */
     PSI_THREAD_CALL(delete_current_thread)();
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
     // Server is shutting down so end the pthread.
+    // 服务器正在关闭，因此结束 pthread。
     if (connection_events_loop_aborted()) break;
 
+    // 阻塞直到有新连接
     channel_info = Per_thread_connection_handler::block_until_new_connection();
     if (channel_info == nullptr) break;
     pthread_reused = true;
     if (connection_events_loop_aborted()) {
       // Close the channel and exit as server is undergoing shutdown.
+      // 关闭通道并退出，因为服务器正在关闭。
       channel_info->send_error_and_close_channel(ER_SERVER_SHUTDOWN, 0, false);
       delete channel_info;
       channel_info = nullptr;

@@ -44,16 +44,24 @@ Transaction_boundary_parser::~Transaction_boundary_parser() = default;
 
 /**
    Reset the transaction boundary parser.
+   重置事务边界解析器。
 
    This method initialize the boundary parser state.
 */
 void Transaction_boundary_parser::reset() {
+  // 打印当前状态和将要更改的状态
   BAPI_PRINT("info", ("transaction boundary parser is changing state "
                       "from '%s' to '%s'",
                       event_parser_state_names[current_parser_state],
                       event_parser_state_names[EVENT_PARSER_NONE]));
+  
+  // 将当前解析器状态设置为无状态
   current_parser_state = EVENT_PARSER_NONE;
+  
+  // 将上一个解析器状态设置为无状态
   last_parser_state = EVENT_PARSER_NONE;
+  
+  // 将当前边界状态设置为错误状态
   m_current_boundary_state = EVENT_BOUNDARY_TYPE_ERROR;
 }
 

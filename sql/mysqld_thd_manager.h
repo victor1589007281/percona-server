@@ -210,6 +210,7 @@ class Global_THD_manager {
 
   /**
     Retrieves singleton instance
+    获取单例实例
   */
   static Global_THD_manager *get_instance() {
     assert(thd_manager != nullptr);

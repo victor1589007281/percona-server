@@ -1646,8 +1646,11 @@ class Gtid_set {
   // Get last gno or 0 if this set is empty.
   rpl_gno get_last_gno(rpl_sidno sidno) const;
   /// Returns the maximal sidno that this Gtid_set currently has space for.
+  /// 返回当前 Gtid_set 可用的最大 sidno。
   rpl_sidno get_max_sidno() const {
+    // 如果 sid_lock 存在，则断言持有某种锁
     if (sid_lock) sid_lock->assert_some_lock();
+    // 返回 m_intervals 的大小，转换为 rpl_sidno 类型
     return static_cast<rpl_sidno>(m_intervals.size());
   }
   /**
@@ -3190,8 +3193,12 @@ class Gtid_state {
   /*
     Return a pointer to the Gtid_set that contains the stored gtids
     in gtid_executed table.
+    返回指向包含在 gtid_executed 表中存储的 gtids 的 Gtid_set 的指针。
   */
-  const Gtid_set *get_executed_gtids() const { return &executed_gtids; }
+  const Gtid_set *get_executed_gtids() const { 
+    // 返回指向 executed_gtids 的指针
+    return &executed_gtids; 
+  }
   /*
     Return a pointer to the Gtid_set that contains the stored gtids
     only in gtid_executed table, not in binlog files.

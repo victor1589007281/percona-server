@@ -1780,59 +1780,68 @@ static void copy_bind_parameter_values(THD *thd, PS_PARAM *parameters,
   }
 }
 
+
 /**
   Perform one connection-level (COM_XXXX) command.
+  @brief 处理一个连接级别的 (COM_XXXX) 命令。
 
   @param thd             connection handle
   @param command         type of command to perform
   @param com_data        com_data union to store the generated command
+  @param  thd             连接句柄
+  @param  command         要执行的命令类型
+  @param  com_data        用于存储生成的命令的 com_data 联合体
 
   @todo
     set thd->lex->sql_command to SQLCOM_END here.
+    在这里将 thd->lex->sql_command 设置为 SQLCOM_END。
   @todo
     The following has to be changed to an 8 byte integer
+    以下内容必须更改为 8 字节整数
 
   @retval
     0   ok
   @retval
     1   request of thread shutdown, i. e. if command is
         COM_QUIT
+    1   请求线程关闭，即如果命令是 COM_QUIT
 */
 bool dispatch_command(THD *thd, const COM_DATA *com_data,
                       enum enum_server_command command) {
-  assert(thd->lex->m_IS_table_stats.is_valid() == false);
-  assert(thd->lex->m_IS_tablespace_stats.is_valid() == false);
+  assert(thd->lex->m_IS_table_stats.is_valid() == false);  // 确保表统计信息无效
+  assert(thd->lex->m_IS_tablespace_stats.is_valid() == false);  // 确保表空间统计信息无效
 #ifndef NDEBUG
   auto tabstat_grd = create_scope_guard([&]() {
-    assert(thd->lex->m_IS_table_stats.is_valid() == false);
-    assert(thd->lex->m_IS_tablespace_stats.is_valid() == false);
+    assert(thd->lex->m_IS_table_stats.is_valid() == false);  // 确保表统计信息无效
+    assert(thd->lex->m_IS_tablespace_stats.is_valid() == false);  // 确保表空间统计信息无效
   });
 #endif /* NDEBUG */
-  bool error = false;
-  Global_THD_manager *thd_manager = Global_THD_manager::get_instance();
-  DBUG_TRACE;
-  DBUG_PRINT("info", ("command: %d", command));
+  bool error = false;  // 错误标志
+  Global_THD_manager *thd_manager = Global_THD_manager::get_instance();  // 获取全局线程管理器
+  DBUG_TRACE;  // 调试跟踪
+  DBUG_PRINT("info", ("command: %d", command));  // 打印命令信息
 
   DBUG_EXECUTE_IF("crash_dispatch_command_before", {
-    DBUG_PRINT("crash_dispatch_command_before", ("now"));
-    DBUG_ABORT();
+    DBUG_PRINT("crash_dispatch_command_before", ("now"));  // 打印崩溃前信息
+    DBUG_ABORT();  // 中止程序
   });
 
-  Sql_cmd_clone *clone_cmd = nullptr;
+  Sql_cmd_clone *clone_cmd = nullptr;  // 克隆命令指针
 
   /* SHOW PROFILE instrumentation, begin */
 #if defined(ENABLED_PROFILING)
-  thd->profiling->start_new_query();
+  thd->profiling->start_new_query();  // 开始新的查询性能分析
 #endif
 
   /* Performance Schema Interface instrumentation, begin */
   thd->m_statement_psi = MYSQL_REFINE_STATEMENT(
-      thd->m_statement_psi, com_statement_info[command].m_key);
+      thd->m_statement_psi, com_statement_info[command].m_key);  // 细化性能模式
 
-  thd->set_command(command);
+  thd->set_command(command);  // 设置当前命令
   /*
     Commands which always take a long time are logged into
     the slow log only if opt_log_slow_admin_statements is set.
+    总是需要很长时间的命令仅在设置了 opt_log_slow_admin_statements 时记录到慢日志中。
   */
   thd->enable_slow_log = true;
   // Both this and the call THD::reset_for_next_command are required, even if
@@ -1841,17 +1850,27 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
   // COM_QUIT needs this one.
   thd->clear_slow_extended();
   thd->lex->sql_command = SQLCOM_END; /* to avoid confusing VIEW detectors */
+  thd->enable_slow_log = true;  // 启用慢日志
+  // 这两个调用都是必需的，即使 clear_slow_extended 最终在连续命令的常见执行路径中被调用两次
+  // 因为某些 COM_* 跳过其中一个，即 COM_QUIT 需要这个。
+  thd->clear_slow_extended();  // 清除慢日志扩展
+  thd->lex->sql_command = SQLCOM_END; /* 避免混淆视图检测器 */
   /*
     KILL QUERY may come after cleanup in mysql_execute_command(). Next query
     execution is interrupted due to this. So resetting THD::killed here.
+    KILL QUERY 可能在 mysql_execute_command() 的清理之后出现。下一个查询
+    执行由于此而中断。因此在这里重置 THD::killed。
 
     THD::killed value can not be KILL_TIMEOUT here as timer used for statement
     max execution time is disarmed in the cleanup stage of
     mysql_execute_command. KILL CONNECTION should terminate the connection.
     Hence resetting THD::killed only for KILL QUERY case here.
+    THD::killed 值在这里不能是 KILL_TIMEOUT，因为在 mysql_execute_command 的清理阶段
+    用于语句最大执行时间的计时器被解除。KILL CONNECTION 应终止连接。
+    因此仅在 KILL QUERY 情况下重置 THD::killed。
   */
-  if (thd->killed == THD::KILL_QUERY) thd->killed = THD::NOT_KILLED;
-  thd->set_time();
+  if (thd->killed == THD::KILL_QUERY) thd->killed = THD::NOT_KILLED;  // 重置 KILL_QUERY 状态
+  thd->set_time();  // 设置当前时间
   if (is_time_t_valid_for_timestamp(thd->query_start_in_secs()) == false) {
     /*
       If the time has gone past end of epoch we need to shutdown the server. But
@@ -1860,59 +1879,73 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
       platform. Hence validating the current time with 5 iterations before
       initiating the normal server shutdown process because of time getting
       past 2038.
+      如果时间已经超过纪元结束，我们需要关闭服务器。但是
+      在某些平台上可能会获得无效的时间值。
+      例如，gettimeofday() 可能在 solaris 平台上返回不正确的值。
+      因此在启动正常服务器关闭过程之前需要验证当前时间，进行 5 次迭代。
     */
-    const int max_tries = 5;
-    LogErr(WARNING_LEVEL, ER_CONFIRMING_THE_FUTURE, max_tries);
+    const int max_tries = 5;  // 最大尝试次数
+    LogErr(WARNING_LEVEL, ER_CONFIRMING_THE_FUTURE, max_tries);  // 记录警告
 
-    int tries = 0;
+    int tries = 0;  // 尝试计数
     while (++tries <= max_tries) {
-      thd->set_time();
+      thd->set_time();  // 设置时间
       if (is_time_t_valid_for_timestamp(thd->query_start_in_secs()) == true) {
-        LogErr(WARNING_LEVEL, ER_BACK_IN_TIME, tries);
-        break;
+        LogErr(WARNING_LEVEL, ER_BACK_IN_TIME, tries);  // 记录时间回退警告
+        break;  // 退出循环
       }
-      LogErr(WARNING_LEVEL, ER_FUTURE_DATE, tries);
+      LogErr(WARNING_LEVEL, ER_FUTURE_DATE, tries);  // 记录未来日期警告
     }
     if (tries > max_tries) {
       /*
         If the time has got past epoch, we need to shut this server down.
         We do this by making sure every command is a shutdown and we
         have enough privileges to shut the server down
+        如果时间已经超过纪元，我们需要关闭服务器。
+        我们通过确保每个命令都是关闭命令并且我们
+        有足够的权限来关闭服务器来实现这一点。
 
         TODO: remove this when we have full 64 bit my_time_t support
+        TODO: 当我们有完整的 64 位 my_time_t 支持时移除此内容
       */
       LogErr(ERROR_LEVEL, ER_UNSUPPORTED_DATE);
       ulong master_access = thd->security_context()->master_access();
       thd->security_context()->set_master_access(master_access | SHUTDOWN_ACL);
       error = true;
       kill_mysql();
+      LogErr(ERROR_LEVEL, ER_UNSUPPORTED_DATE);  // 记录不支持的日期错误
+      ulong master_access = thd->security_context()->master_access();  // 获取主访问权限
+      thd->security_context()->set_master_access(master_access | SHUTDOWN_ACL);  // 设置关闭权限
+      error = true;  // 设置错误标志
+      kill_mysql();  // 关闭 MySQL
     }
   }
-  thd->set_query_id(next_query_id());
-  thd->reset_rewritten_query();
-  thd_manager->inc_thread_running();
+  thd->set_query_id(next_query_id());  // 设置查询 ID
+  thd->reset_rewritten_query();  // 重置重写查询
+  thd_manager->inc_thread_running();  // 增加正在运行的线程计数
 
   if (!(server_command_flags[command] & CF_SKIP_QUESTIONS))
-    thd->status_var.questions++;
+    thd->status_var.questions++;  // 增加问题计数
 
-  /* Declare userstat variables and start timer */
-  double start_busy_usecs = 0.0;
-  double start_cpu_nsecs = 0.0;
+  /* 声明用户统计变量并开始计时 */
+  double start_busy_usecs = 0.0;  // 开始忙碌时间
+  double start_cpu_nsecs = 0.0;  // 开始 CPU 时间
   if (unlikely(opt_userstat))
-    userstat_start_timer(&start_busy_usecs, &start_cpu_nsecs);
+    userstat_start_timer(&start_busy_usecs, &start_cpu_nsecs);  // 启动用户统计计时器
 
   /**
     Clear the set of flags that are expected to be cleared at the
     beginning of each command.
+    清除在每个命令开始时预期清除的标志集。
   */
-  thd->server_status &= ~SERVER_STATUS_CLEAR_SET;
+  thd->server_status &= ~SERVER_STATUS_CLEAR_SET;  // 清除服务器状态标志
 
   if (thd->get_protocol()->type() == Protocol::PROTOCOL_PLUGIN &&
       !(server_command_flags[command] & CF_ALLOW_PROTOCOL_PLUGIN)) {
-    my_error(ER_PLUGGABLE_PROTOCOL_COMMAND_NOT_SUPPORTED, MYF(0));
-    thd->killed = THD::KILL_CONNECTION;
-    error = true;
-    goto done;
+    my_error(ER_PLUGGABLE_PROTOCOL_COMMAND_NOT_SUPPORTED, MYF(0));  // 不支持的可插拔协议命令
+    thd->killed = THD::KILL_CONNECTION;  // 设置连接被杀死
+    error = true;  // 设置错误标志
+    goto done;  // 跳转到结束
   }
 
   /**
@@ -1925,428 +1958,449 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
     COM_PING only discloses information that the server is running,
        and that's available through other means.
     COM_QUIT should work even for expired statements.
+    对所有 RPC 命令强制执行密码过期，除了以下命令：
+
+    COM_QUERY/COM_STMT_PREPARE 和 COM_STMT_EXECUTE 会在稍后进行更细粒度的检查。
+    COM_STMT_CLOSE 和 COM_STMT_SEND_LONG_DATA 不返回任何内容。
+    COM_PING 仅披露服务器正在运行的信息，
+       通过其他方式也可以获得。
+    COM_QUIT 即使对于过期的语句也应该有效。
   */
   if (unlikely(thd->security_context()->password_expired() &&
                command != COM_QUERY && command != COM_STMT_CLOSE &&
                command != COM_STMT_SEND_LONG_DATA && command != COM_PING &&
                command != COM_QUIT && command != COM_STMT_PREPARE &&
                command != COM_STMT_EXECUTE)) {
-    my_error(ER_MUST_CHANGE_PASSWORD, MYF(0));
-    goto done;
+    my_error(ER_MUST_CHANGE_PASSWORD, MYF(0));  // 必须更改密码错误
+    goto done;  // 跳转到结束
   }
 
   if (mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_COMMAND_START), command,
                          Command_names::str_global(command).c_str())) {
-    goto done;
+    goto done;  // 跳转到结束
   }
 
   switch (command) {
-    case COM_INIT_DB: {
-      LEX_STRING tmp;
-      thd->status_var.com_stat[SQLCOM_CHANGE_DB]++;
+    case COM_INIT_DB: {  // 初始化数据库命令
+      LEX_STRING tmp;  // 临时字符串
+      thd->status_var.com_stat[SQLCOM_CHANGE_DB]++;  // 增加数据库更改统计
       thd->convert_string(&tmp, system_charset_info,
                           com_data->com_init_db.db_name,
-                          com_data->com_init_db.length, thd->charset());
+                          com_data->com_init_db.length, thd->charset());  // 转换字符串
 
-      LEX_CSTRING tmp_cstr = {tmp.str, tmp.length};
-      if (!mysql_change_db(thd, tmp_cstr, false)) {
+      LEX_CSTRING tmp_cstr = {tmp.str, tmp.length};  // 临时 C 字符串
+      if (!mysql_change_db(thd, tmp_cstr, false)) {  // 更改数据库
         query_logger.general_log_write(thd, command, thd->db().str,
-                                       thd->db().length);
-        my_ok(thd);
+                                       thd->db().length);  // 记录一般日志
+        my_ok(thd);  // 返回成功
       }
-      break;
+      break;  // 跳出 switch
     }
-    case COM_REGISTER_SLAVE: {
+    case COM_REGISTER_SLAVE: {  // 注册从服务器命令
       // TODO: access of protocol_classic should be removed
       if (!register_replica(thd, thd->get_protocol_classic()->get_raw_packet(),
-                            thd->get_protocol_classic()->get_packet_length()))
-        my_ok(thd);
-      break;
+                            thd->get_protocol_classic()->get_packet_length()))  // 注册从服务器
+        my_ok(thd);  // 返回成功
+      break;  // 跳出 switch
     }
-    case COM_RESET_CONNECTION: {
-      thd->status_var.com_other++;
-      thd->cleanup_connection();
-      my_ok(thd);
-      break;
+    case COM_RESET_CONNECTION: {  // 重置连接命令
+      thd->status_var.com_other++;  // 增加其他命令计数
+      thd->cleanup_connection();  // 清理连接
+      my_ok(thd);  // 返回成功
+      break;  // 跳出 switch
     }
-    case COM_CLONE: {
-      thd->status_var.com_other++;
+    case COM_CLONE: {  // 克隆命令
+      thd->status_var.com_other++;  // 增加其他命令计数
 
-      /* Try loading clone plugin */
-      clone_cmd = new (thd->mem_root) Sql_cmd_clone();
+      /* 尝试加载克隆插件 */
+      clone_cmd = new (thd->mem_root) Sql_cmd_clone();  // 创建克隆命令
 
-      if (clone_cmd && clone_cmd->load(thd)) {
-        clone_cmd = nullptr;
+      if (clone_cmd && clone_cmd->load(thd)) {  // 加载克隆命令
+        clone_cmd = nullptr;  // 清空克隆命令指针
       }
 
-      thd->lex->m_sql_cmd = clone_cmd;
-      thd->lex->sql_command = SQLCOM_CLONE;
+      thd->lex->m_sql_cmd = clone_cmd;  // 设置 SQL 命令
+      thd->lex->sql_command = SQLCOM_CLONE;  // 设置 SQL 命令为克隆
 
-      break;
+      break;  // 跳出 switch
     }
-    case COM_SUBSCRIBE_GROUP_REPLICATION_STREAM: {
-      Security_context *sctx = thd->security_context();
+    case COM_SUBSCRIBE_GROUP_REPLICATION_STREAM: {  // 订阅组复制流命令
+      Security_context *sctx = thd->security_context();  // 获取安全上下文
       if (!sctx->has_global_grant(STRING_WITH_LEN("GROUP_REPLICATION_STREAM"))
-               .first) {
-        my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0), "");
-        error = true;
-        break;
+               .first) {  // 检查权限
+        my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0), "");  // 权限不足
+        error = true;  // 设置错误标志
+        break;  // 跳出 switch
       }
 
-      if (!error && get_gr_incoming_connection() == nullptr) {
-        my_error(ER_UNKNOWN_COM_ERROR, MYF(0));
-        error = true;
-        break;
+      if (!error && get_gr_incoming_connection() == nullptr) {  // 检查连接
+        my_error(ER_UNKNOWN_COM_ERROR, MYF(0));  // 未知命令错误
+        error = true;  // 设置错误标志
+        break;  // 跳出 switch
       }
 
-      my_ok(thd);
+      my_ok(thd);  // 返回成功
 
-      break;
+      break;  // 跳出 switch
     }
-    case COM_CHANGE_USER: {
+    case COM_CHANGE_USER: {  // 更改用户命令
       /*
         LOCK_thd_security_ctx protects the THD's security-context from
         inspection by SHOW PROCESSLIST while we're updating it. Nested
         acquiring of LOCK_thd_data is fine (see below).
+        LOCK_thd_security_ctx 保护 THD 的安全上下文，以防在更新时被 SHOW PROCESSLIST 检查。
+        嵌套获取 LOCK_thd_data 是可以的（见下文）。
       */
-      MUTEX_LOCK(grd_secctx, &thd->LOCK_thd_security_ctx);
+      MUTEX_LOCK(grd_secctx, &thd->LOCK_thd_security_ctx);  // 锁定安全上下文
 
-      int auth_rc;
-      thd->status_var.com_other++;
+      int auth_rc;  // 认证返回代码
+      thd->status_var.com_other++;  // 增加其他命令计数
 
-      thd->cleanup_connection();
+      thd->cleanup_connection();  // 清理连接
       USER_CONN *save_user_connect =
-          const_cast<USER_CONN *>(thd->get_user_connect());
-      LEX_CSTRING save_db = thd->db();
-      Security_context save_security_ctx(*(thd->security_context()));
+          const_cast<USER_CONN *>(thd->get_user_connect());  // 保存用户连接
+      LEX_CSTRING save_db = thd->db();  // 保存数据库
+      Security_context save_security_ctx(*(thd->security_context()));  // 保存安全上下文
 
-      auth_rc = acl_authenticate(thd, COM_CHANGE_USER);
+      auth_rc = acl_authenticate(thd, COM_CHANGE_USER);  // 进行认证
       auth_rc |= mysql_audit_notify(
-          thd, AUDIT_EVENT(MYSQL_AUDIT_CONNECTION_CHANGE_USER));
-      if (auth_rc) {
-        *thd->security_context() = save_security_ctx;
-        thd->set_user_connect(save_user_connect);
-        thd->reset_db(save_db);
+          thd, AUDIT_EVENT(MYSQL_AUDIT_CONNECTION_CHANGE_USER));  // 审计通知
+      if (auth_rc) {  // 如果认证失败
+        *thd->security_context() = save_security_ctx;  // 恢复安全上下文
+        thd->set_user_connect(save_user_connect);  // 恢复用户连接
+        thd->reset_db(save_db);  // 恢复数据库
 
         my_error(ER_ACCESS_DENIED_CHANGE_USER_ERROR, MYF(0),
                  thd->security_context()->user().str,
                  thd->security_context()->host_or_ip().str,
-                 (thd->password ? ER_THD(thd, ER_YES) : ER_THD(thd, ER_NO)));
-        thd->killed = THD::KILL_CONNECTION;
-        error = true;
+                 (thd->password ? ER_THD(thd, ER_YES) : ER_THD(thd, ER_NO)));  // 访问被拒绝错误
+        thd->killed = THD::KILL_CONNECTION;  // 设置连接被杀死
+        error = true;  // 设置错误标志
       } else {
 #ifdef HAVE_PSI_THREAD_INTERFACE
-        /* we've authenticated new user */
-        PSI_THREAD_CALL(notify_session_change_user)(thd->get_psi());
+        /* 我们已经认证了新用户 */
+        PSI_THREAD_CALL(notify_session_change_user)(thd->get_psi());  // 通知会话更改用户
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
-        if (save_user_connect) decrease_user_connections(save_user_connect);
-        mysql_mutex_lock(&thd->LOCK_thd_data);
-        my_free(const_cast<char *>(save_db.str));
-        save_db = NULL_CSTR;
-        mysql_mutex_unlock(&thd->LOCK_thd_data);
+        if (save_user_connect) decrease_user_connections(save_user_connect);  // 减少用户连接
+        mysql_mutex_lock(&thd->LOCK_thd_data);  // 锁定线程数据
+        my_free(const_cast<char *>(save_db.str));  // 释放保存的数据库字符串
+        save_db = NULL_CSTR;  // 清空保存的数据库
+        mysql_mutex_unlock(&thd->LOCK_thd_data);  // 解锁线程数据
       }
-      break;
+      break;  // 跳出 switch
     }
-    case COM_STMT_EXECUTE: {
-      /* Clear possible warnings from the previous command */
-      thd->reset_for_next_command();
+    case COM_STMT_EXECUTE: {  // 执行预处理语句命令
+      /* 清除前一个命令可能的警告 */
+      thd->reset_for_next_command();  // 重置为下一个命令
 
-      Prepared_statement *stmt = nullptr;
-      if (!mysql_stmt_precheck(thd, com_data, command, &stmt)) {
-        PS_PARAM *parameters = com_data->com_stmt_execute.parameters;
+      Prepared_statement *stmt = nullptr;  // 预处理语句指针
+      if (!mysql_stmt_precheck(thd, com_data, command, &stmt)) {  // 预检查语句
+        PS_PARAM *parameters = com_data->com_stmt_execute.parameters;  // 获取参数
         copy_bind_parameter_values(thd, parameters,
-                                   com_data->com_stmt_execute.parameter_count);
+                                   com_data->com_stmt_execute.parameter_count);  // 复制绑定参数值
 
         mysqld_stmt_execute(thd, stmt, com_data->com_stmt_execute.has_new_types,
-                            com_data->com_stmt_execute.open_cursor, parameters);
-        thd->bind_parameter_values = nullptr;
-        thd->bind_parameter_values_count = 0;
+                            com_data->com_stmt_execute.open_cursor, parameters);  // 执行语句
+        thd->bind_parameter_values = nullptr;  // 清空绑定参数值
+        thd->bind_parameter_values_count = 0;  // 清空绑定参数计数
       }
-      break;
+      break;  // 跳出 switch
     }
-    case COM_STMT_FETCH: {
-      /* Clear possible warnings from the previous command */
-      thd->reset_for_next_command();
+    case COM_STMT_FETCH: {  // 获取预处理语句结果命令
+      /* 清除前一个命令可能的警告 */
+      thd->reset_for_next_command();  // 重置为下一个命令
 
-      Prepared_statement *stmt = nullptr;
-      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))
-        mysqld_stmt_fetch(thd, stmt, com_data->com_stmt_fetch.num_rows);
+      Prepared_statement *stmt = nullptr;  // 预处理语句指针
+      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))  // 预检查语句
+        mysqld_stmt_fetch(thd, stmt, com_data->com_stmt_fetch.num_rows);  // 获取结果
 
-      break;
+      break;  // 跳出 switch
     }
-    case COM_STMT_SEND_LONG_DATA: {
-      Prepared_statement *stmt;
-      thd->get_stmt_da()->disable_status();
-      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))
+    case COM_STMT_SEND_LONG_DATA: {  // 发送长数据命令
+      Prepared_statement *stmt;  // 预处理语句指针
+      thd->get_stmt_da()->disable_status();  // 禁用状态
+      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))  // 预检查语句
         mysql_stmt_get_longdata(thd, stmt,
                                 com_data->com_stmt_send_long_data.param_number,
                                 com_data->com_stmt_send_long_data.longdata,
-                                com_data->com_stmt_send_long_data.length);
-      break;
+                                com_data->com_stmt_send_long_data.length);  // 获取长数据
+      break;  // 跳出 switch
     }
-    case COM_STMT_PREPARE: {
-      /* Clear possible warnings from the previous command */
-      thd->reset_for_next_command();
-      Prepared_statement *stmt = nullptr;
+    case COM_STMT_PREPARE: {  // 准备预处理语句命令
+      /* 清除前一个命令可能的警告 */
+      thd->reset_for_next_command();  // 重置为下一个命令
+      Prepared_statement *stmt = nullptr;  // 预处理语句指针
 
       DBUG_EXECUTE_IF("parser_stmt_to_error_log", {
         LogErr(INFORMATION_LEVEL, ER_PARSER_TRACE,
-               com_data->com_stmt_prepare.query);
+               com_data->com_stmt_prepare.query);  // 记录解析器跟踪
       });
       DBUG_EXECUTE_IF("parser_stmt_to_error_log_with_system_prio", {
-        LogErr(SYSTEM_LEVEL, ER_PARSER_TRACE, com_data->com_stmt_prepare.query);
+        LogErr(SYSTEM_LEVEL, ER_PARSER_TRACE, com_data->com_stmt_prepare.query);  // 记录系统优先级解析器跟踪
       });
 
-      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))
+      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))  // 预检查语句
         mysqld_stmt_prepare(thd, com_data->com_stmt_prepare.query,
-                            com_data->com_stmt_prepare.length, stmt);
-      break;
+                            com_data->com_stmt_prepare.length, stmt);  // 准备语句
+      break;  // 跳出 switch
     }
-    case COM_STMT_CLOSE: {
-      Prepared_statement *stmt = nullptr;
-      thd->get_stmt_da()->disable_status();
-      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))
-        mysqld_stmt_close(thd, stmt);
-      break;
+    case COM_STMT_CLOSE: {  // 关闭预处理语句命令
+      Prepared_statement *stmt = nullptr;  // 预处理语句指针
+      thd->get_stmt_da()->disable_status();  // 禁用状态
+      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))  // 预检查语句
+        mysqld_stmt_close(thd, stmt);  // 关闭语句
+      break;  // 跳出 switch
     }
-    case COM_STMT_RESET: {
-      /* Clear possible warnings from the previous command */
-      thd->reset_for_next_command();
+    case COM_STMT_RESET: {  // 重置预处理语句命令
+      /* 清除前一个命令可能的警告 */
+      thd->reset_for_next_command();  // 重置为下一个命令
 
-      Prepared_statement *stmt = nullptr;
-      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))
-        mysqld_stmt_reset(thd, stmt);
-      break;
+      Prepared_statement *stmt = nullptr;  // 预处理语句指针
+      if (!mysql_stmt_precheck(thd, com_data, command, &stmt))  // 预检查语句
+        mysqld_stmt_reset(thd, stmt);  // 重置语句
+      break;  // 跳出 switch
     }
-    case COM_QUERY: {
-      assert(thd->m_digest == nullptr);
-      thd->m_digest = &thd->m_digest_state;
-      thd->m_digest->reset(thd->m_token_array, max_digest_length);
+    case COM_QUERY: {  // 查询命令
+      assert(thd->m_digest == nullptr);  // 确保摘要为空
+      thd->m_digest = &thd->m_digest_state;  // 设置摘要
+      thd->m_digest->reset(thd->m_token_array, max_digest_length);  // 重置摘要
 
       if (alloc_query(thd, com_data->com_query.query,
-                      com_data->com_query.length))
-        break;  // fatal error is set
+                      com_data->com_query.length))  // 分配查询
+        break;  // 发生致命错误
 
-      const char *packet_end = thd->query().str + thd->query().length;
+      const char *packet_end = thd->query().str + thd->query().length;  // 获取数据包结束位置
 
       if (opt_general_log_raw)
         query_logger.general_log_write(thd, command, thd->query().str,
-                                       thd->query().length);
+                                       thd->query().length);  // 记录一般日志
 
-      DBUG_PRINT("query", ("%-.4096s", thd->query().str));
+      DBUG_PRINT("query", ("%-.4096s", thd->query().str));  // 打印查询
 
 #if defined(ENABLED_PROFILING)
-      thd->profiling->set_query_source(thd->query().str, thd->query().length);
+      thd->profiling->set_query_source(thd->query().str, thd->query().length);  // 设置查询源
 #endif
 
-      const LEX_CSTRING orig_query = thd->query();
+      const LEX_CSTRING orig_query = thd->query();  // 原始查询
 
-      Parser_state parser_state;
-      if (parser_state.init(thd, thd->query().str, thd->query().length)) break;
+      Parser_state parser_state;  // 解析器状态
+      if (parser_state.init(thd, thd->query().str, thd->query().length)) break;  // 初始化解析器状态
 
-      parser_state.m_input.m_has_digest = true;
+      parser_state.m_input.m_has_digest = true;  // 设置摘要标志
 
-      // we produce digest if it's not explicitly turned off
-      // by setting maximum digest length to zero
+      // 如果没有显式关闭摘要，则生成摘要
+      // 通过将最大摘要长度设置为零来关闭
       if (get_max_digest_length() != 0)
-        parser_state.m_input.m_compute_digest = true;
+        parser_state.m_input.m_compute_digest = true;  // 计算摘要
 
       // Initially, prepare and optimize the statement for the primary
       // storage engine. If an eligible secondary storage engine is
       // found, the statement may be reprepared for the secondary
       // storage engine later.
       const auto saved_secondary_engine = thd->secondary_engine_optimization();
+      // 最初，为主存储引擎准备和优化语句。如果找到合适的次要存储引擎，
+      // 语句可能会在稍后为次要存储引擎重新准备。
+      const auto saved_secondary_engine = thd->secondary_engine_optimization();  // 保存次要引擎优化
       thd->set_secondary_engine_optimization(
-          Secondary_engine_optimization::PRIMARY_TENTATIVELY);
+          Secondary_engine_optimization::PRIMARY_TENTATIVELY);  // 设置次要引擎优化为初步
 
       copy_bind_parameter_values(thd, com_data->com_query.parameters,
-                                 com_data->com_query.parameter_count);
+                                 com_data->com_query.parameter_count);  // 复制绑定参数值
 
-      dispatch_sql_command(thd, &parser_state, false);
+      dispatch_sql_command(thd, &parser_state, false);  // 调度 SQL 命令
 
       // Check if the statement failed and needs to be restarted in
       // another storage engine.
+      // 检查语句是否失败并需要在另一个存储引擎中重新启动。
       check_secondary_engine_statement(thd, &parser_state, orig_query.str,
-                                       orig_query.length);
+                                       orig_query.length);  // 检查次要引擎语句
 
-      thd->set_secondary_engine_optimization(saved_secondary_engine);
+      thd->set_secondary_engine_optimization(saved_secondary_engine);  // 恢复次要引擎优化
 
       DBUG_EXECUTE_IF("parser_stmt_to_error_log", {
-        LogErr(INFORMATION_LEVEL, ER_PARSER_TRACE, thd->query().str);
+        LogErr(INFORMATION_LEVEL, ER_PARSER_TRACE, thd->query().str);  // 记录解析器跟踪
       });
       DBUG_EXECUTE_IF("parser_stmt_to_error_log_with_system_prio", {
-        LogErr(SYSTEM_LEVEL, ER_PARSER_TRACE, thd->query().str);
+        LogErr(SYSTEM_LEVEL, ER_PARSER_TRACE, thd->query().str);  // 记录系统优先级解析器跟踪
       });
 
       while (!thd->killed && (parser_state.m_lip.found_semicolon != nullptr) &&
              !thd->is_error()) {
         /*
           Multiple queries exits, execute them individually
+          多个查询存在，逐个执行
         */
-        const char *beginning_of_next_stmt = parser_state.m_lip.found_semicolon;
+        const char *beginning_of_next_stmt = parser_state.m_lip.found_semicolon;  // 下一个语句的开始
 
         /* Finalize server status flags after executing a statement. */
-        thd->update_slow_query_status();
-        thd->send_statement_status();
+        /* 在执行语句后最终确定服务器状态标志。 */
+        thd->update_slow_query_status();  // 更新慢查询状态
+        thd->send_statement_status();  // 发送语句状态
 
-        const std::string &cn = Command_names::str_global(command);
+        const std::string &cn = Command_names::str_global(command);  // 获取命令名称
         mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_GENERAL_STATUS),
                            thd->get_stmt_da()->is_error()
                                ? thd->get_stmt_da()->mysql_errno()
                                : 0,
-                           cn.c_str(), cn.length());
+                           cn.c_str(), cn.length());  // 审计通知
 
         size_t length =
-            static_cast<size_t>(packet_end - beginning_of_next_stmt);
+            static_cast<size_t>(packet_end - beginning_of_next_stmt);  // 计算长度
 
-        log_slow_statement(thd);
+        log_slow_statement(thd);  // 记录慢查询
 
-        thd->reset_copy_status_var();
+        thd->reset_copy_status_var();  // 重置复制状态变量
 
         /* Remove garbage at start of query */
+        /* 移除查询开头的垃圾 */
         while (length > 0 &&
                my_isspace(thd->charset(), *beginning_of_next_stmt)) {
-          beginning_of_next_stmt++;
-          length--;
+          beginning_of_next_stmt++;  // 移动到下一个字符
+          length--;  // 减少长度
         }
 
-        /* PSI end */
-        MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
-        thd->m_statement_psi = nullptr;
-        thd->m_digest = nullptr;
+        /* PSI 结束 */
+        MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());  // 结束语句
+        thd->m_statement_psi = nullptr;  // 清空语句 PSI
+        thd->m_digest = nullptr;  // 清空摘要
 
-/* SHOW PROFILE end */
+/* SHOW PROFILE 结束 */
 #if defined(ENABLED_PROFILING)
-        thd->profiling->finish_current_query();
+        thd->profiling->finish_current_query();  // 完成当前查询性能分析
 #endif
 
-/* SHOW PROFILE begin */
+/* SHOW PROFILE 开始 */
 #if defined(ENABLED_PROFILING)
-        thd->profiling->start_new_query("continuing");
-        thd->profiling->set_query_source(beginning_of_next_stmt, length);
+        thd->profiling->start_new_query("continuing");  // 开始新的查询性能分析
+        thd->profiling->set_query_source(beginning_of_next_stmt, length);  // 设置查询源
 #endif
 
-        mysql_thread_set_secondary_engine(false);
+        mysql_thread_set_secondary_engine(false);  // 设置次要引擎为 false
 
-        /* PSI begin */
-        thd->m_digest = &thd->m_digest_state;
-        thd->m_digest->reset(thd->m_token_array, max_digest_length);
+        /* PSI 开始 */
+        thd->m_digest = &thd->m_digest_state;  // 设置摘要
+        thd->m_digest->reset(thd->m_token_array, max_digest_length);  // 重置摘要
 
         thd->m_statement_psi = MYSQL_START_STATEMENT(
             &thd->m_statement_state, com_statement_info[command].m_key,
-            thd->db().str, thd->db().length, thd->charset(), nullptr);
-        THD_STAGE_INFO(thd, stage_starting);
+            thd->db().str, thd->db().length, thd->charset(), nullptr);  // 开始语句
+        THD_STAGE_INFO(thd, stage_starting);  // 设置阶段信息
 
-        thd->set_query(beginning_of_next_stmt, length);
-        thd->set_query_id(next_query_id());
+        thd->set_query(beginning_of_next_stmt, length);  // 设置查询
+        thd->set_query_id(next_query_id());  // 设置查询 ID
         /*
           Count each statement from the client.
+          计算来自客户端的每个语句。
         */
-        thd->status_var.questions++;
-        thd->set_time(); /* Reset the query start time. */
-        parser_state.reset(beginning_of_next_stmt, length);
+        thd->status_var.questions++;  // 增加问题计数
+        thd->set_time(); /* 重置查询开始时间。 */
+        parser_state.reset(beginning_of_next_stmt, length);  // 重置解析器状态
         thd->set_secondary_engine_optimization(
-            Secondary_engine_optimization::PRIMARY_TENTATIVELY);
-        /* TODO: set thd->lex->sql_command to SQLCOM_END here */
-        dispatch_sql_command(thd, &parser_state, false);
+            Secondary_engine_optimization::PRIMARY_TENTATIVELY);  // 设置次要引擎优化为初步
+        /* TODO: 在这里将 thd->lex->sql_command 设置为 SQLCOM_END */
+        dispatch_sql_command(thd, &parser_state, false);  // 调度 SQL 命令
 
         check_secondary_engine_statement(thd, &parser_state,
-                                         beginning_of_next_stmt, length);
+                                         beginning_of_next_stmt, length);  // 检查次要引擎语句
 
-        thd->set_secondary_engine_optimization(saved_secondary_engine);
+        thd->set_secondary_engine_optimization(saved_secondary_engine);  // 恢复次要引擎优化
       }
 
-      thd->bind_parameter_values = nullptr;
-      thd->bind_parameter_values_count = 0;
+      thd->bind_parameter_values = nullptr;  // 清空绑定参数值
+      thd->bind_parameter_values_count = 0;  // 清空绑定参数计数
 
       /* Need to set error to true for graceful shutdown */
+      /* 需要将错误设置为 true 以实现优雅关闭 */
       if ((thd->lex->sql_command == SQLCOM_SHUTDOWN) &&
           (thd->get_stmt_da()->is_ok()))
-        error = true;
+        error = true;  // 设置错误标志
 
-      DBUG_PRINT("info", ("query ready"));
-      break;
+      DBUG_PRINT("info", ("query ready"));  // 打印查询准备信息
+      break;  // 跳出 switch
     }
-    case COM_FIELD_LIST:  // This isn't actually needed
+    case COM_FIELD_LIST:  // 这个命令实际上并不需要
     {
-      char *fields;
-      /* Locked closure of all tables */
-      LEX_STRING table_name;
-      LEX_STRING db;
+      char *fields;  // 字段指针
+      /* 锁定所有表的闭包 */
+      LEX_STRING table_name;  // 表名
+      LEX_STRING db;  // 数据库名
       push_deprecated_warn(thd, "COM_FIELD_LIST",
-                           "SHOW COLUMNS FROM statement");
+                           "SHOW COLUMNS FROM statement");  // 推送弃用警告
       /*
         SHOW statements should not add the used tables to the list of tables
         used in a transaction.
+        SHOW 语句不应将使用的表添加到事务中使用的表列表中。
       */
-      MDL_savepoint mdl_savepoint = thd->mdl_context.mdl_savepoint();
+      MDL_savepoint mdl_savepoint = thd->mdl_context.mdl_savepoint();  // 保存点
 
-      thd->status_var.com_stat[SQLCOM_SHOW_FIELDS]++;
-      if (thd->copy_db_to(&db.str, &db.length)) break;
+      thd->status_var.com_stat[SQLCOM_SHOW_FIELDS]++;  // 增加 SHOW_FIELDS 统计
+      if (thd->copy_db_to(&db.str, &db.length)) break;  // 复制数据库
       thd->convert_string(&table_name, system_charset_info,
                           (char *)com_data->com_field_list.table_name,
                           com_data->com_field_list.table_name_length,
-                          thd->charset());
+                          thd->charset());  // 转换表名
       Ident_name_check ident_check_status =
-          check_table_name(table_name.str, table_name.length);
+          check_table_name(table_name.str, table_name.length);  // 检查表名
       if (ident_check_status == Ident_name_check::WRONG) {
-        /* this is OK due to convert_string() null-terminating the string */
-        my_error(ER_WRONG_TABLE_NAME, MYF(0), table_name.str);
-        break;
+        /* 由于 convert_string() 将字符串空终止，这没关系 */
+        my_error(ER_WRONG_TABLE_NAME, MYF(0), table_name.str);  // 错误的表名
+        break;  // 跳出 switch
       } else if (ident_check_status == Ident_name_check::TOO_LONG) {
-        my_error(ER_TOO_LONG_IDENT, MYF(0), table_name.str);
-        break;
+        my_error(ER_TOO_LONG_IDENT, MYF(0), table_name.str);  // 表名过长错误
+        break;  // 跳出 switch
       }
-      mysql_reset_thd_for_next_command(thd);
-      lex_start(thd);
-      /* Must be before we init the table list. */
+      mysql_reset_thd_for_next_command(thd);  // 重置线程以进行下一个命令
+      lex_start(thd);  // 启动词法分析
+      /* 必须在初始化表列表之前。 */
       if (lower_case_table_names && !is_infoschema_db(db.str, db.length))
-        table_name.length = my_casedn_str(files_charset_info, table_name.str);
+        table_name.length = my_casedn_str(files_charset_info, table_name.str);  // 转换表名为小写
       Table_ref table_list(db.str, db.length, table_name.str, table_name.length,
-                           table_name.str, TL_READ);
+                           table_name.str, TL_READ);  // 创建表引用
       /*
         Init Table_ref members necessary when the undelrying
         table is view.
+        初始化 Table_ref 成员，以便在底层
+        表是视图时使用。
       */
-      table_list.query_block = thd->lex->query_block;
+      table_list.query_block = thd->lex->query_block;  // 设置查询块
       thd->lex->query_block->m_table_list.link_in_list(&table_list,
-                                                       &table_list.next_local);
-      thd->lex->add_to_query_tables(&table_list);
+                                                       &table_list.next_local);  // 链接表列表
+      thd->lex->add_to_query_tables(&table_list);  // 添加到查询表
 
       if (is_infoschema_db(table_list.db, table_list.db_length)) {
         ST_SCHEMA_TABLE *schema_table =
-            find_schema_table(thd, table_list.alias);
-        if (schema_table) table_list.schema_table = schema_table;
+            find_schema_table(thd, table_list.alias);  // 查找模式表
+        if (schema_table) table_list.schema_table = schema_table;  // 设置模式表
       }
 
       if (!(fields =
                 (char *)thd->memdup(com_data->com_field_list.query,
-                                    com_data->com_field_list.query_length)))
-        break;
-      // Don't count end \0
-      thd->set_query(fields, com_data->com_field_list.query_length - 1);
+                                    com_data->com_field_list.query_length)))  // 复制字段查询
+        break;  // 跳出 switch
+      // 不计算结束 \0
+      thd->set_query(fields, com_data->com_field_list.query_length - 1);  // 设置查询
       query_logger.general_log_print(thd, command, "%s %s",
-                                     table_list.table_name, fields);
+                                     table_list.table_name, fields);  // 记录一般日志
 
-      if (open_temporary_tables(thd, &table_list)) break;
+      if (open_temporary_tables(thd, &table_list)) break;  // 打开临时表
 
       if (check_table_access(thd, SELECT_ACL, &table_list, true, UINT_MAX,
-                             false))
-        break;
+                             false))  // 检查表访问权限
+        break;  // 跳出 switch
 
-      thd->lex->sql_command = SQLCOM_SHOW_FIELDS;
-      // See comment in opt_trace_disable_if_no_security_context_access()
+      thd->lex->sql_command = SQLCOM_SHOW_FIELDS;  // 设置 SQL 命令为 SHOW_FIELDS
+      // 请参阅 opt_trace_disable_if_no_security_context_access() 中的注释
       Opt_trace_start ots(thd, &table_list, thd->lex->sql_command, nullptr,
-                          nullptr, 0, nullptr, nullptr);
+                          nullptr, 0, nullptr, nullptr);  // 启动优化跟踪
 
-      mysqld_list_fields(thd, &table_list, fields);
+      mysqld_list_fields(thd, &table_list, fields);  // 列出字段
 
-      thd->lex->cleanup(true);
-      /* No need to rollback statement transaction, it's not started. */
-      assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));
-      close_thread_tables(thd);
-      thd->mdl_context.rollback_to_savepoint(mdl_savepoint);
+      thd->lex->cleanup(true);  // 清理词法分析
+      /* 不需要回滚语句事务，因为它尚未开始。 */
+      assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));  // 确保事务为空
+      close_thread_tables(thd);  // 关闭线程表
+      thd->mdl_context.rollback_to_savepoint(mdl_savepoint);  // 回滚到保存点
 
       if (thd->transaction_rollback_request) {
         /*
@@ -2354,101 +2408,108 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
           discovered while trying to open tables. Rollback transaction
           in all storage engines including binary log and release all
           locks.
+          由于在尝试打开表时发现 MDL 死锁而请求了事务回滚。
+          在所有存储引擎中回滚事务，包括二进制日志并释放所有锁。
         */
-        trans_rollback_implicit(thd);
-        thd->mdl_context.release_transactional_locks();
+        trans_rollback_implicit(thd);  // 隐式回滚事务
+        thd->mdl_context.release_transactional_locks();  // 释放事务锁
       }
 
-      thd->cleanup_after_query();
-      thd->lex->destroy();
-      break;
+      thd->cleanup_after_query();  // 清理查询后
+      thd->lex->destroy();  // 销毁词法分析
+      break;  // 跳出 switch
     }
-    case COM_QUIT:
-      /* Prevent results of the form, "n>0 rows sent, 0 bytes sent" */
-      thd->set_sent_row_count(0);
-      /* We don't calculate statistics for this command */
-      query_logger.general_log_print(thd, command, NullS);
-      // Don't give 'abort' message
+    case COM_QUIT:  // 退出命令
+      /* 防止结果形式为 "n>0 rows sent, 0 bytes sent" */
+      thd->set_sent_row_count(0);  // 设置发送行计数为 0
+      /* 我们不计算此命令的统计信息 */
+      query_logger.general_log_print(thd, command, NullS);  // 记录一般日志
+      // 不给出 'abort' 消息
       // TODO: access of protocol_classic should be removed
       if (thd->is_classic_protocol())
-        thd->get_protocol_classic()->get_net()->error = NET_ERROR_UNSET;
-      thd->get_stmt_da()->disable_status();  // Don't send anything back
-      error = true;                          // End server
-      break;
-    case COM_BINLOG_DUMP_GTID:
+        thd->get_protocol_classic()->get_net()->error = NET_ERROR_UNSET;  // 设置网络错误为未设置
+      thd->get_stmt_da()->disable_status();  // 不发送任何内容
+      error = true;  // 结束服务器
+      break;  // 跳出 switch
+    case COM_BINLOG_DUMP_GTID:  // 二进制日志转储 GTID 命令
       // TODO: access of protocol_classic should be removed
       error = com_binlog_dump_gtid(
           thd, (char *)thd->get_protocol_classic()->get_raw_packet(),
-          thd->get_protocol_classic()->get_packet_length());
-      break;
-    case COM_BINLOG_DUMP:
+          thd->get_protocol_classic()->get_packet_length());  // 执行二进制日志转储 GTID
+      break;  // 跳出 switch
+    case COM_BINLOG_DUMP:  // 二进制日志转储命令
       // TODO: access of protocol_classic should be removed
       error = com_binlog_dump(
           thd, (char *)thd->get_protocol_classic()->get_raw_packet(),
-          thd->get_protocol_classic()->get_packet_length());
-      break;
-    case COM_REFRESH: {
-      int not_used;
-      push_deprecated_warn(thd, "COM_REFRESH", "FLUSH statement");
+          thd->get_protocol_classic()->get_packet_length());  // 执行二进制日志转储
+      break;  // 跳出 switch
+    case COM_REFRESH: {  // 刷新命令
+      int not_used;  // 未使用的变量
+      push_deprecated_warn(thd, "COM_REFRESH", "FLUSH statement");  // 推送弃用警告
       /*
         Initialize thd->lex since it's used in many base functions, such as
         open_tables(). Otherwise, it remains uninitialized and may cause crash
         during execution of COM_REFRESH.
+        初始化 thd->lex，因为它在许多基本函数中使用，例如
+        open_tables()。否则，它将保持未初始化状态，并可能在执行 COM_REFRESH 时导致崩溃。
       */
-      lex_start(thd);
+      lex_start(thd);  // 启动词法分析
 
-      thd->status_var.com_stat[SQLCOM_FLUSH]++;
-      ulong options = (ulong)com_data->com_refresh.options;
-      if (trans_commit_implicit(thd)) break;
-      thd->mdl_context.release_transactional_locks();
-      if (check_global_access(thd, RELOAD_ACL)) break;
-      query_logger.general_log_print(thd, command, NullS);
+      thd->status_var.com_stat[SQLCOM_FLUSH]++;  // 增加 FLUSH 统计
+      ulong options = (ulong)com_data->com_refresh.options;  // 获取选项
+      if (trans_commit_implicit(thd)) break;  // 提交隐式事务
+      thd->mdl_context.release_transactional_locks();  // 释放事务锁
+      if (check_global_access(thd, RELOAD_ACL)) break;  // 检查全局访问权限
+      query_logger.general_log_print(thd, command, NullS);  // 记录一般日志
 #ifndef NDEBUG
-      bool debug_simulate = false;
+      bool debug_simulate = false;  // 调试模拟标志
       DBUG_EXECUTE_IF("simulate_detached_thread_refresh",
-                      debug_simulate = true;);
+                      debug_simulate = true;);  // 模拟无附加线程会话的刷新
       if (debug_simulate) {
         /*
           Simulate a reload without a attached thread session.
           Provides a environment similar to that of when the
           server receives a SIGHUP signal and reloads caches
           and flushes tables.
+          模拟无附加线程会话的刷新。
+          提供与服务器接收到 SIGHUP 信号并重新加载缓存
+          和刷新表时类似的环境。
         */
-        bool res;
-        current_thd = nullptr;
+        bool res;  // 结果标志
+        current_thd = nullptr;  // 当前线程设置为 nullptr
         res = handle_reload_request(nullptr, options | REFRESH_FAST, nullptr,
-                                    &not_used);
-        current_thd = thd;
-        if (res) break;
+                                    &not_used);  // 处理重新加载请求
+        current_thd = thd;  // 恢复当前线程
+        if (res) break;  // 如果成功，跳出
       } else
 #endif
           if (handle_reload_request(thd, options, (Table_ref *)nullptr,
-                                    &not_used))
-        break;
-      if (trans_commit_implicit(thd)) break;
-      close_thread_tables(thd);
-      thd->mdl_context.release_transactional_locks();
-      thd->lex->destroy();
-      my_ok(thd);
-      break;
+                                    &not_used))  // 处理重新加载请求
+        break;  // 跳出
+      if (trans_commit_implicit(thd)) break;  // 提交隐式事务
+      close_thread_tables(thd);  // 关闭线程表
+      thd->mdl_context.release_transactional_locks();  // 释放事务锁
+      thd->lex->destroy();  // 销毁词法分析
+      my_ok(thd);  // 返回成功
+      break;  // 跳出 switch
     }
-    case COM_STATISTICS: {
-      System_status_var current_global_status_var;
-      ulong uptime;
-      size_t length [[maybe_unused]];
-      ulonglong queries_per_second1000;
-      char buff[250];
-      size_t buff_len = sizeof(buff);
+    case COM_STATISTICS: {  // 统计信息命令
+      System_status_var current_global_status_var;  // 当前全局状态变量
+      ulong uptime;  // 运行时间
+      size_t length [[maybe_unused]];  // 长度
+      ulonglong queries_per_second1000;  // 每秒查询数
+      char buff[250];  // 缓冲区
+      size_t buff_len = sizeof(buff);  // 缓冲区长度
 
-      query_logger.general_log_print(thd, command, NullS);
-      thd->status_var.com_stat[SQLCOM_SHOW_STATUS]++;
-      mysql_mutex_lock(&LOCK_status);
-      calc_sum_of_all_status(&current_global_status_var);
-      mysql_mutex_unlock(&LOCK_status);
+      query_logger.general_log_print(thd, command, NullS);  // 记录一般日志
+      thd->status_var.com_stat[SQLCOM_SHOW_STATUS]++;  // 增加 SHOW_STATUS 统计
+      mysql_mutex_lock(&LOCK_status);  // 锁定状态
+      calc_sum_of_all_status(&current_global_status_var);  // 计算所有状态的总和
+      mysql_mutex_unlock(&LOCK_status);  // 解锁状态
       if (!(uptime = (ulong)(thd->query_start_in_secs() - server_start_time)))
-        queries_per_second1000 = 0;
+        queries_per_second1000 = 0;  // 如果没有运行时间
       else
-        queries_per_second1000 = thd->query_id * 1000LL / uptime;
+        queries_per_second1000 = thd->query_id * 1000LL / uptime;  // 计算每秒查询数
 
       length = snprintf(buff, buff_len - 1,
                         "Uptime: %lu  Threads: %d  Questions: %lu  "
@@ -2460,167 +2521,171 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
                         current_global_status_var.opened_tables,
                         refresh_version, table_cache_manager.cached_tables(),
                         (uint)(queries_per_second1000 / 1000),
-                        (uint)(queries_per_second1000 % 1000));
+                        (uint)(queries_per_second1000 % 1000));  // 格式化输出
       // TODO: access of protocol_classic should be removed.
       // should be rewritten using store functions
+      // 应该使用存储函数重写
       if (thd->get_protocol_classic()->write(pointer_cast<const uchar *>(buff),
-                                             length))
-        break;
-      if (thd->get_protocol()->flush()) break;
-      thd->get_stmt_da()->disable_status();
-      break;
+                                             length))  // 写入协议
+        break;  // 跳出
+      if (thd->get_protocol()->flush()) break;  // 刷新协议
+      thd->get_stmt_da()->disable_status();  // 禁用状态
+      break;  // 跳出 switch
     }
-    case COM_PING:
-      thd->status_var.com_other++;
-      my_ok(thd);  // Tell client we are alive
-      break;
-    case COM_PROCESS_INFO:
-      bool global_access;
-      LEX_CSTRING db_saved;
-      thd->status_var.com_stat[SQLCOM_SHOW_PROCESSLIST]++;
+    case COM_PING:  // PING 命令
+      thd->status_var.com_other++;  // 增加其他命令计数
+      my_ok(thd);  // 告诉客户端我们仍然活着
+      break;  // 跳出 switch
+    case COM_PROCESS_INFO:  // 进程信息命令
+      bool global_access;  // 全局访问标志
+      LEX_CSTRING db_saved;  // 保存的数据库
+      thd->status_var.com_stat[SQLCOM_SHOW_PROCESSLIST]++;  // 增加 SHOW_PROCESSLIST 统计
       push_deprecated_warn(thd, "COM_PROCESS_INFO",
-                           "SHOW PROCESSLIST statement");
-      global_access = (check_global_access(thd, PROCESS_ACL) == 0);
-      if (!thd->security_context()->priv_user().str[0] && !global_access) break;
-      query_logger.general_log_print(thd, command, NullS);
-      db_saved = thd->db();
+                           "SHOW PROCESSLIST statement");  // 推送弃用警告
+      global_access = (check_global_access(thd, PROCESS_ACL) == 0);  // 检查全局访问权限
+      if (!thd->security_context()->priv_user().str[0] && !global_access) break;  // 如果没有权限，跳出
+      query_logger.general_log_print(thd, command, NullS);  // 记录一般日志
+      db_saved = thd->db();  // 保存数据库
 
-      DBUG_EXECUTE_IF("force_db_name_to_null", thd->reset_db(NULL_CSTR););
+      DBUG_EXECUTE_IF("force_db_name_to_null", thd->reset_db(NULL_CSTR););  // 强制将数据库名设置为 null
 
       mysqld_list_processes(
           thd, global_access ? NullS : thd->security_context()->priv_user().str,
-          false, false);
+          false, false);  // 列出进程
 
-      DBUG_EXECUTE_IF("force_db_name_to_null", thd->reset_db(db_saved););
-      break;
-    case COM_PROCESS_KILL: {
+      DBUG_EXECUTE_IF("force_db_name_to_null", thd->reset_db(db_saved););  // 恢复数据库名
+      break;  // 跳出 switch
+    case COM_PROCESS_KILL: {  // 进程杀死命令
       push_deprecated_warn(thd, "COM_PROCESS_KILL",
-                           "KILL CONNECTION/QUERY statement");
+                           "KILL CONNECTION/QUERY statement");  // 推送弃用警告
       if (thd_manager->get_thread_id() & (~0xfffffffful))
-        my_error(ER_DATA_OUT_OF_RANGE, MYF(0), "thread_id", "mysql_kill()");
+        my_error(ER_DATA_OUT_OF_RANGE, MYF(0), "thread_id", "mysql_kill()");  // 数据超出范围错误
       else {
-        thd->status_var.com_stat[SQLCOM_KILL]++;
-        sql_kill(thd, com_data->com_kill.id, false);
+        thd->status_var.com_stat[SQLCOM_KILL]++;  // 增加 KILL 统计
+        sql_kill(thd, com_data->com_kill.id, false);  // 杀死线程
       }
-      break;
+      break;  // 跳出 switch
     }
-    case COM_SET_OPTION: {
-      thd->status_var.com_stat[SQLCOM_SET_OPTION]++;
+    case COM_SET_OPTION: {  // 设置选项命令
+      thd->status_var.com_stat[SQLCOM_SET_OPTION]++;  // 增加 SET_OPTION 统计
 
       switch (com_data->com_set_option.opt_command) {
-        case (int)MYSQL_OPTION_MULTI_STATEMENTS_ON:
+        case (int)MYSQL_OPTION_MULTI_STATEMENTS_ON:  // 启用多语句选项
           // TODO: access of protocol_classic should be removed
           thd->get_protocol_classic()->add_client_capability(
-              CLIENT_MULTI_STATEMENTS);
-          my_eof(thd);
-          break;
-        case (int)MYSQL_OPTION_MULTI_STATEMENTS_OFF:
+              CLIENT_MULTI_STATEMENTS);  // 添加客户端能力
+          my_eof(thd);  // 返回 EOF
+          break;  // 跳出 switch
+        case (int)MYSQL_OPTION_MULTI_STATEMENTS_OFF:  // 禁用多语句选项
           thd->get_protocol_classic()->remove_client_capability(
-              CLIENT_MULTI_STATEMENTS);
-          my_eof(thd);
-          break;
+              CLIENT_MULTI_STATEMENTS);  // 移除客户端能力
+          my_eof(thd);  // 返回 EOF
+          break;  // 跳出 switch
         default:
-          my_error(ER_UNKNOWN_COM_ERROR, MYF(0));
-          break;
+          my_error(ER_UNKNOWN_COM_ERROR, MYF(0));  // 未知命令错误
+          break;  // 跳出 switch
       }
-      break;
+      break;  // 跳出 switch
     }
-    case COM_DEBUG:
-      thd->status_var.com_other++;
-      if (check_global_access(thd, SUPER_ACL)) break; /* purecov: inspected */
-      query_logger.general_log_print(thd, command, NullS);
-      my_eof(thd);
+    case COM_DEBUG:  // 调试命令
+      thd->status_var.com_other++;  // 增加其他命令计数
+      if (check_global_access(thd, SUPER_ACL)) break; /* purecov: inspected */  // 检查全局访问权限
+      query_logger.general_log_print(thd, command, NullS);  // 记录一般日志
+      my_eof(thd);  // 返回 EOF
 #ifdef WITH_LOCK_ORDER
-      LO_dump();
+      LO_dump();  // 转储锁定顺序
 #endif /* WITH_LOCK_ORDER */
-      break;
-    case COM_SLEEP:
-    case COM_CONNECT:         // Impossible here
-    case COM_TIME:            // Impossible from client
-    case COM_DELAYED_INSERT:  // INSERT DELAYED has been removed.
-    case COM_END:
+      break;  // 跳出 switch
+    case COM_SLEEP:  // 睡眠命令
+    case COM_CONNECT:         // 不可能在这里
+    case COM_TIME:            // 不可能从客户端
+    case COM_DELAYED_INSERT:  // INSERT DELAYED 已被移除。
+    case COM_END:  // 结束命令
     default:
-      my_error(ER_UNKNOWN_COM_ERROR, MYF(0));
-      break;
+      my_error(ER_UNKNOWN_COM_ERROR, MYF(0));  // 未知命令错误
+      break;  // 跳出 switch
   }
 
 done:
   assert(thd->open_tables == nullptr ||
-         (thd->locked_tables_mode == LTM_LOCK_TABLES));
+         (thd->locked_tables_mode == LTM_LOCK_TABLES));  // 确保打开的表为空或锁定模式
 
   /* Update user statistics only if at least one timer was initialized */
+  /* 仅在至少初始化一个计时器时更新用户统计信息 */
   if (unlikely(start_busy_usecs > 0.0 || start_cpu_nsecs > 0.0)) {
     userstat_finish_timer(start_busy_usecs, start_cpu_nsecs, &thd->busy_time,
-                          &thd->cpu_time);
-    /* Updates THD stats and the global user stats. */
-    thd->update_stats(true);
-    update_global_user_stats(thd, true, my_getsystime());
+                          &thd->cpu_time);  // 完成用户统计计时器
+    /* 更新 THD 统计信息和全局用户统计信息。 */
+    thd->update_stats(true);  // 更新统计信息
+    update_global_user_stats(thd, true, my_getsystime());  // 更新全局用户统计信息
   }
 
-  /* Finalize server status flags after executing a command. */
-  thd->update_slow_query_status();
-  if (thd->killed) thd->send_kill_message();
-  thd->send_statement_status();
+  /* 在执行命令后最终确定服务器状态标志。 */
+  thd->update_slow_query_status();  // 更新慢查询状态
+  if (thd->killed) thd->send_kill_message();  // 发送杀死消息
+  thd->send_statement_status();  // 发送语句状态
 
-  /* After sending response, switch to clone protocol */
+  /* 在发送响应后，切换到克隆协议 */
   if (clone_cmd != nullptr) {
-    assert(command == COM_CLONE);
-    error = clone_cmd->execute_server(thd);
+    assert(command == COM_CLONE);  // 确保命令为克隆
+    error = clone_cmd->execute_server(thd);  // 执行克隆命令
   }
 
   if (command == COM_SUBSCRIBE_GROUP_REPLICATION_STREAM && !error) {
     call_gr_incoming_connection_cb(
         thd, thd->active_vio->mysql_socket.fd,
         thd->active_vio->ssl_arg ? static_cast<SSL *>(thd->active_vio->ssl_arg)
-                                 : nullptr);
+                                 : nullptr);  // 调用组复制流连接回调
   }
 
-  thd->rpl_thd_ctx.session_gtids_ctx().notify_after_response_packet(thd);
+  thd->rpl_thd_ctx.session_gtids_ctx().notify_after_response_packet(thd);  // 通知响应包后的 GTID 上下文
 
   if (!thd->is_error() && !thd->killed)
     mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_GENERAL_RESULT), 0, nullptr,
-                       0);
+                       0);  // 审计通知
 
-  const std::string &cn = Command_names::str_global(command);
+  const std::string &cn = Command_names::str_global(command);  // 获取命令名称
   mysql_audit_notify(
       thd, AUDIT_EVENT(MYSQL_AUDIT_GENERAL_STATUS),
       thd->get_stmt_da()->is_error() ? thd->get_stmt_da()->mysql_errno() : 0,
-      cn.c_str(), cn.length());
+      cn.c_str(), cn.length());  // 审计通知
 
   /* command_end is informational only. The plugin cannot abort
      execution of the command at this point. */
+  /* command_end 仅供参考。插件无法在此时中止
+     命令的执行。 */
   mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_COMMAND_END), command,
-                     cn.c_str());
+                     cn.c_str());  // 审计通知
 
-  log_slow_statement(thd);
+  log_slow_statement(thd);  // 记录慢查询
 
-  THD_STAGE_INFO(thd, stage_cleaning_up);
+  THD_STAGE_INFO(thd, stage_cleaning_up);  // 设置清理阶段信息
   if (thd->lex->sql_command == SQLCOM_CREATE_TABLE) {
-    DEBUG_SYNC(thd, "dispatch_create_table_command_before_thd_root_free");
+    DEBUG_SYNC(thd, "dispatch_create_table_command_before_thd_root_free");  // 调试同步
   }
 
   if (thd->killed == THD::KILL_QUERY) {
-    thd->killed = THD::NOT_KILLED;
+    thd->killed = THD::NOT_KILLED;  // 重置 KILL_QUERY 状态
   }
 
-  thd->reset_query();
-  thd->set_command(COM_SLEEP);
-  thd->set_proc_info(nullptr);
-  thd->lex->sql_command = SQLCOM_END;
+  thd->reset_query();  // 重置查询
+  thd->set_command(COM_SLEEP);  // 设置命令为睡眠
+  thd->set_proc_info(nullptr);  // 设置进程信息为 nullptr
+  thd->lex->sql_command = SQLCOM_END;  // 设置 SQL 命令为结束
 
   /* Performance Schema Interface instrumentation, end */
-  MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
-  thd->m_statement_psi = nullptr;
-  thd->m_digest = nullptr;
-  thd->reset_query_for_display();
+  MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());  // 结束语句
+  thd->m_statement_psi = nullptr;  // 清空语句 PSI
+  thd->m_digest = nullptr;  // 清空摘要
+  thd->reset_query_for_display();  // 重置查询以供显示
 
-  /* Prevent rewritten query from getting "stuck" in SHOW PROCESSLIST. */
-  thd->reset_rewritten_query();
+  /* 防止重写查询在 SHOW PROCESSLIST 中“卡住”。 */
+  thd->reset_rewritten_query();  // 重置重写查询
 
-  thd_manager->dec_thread_running();
+  thd_manager->dec_thread_running();  // 减少正在运行的线程计数
 
-  /* Freeing the memroot will leave the THD::work_part_info invalid. */
-  thd->work_part_info = nullptr;
+  /* 释放 memroot 将使 THD::work_part_info 无效。 */
+  thd->work_part_info = nullptr;  // 清空工作部分信息
 
   /*
     If we've allocated a lot of memory (compared to the default preallocation
@@ -2631,20 +2696,26 @@ done:
 
     The factor 5 is pretty much arbitrary, but ends up allowing three
     allocations (1 + 1.5 + 1.5²) under the current allocation policy.
+    如果我们分配了大量内存（与默认预分配大小 = 8192 相比；请注意，我们实际上不再预分配），
+    则释放它，以便一个大查询不会导致我们永远占用大量 RAM。
+    如果没有，则保留最后一个块，以便下一个查询能够在不从操作系统分配内存的情况下运行。
+  
+    因子 5 是相当任意的，但最终允许在当前分配策略下进行三次分配（1 + 1.5 + 1.5²）。
   */
-  constexpr size_t kPreallocSz = 40960;
+  constexpr size_t kPreallocSz = 40960;  // 预分配大小
   if (thd->mem_root->allocated_size() < kPreallocSz)
-    thd->mem_root->ClearForReuse();
+    thd->mem_root->ClearForReuse();  // 清空以供重用
   else
-    thd->mem_root->Clear();
+    thd->mem_root->Clear();  // 清空
 
-    /* SHOW PROFILE instrumentation, end */
+  /* SHOW PROFILE instrumentation, end */
 #if defined(ENABLED_PROFILING)
-  thd->profiling->finish_current_query();
+  thd->profiling->finish_current_query();  // 完成当前查询性能分析
 #endif
 
-  return error;
+  return error;  // 返回错误状态
 }
+
 
 /**
   Shutdown the mysqld server.

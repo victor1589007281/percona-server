@@ -647,32 +647,40 @@ enum_return_status Gtid_set::add_gtid_set(const Gtid_set *other) {
   /*
     @todo refactor this and remove_gtid_set to avoid duplicated code
   */
-  DBUG_TRACE;
-  if (sid_lock != nullptr) sid_lock->assert_some_wrlock();
-  rpl_sidno max_other_sidno = other->get_max_sidno();
-  Free_intervals_lock lock(this);
-  if (other->sid_map == sid_map || other->sid_map == nullptr ||
-      sid_map == nullptr) {
+  DBUG_TRACE;  // 调试跟踪
+  if (sid_lock != nullptr) sid_lock->assert_some_wrlock();  // 如果存在锁，确保获取写锁
+  rpl_sidno max_other_sidno = other->get_max_sidno();  // 获取其他 Gtid_set 的最大 SIDNO
+  Free_intervals_lock lock(this);  // 创建一个锁以保护自由区间
+
+  // 检查其他 Gtid_set 的 sid_map 是否与当前相同
+  if (other->sid_map == sid_map || other->sid_map == nullptr || sid_map == nullptr) {
+    // 确保当前 Gtid_set 能容纳其他 Gtid_set 的最大 SIDNO
     PROPAGATE_REPORTED_ERROR(ensure_sidno(max_other_sidno));
+    // 遍历其他 Gtid_set 的所有 SIDNO
     for (rpl_sidno sidno = 1; sidno <= max_other_sidno; sidno++)
+      // 将其他 Gtid_set 的 GNO 区间添加到当前 Gtid_set
       add_gno_intervals(sidno, Const_interval_iterator(other, sidno), &lock);
   } else {
+    // 如果 sid_map 不同，获取其他 Gtid_set 的 sid_map 和锁
     Sid_map *other_sid_map = other->sid_map;
     Checkable_rwlock *other_sid_lock = other->sid_lock;
-    if (other_sid_lock != nullptr) other_sid_lock->assert_some_wrlock();
-    for (rpl_sidno other_sidno = 1; other_sidno <= max_other_sidno;
-         other_sidno++) {
-      Const_interval_iterator other_ivit(other, other_sidno);
-      if (other_ivit.get() != nullptr) {
-        const rpl_sid &sid = other_sid_map->sidno_to_sid(other_sidno);
-        rpl_sidno this_sidno = sid_map->add_sid(sid);
-        if (this_sidno <= 0) RETURN_REPORTED_ERROR;
+    if (other_sid_lock != nullptr) other_sid_lock->assert_some_wrlock();  // 确保获取写锁
+
+    // 遍历其他 Gtid_set 的所有 SIDNO
+    for (rpl_sidno other_sidno = 1; other_sidno <= max_other_sidno; other_sidno++) {
+      Const_interval_iterator other_ivit(other, other_sidno);  // 创建其他 Gtid_set 的区间迭代器
+      if (other_ivit.get() != nullptr) {  // 如果当前 SIDNO 有区间
+        const rpl_sid &sid = other_sid_map->sidno_to_sid(other_sidno);  // 获取 SID
+        rpl_sidno this_sidno = sid_map->add_sid(sid);  // 将 SID 添加到当前 Gtid_set 的 sid_map
+        if (this_sidno <= 0) RETURN_REPORTED_ERROR;  // 如果添加失败，返回错误
+        // 确保当前 Gtid_set 能容纳新的 SIDNO
         PROPAGATE_REPORTED_ERROR(ensure_sidno(this_sidno));
+        // 将其他 Gtid_set 的 GNO 区间添加到当前 Gtid_set
         add_gno_intervals(this_sidno, other_ivit, &lock);
       }
     }
   }
-  RETURN_OK;
+  RETURN_OK;  // 返回成功状态
 }
 
 void Gtid_set::remove_gtid_set(const Gtid_set *other) {

@@ -421,32 +421,40 @@ static PSI_memory_info all_slave_memory[] = {{&key_memory_rli_mta_coor,
 
 int ReplicaInitializer::get_initialization_code() const { return m_init_code; }
 
+/**
+ * 构造函数，用于初始化 ReplicaInitializer 对象。
+ *
+ * @param opt_initialize 是否初始化复制
+ * @param opt_skip_replica_start 是否跳过复制启动
+ * @param filters 复制通道过滤器
+ * @param replica_skip_erors 指向要跳过的错误的指针
+ */
 ReplicaInitializer::ReplicaInitializer(bool opt_initialize,
                                        bool opt_skip_replica_start,
                                        Rpl_channel_filters &filters,
                                        char **replica_skip_erors)
-    : m_opt_initialize_replica(!opt_initialize),
-      m_opt_skip_replica_start(opt_initialize),
-      m_thread_mask(SLAVE_SQL | SLAVE_IO) {
+    : m_opt_initialize_replica(!opt_initialize),  // 根据 opt_initialize 设置 m_opt_initialize_replica
+      m_opt_skip_replica_start(opt_initialize),    // 根据 opt_initialize 设置 m_opt_skip_replica_start
+      m_thread_mask(SLAVE_SQL | SLAVE_IO) {        // 初始化线程掩码为 SLAVE_SQL 和 SLAVE_IO
   if (m_opt_initialize_replica) {
     // Make @@replica_skip_errors show the nice human-readable value.
-    set_replica_skip_errors(replica_skip_erors);
+    set_replica_skip_errors(replica_skip_erors);  // 设置跳过错误的可读值
     /*
       Group replication filters should be discarded before init_replica(),
       otherwise the pre-configured filters will be referenced by group
       replication channels.
     */
-    filters.discard_group_replication_filters();
+    filters.discard_group_replication_filters();    // 丢弃组复制过滤器
 
     /*
       init_replica() must be called after the thread keys are created.
     */
 
     if (server_id != 0) {
-      m_init_code = init_replica();
+      m_init_code = init_replica();  // 初始化复制
     }
 
-    start_replication_threads(opt_skip_replica_start);
+    start_replication_threads(opt_skip_replica_start);  // 启动复制线程
 
     /*
       If the user specifies a per-channel replication filter through a
@@ -460,9 +468,10 @@ ReplicaInitializer::ReplicaInitializer(bool opt_initialize,
       'group_replication_applier' which is disallowed, then the
       per-channel replication filter is discarded with a warning.
     */
-    filters.discard_all_unattached_filters();
+    filters.discard_all_unattached_filters();  // 丢弃所有未附加的过滤器
   }
 }
+
 
 void ReplicaInitializer::print_channel_info() const {
 #ifndef NDEBUG
@@ -484,9 +493,15 @@ void ReplicaInitializer::print_channel_info() const {
 #endif
 }
 
+/**
+ * 启动复制线程的函数
+ * 
+ * @param skip_replica_start 如果为真，则跳过启动复制线程的步骤
+ */
 void ReplicaInitializer::start_replication_threads(bool skip_replica_start) {
+  // 如果没有跳过复制启动选项，并且没有请求跳过启动，则调用启动线程的函数
   if (!m_opt_skip_replica_start && !skip_replica_start) {
-    start_threads();
+    start_threads(); // 启动线程
   }
 }
 
@@ -496,30 +511,31 @@ void ReplicaInitializer::start_threads() {
   */
   for (mi_map::iterator it = channel_map.begin(); it != channel_map.end();
        it++) {
-    Master_info *mi = it->second;
+    Master_info *mi = it->second; // 获取当前通道的 Master_info 对象
 
     /* If server id is not set, start_slave_thread() will say it */
     if (Master_info::is_configured(mi) && mi->rli->inited) {
       /* same as in start_slave() cache the global var values into rli's
        * members */
-      mi->rli->opt_replica_parallel_workers = opt_mts_replica_parallel_workers;
-      mi->rli->checkpoint_group = opt_mta_checkpoint_group;
+      mi->rli->opt_replica_parallel_workers = opt_mts_replica_parallel_workers; // 设置并行工作线程选项
+      mi->rli->checkpoint_group = opt_mta_checkpoint_group; // 设置检查点组
       if (mts_parallel_option == MTS_PARALLEL_TYPE_DB_NAME)
-        mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_DB_NAME;
+        mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_DB_NAME; // 设置通道的 MTS 子模式为数据库名称
       else
-        mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_LOGICAL_CLOCK;
+        mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_LOGICAL_CLOCK; // 设置通道的 MTS 子模式为逻辑时钟
 
       if (mi->is_source_connection_auto_failover())
-        m_thread_mask |= SLAVE_MONITOR;
+        m_thread_mask |= SLAVE_MONITOR; // 如果是自动故障转移，则设置线程掩码
 
+      // 启动从线程并检查是否成功
       if (start_slave_threads(true /*need_lock_slave=true*/,
                               false /*wait_for_start=false*/, mi,
                               m_thread_mask)) {
-        LogErr(ERROR_LEVEL, ER_FAILED_TO_START_SLAVE_THREAD, mi->get_channel());
+        LogErr(ERROR_LEVEL, ER_FAILED_TO_START_SLAVE_THREAD, mi->get_channel()); // 记录错误信息
       }
     } else {
       LogErr(INFORMATION_LEVEL, ER_FAILED_TO_START_SLAVE_THREAD,
-             mi->get_channel());
+             mi->get_channel()); // 记录信息，表示无法启动从线程
     }
   }
 }
@@ -1967,46 +1983,68 @@ static int terminate_slave_thread(THD *thd, mysql_mutex_t *term_lock,
   return 0;
 }
 
+/*
+  启动从线程的函数
+  @param thread_key 线程键
+  @param h_func 线程启动例程
+  @param start_lock 启动锁
+  @param cond_lock 条件锁
+  @param start_cond 启动条件变量
+  @param slave_running 指示从线程是否正在运行的原子变量
+  @param slave_run_id 从线程的运行ID
+  @param mi Master_info 对象
+  @return 如果发生错误则返回 true，否则返回 false
+*/
 bool start_slave_thread(PSI_thread_key thread_key, my_start_routine h_func,
                         mysql_mutex_t *start_lock, mysql_mutex_t *cond_lock,
                         mysql_cond_t *start_cond,
                         std::atomic<uint> *slave_running,
                         std::atomic<ulong> *slave_run_id, Master_info *mi) {
-  bool is_error = false;
-  my_thread_handle th;
-  ulong start_id;
-  DBUG_TRACE;
+  bool is_error = false; // 错误标志
+  my_thread_handle th; // 线程句柄
+  ulong start_id; // 启动ID
+  DBUG_TRACE; // 调试跟踪
 
+  // 如果需要，锁定启动锁
   if (start_lock) mysql_mutex_lock(start_lock);
+  
+  // 检查服务器ID是否存在
   if (!server_id) {
-    if (start_cond) mysql_cond_broadcast(start_cond);
-    LogErr(ERROR_LEVEL, ER_RPL_SERVER_ID_MISSING, mi->get_for_channel_str());
-    my_error(ER_BAD_SLAVE, MYF(0));
-    goto err;
+    if (start_cond) mysql_cond_broadcast(start_cond); // 广播启动条件
+    LogErr(ERROR_LEVEL, ER_RPL_SERVER_ID_MISSING, mi->get_for_channel_str()); // 记录错误
+    my_error(ER_BAD_SLAVE, MYF(0)); // 报告错误
+    goto err; // 跳转到错误处理
   }
 
+  // 检查从线程是否已经在运行
   if (*slave_running) {
-    if (start_cond) mysql_cond_broadcast(start_cond);
-    my_error(ER_SLAVE_CHANNEL_MUST_STOP, MYF(0), mi->get_channel());
-    goto err;
+    if (start_cond) mysql_cond_broadcast(start_cond); // 广播启动条件
+    my_error(ER_SLAVE_CHANNEL_MUST_STOP, MYF(0), mi->get_channel()); // 报告错误
+    goto err; // 跳转到错误处理
   }
-  start_id = *slave_run_id;
-  DBUG_PRINT("info", ("Creating new slave thread"));
+  
+  start_id = *slave_run_id; // 获取当前的从线程ID
+  DBUG_PRINT("info", ("Creating new slave thread")); // 打印信息，创建新的从线程
+  
+  // 创建新的从线程
   if (mysql_thread_create(thread_key, &th, &connection_attrib, h_func,
                           (void *)mi)) {
     LogErr(ERROR_LEVEL, ER_RPL_CANT_CREATE_SLAVE_THREAD,
-           mi->get_for_channel_str());
-    my_error(ER_SLAVE_THREAD, MYF(0));
-    goto err;
+           mi->get_for_channel_str()); // 记录错误
+    my_error(ER_SLAVE_THREAD, MYF(0)); // 报告错误
+    goto err; // 跳转到错误处理
   }
+  
+  // 如果需要条件锁并且条件锁存在
   if (start_cond && cond_lock)  // caller has cond_lock
   {
-    THD *thd = current_thd;
+    THD *thd = current_thd; // 获取当前线程
+    // 等待从线程启动
     while (start_id == *slave_run_id && thd != nullptr) {
-      DBUG_PRINT("sleep", ("Waiting for replica thread to start"));
-      PSI_stage_info saved_stage = {0, "", 0, ""};
+      DBUG_PRINT("sleep", ("Waiting for replica thread to start")); // 打印信息，等待从线程启动
+      PSI_stage_info saved_stage = {0, "", 0, ""}; // 保存阶段信息
       thd->ENTER_COND(start_cond, cond_lock,
-                      &stage_waiting_for_replica_thread_to_start, &saved_stage);
+                      &stage_waiting_for_replica_thread_to_start, &saved_stage); // 进入条件等待
       /*
         It is not sufficient to test this at loop bottom. We must test
         it after registering the mutex in enter_cond(). If the kill
@@ -2014,24 +2052,24 @@ bool start_slave_thread(PSI_thread_key thread_key, my_start_routine h_func,
         registered, we could otherwise go waiting though thd->killed is
         set.
       */
-      if (!thd->killed) mysql_cond_wait(start_cond, cond_lock);
-      mysql_mutex_unlock(cond_lock);
-      thd->EXIT_COND(&saved_stage);
-      mysql_mutex_lock(cond_lock);  // re-acquire it
+      if (!thd->killed) mysql_cond_wait(start_cond, cond_lock); // 等待条件
+      mysql_mutex_unlock(cond_lock); // 解锁条件锁
+      thd->EXIT_COND(&saved_stage); // 退出条件
+      mysql_mutex_lock(cond_lock);  // 重新获取条件锁
       if (thd->killed) {
-        my_error(thd->killed, MYF(0));
-        goto err;
+        my_error(thd->killed, MYF(0)); // 报告错误
+        goto err; // 跳转到错误处理
       }
     }
   }
 
-  goto end;
+  goto end; // 跳转到结束处理
 err:
-  is_error = true;
+  is_error = true; // 设置错误标志
 end:
 
-  if (start_lock) mysql_mutex_unlock(start_lock);
-  return is_error;
+  if (start_lock) mysql_mutex_unlock(start_lock); // 解锁启动锁
+  return is_error; // 返回错误状态
 }
 
 /*
@@ -2043,15 +2081,17 @@ end:
     started the threads that were not previously running
 */
 
+// 启动从线程的函数
 bool start_slave_threads(bool need_lock_slave, bool wait_for_start,
                          Master_info *mi, int thread_mask) {
   mysql_mutex_t *lock_io{nullptr}, *lock_sql{nullptr}, *lock_cond_io{nullptr},
       *lock_cond_sql{nullptr};
   mysql_cond_t *cond_io{nullptr}, *cond_sql{nullptr};
-  bool is_error{false};
-  DBUG_TRACE;
-  DBUG_EXECUTE_IF("uninitialized_source-info_structure", mi->inited = false;);
+  bool is_error{false}; // 错误标志
+  DBUG_TRACE; // 调试跟踪
+  DBUG_EXECUTE_IF("uninitialized_source-info_structure", mi->inited = false;); // 调试执行
 
+  // 检查 Master_info 和 Relay_log_info 是否已初始化
   if (!mi->inited || !mi->rli->inited) {
     int error = (!mi->inited ? ER_SLAVE_MI_INIT_REPOSITORY
                              : ER_SLAVE_RLI_INIT_REPOSITORY);
@@ -2062,16 +2102,18 @@ bool start_slave_threads(bool need_lock_slave, bool wait_for_start,
                  (!mi->inited ? ER_SERVER_SLAVE_MI_INIT_REPOSITORY
                               : ER_SERVER_SLAVE_RLI_INIT_REPOSITORY),
                  prefix, nullptr);
-    my_error(error, MYF(0));
-    return true;
+    my_error(error, MYF(0)); // 报告错误
+    return true; // 返回 true 表示有错误
   }
 
+  // 检查复制配置错误
   if (check_replica_configuration_errors(mi, thread_mask)) return true;
 
   /**
     SQL AFTER MTS GAPS has no effect when GTID_MODE=ON and SOURCE_AUTO_POS=1
     as no gaps information was collected.
   **/
+  // 当 GTID_MODE 为开启且 SOURCE_AUTO_POS 为 1 时，SQL AFTER MTS GAPS 无效
   if (global_gtid_mode.get() == Gtid_mode::ON && mi->is_auto_position() &&
       mi->rli->until_condition == Relay_log_info::UNTIL_SQL_AFTER_MTS_GAPS) {
     if (current_thd) {
@@ -2083,53 +2125,58 @@ bool start_slave_threads(bool need_lock_slave, bool wait_for_start,
     }
   }
 
+  // 根据需要锁定从线程
   if (need_lock_slave) {
-    lock_io = &mi->run_lock;
-    lock_sql = &mi->rli->run_lock;
+    lock_io = &mi->run_lock; // 锁定 I/O 线程
+    lock_sql = &mi->rli->run_lock; // 锁定 SQL 线程
   }
   if (wait_for_start) {
-    cond_io = &mi->start_cond;
-    cond_sql = &mi->rli->start_cond;
-    lock_cond_io = &mi->run_lock;
-    lock_cond_sql = &mi->rli->run_lock;
+    cond_io = &mi->start_cond; // I/O 线程的条件变量
+    cond_sql = &mi->rli->start_cond; // SQL 线程的条件变量
+    lock_cond_io = &mi->run_lock; // 锁定 I/O 线程的条件
+    lock_cond_sql = &mi->rli->run_lock; // 锁定 SQL 线程的条件
   }
 
+  // 启动 I/O 线程
   if (thread_mask & SLAVE_IO)
     is_error = start_slave_thread(key_thread_replica_io, handle_slave_io,
                                   lock_io, lock_cond_io, cond_io,
                                   &mi->slave_running, &mi->slave_run_id, mi);
 
+  // 如果没有错误并且需要启动监控线程
   if (!is_error && (thread_mask & (SLAVE_IO | SLAVE_MONITOR)) &&
       mi->is_source_connection_auto_failover() &&
       !Source_IO_monitor::get_instance()->is_monitoring_process_running()) {
     is_error = Source_IO_monitor::get_instance()->launch_monitoring_process(
-        key_thread_replica_monitor_io);
+        key_thread_replica_monitor_io); // 启动监控进程
 
     if (is_error)
       terminate_slave_threads(mi, thread_mask & (SLAVE_IO | SLAVE_MONITOR),
-                              rpl_stop_replica_timeout, need_lock_slave);
+                              rpl_stop_replica_timeout, need_lock_slave); // 终止从线程
   }
 
+  // 启动 SQL 线程
   if (!is_error && (thread_mask & SLAVE_SQL)) {
     /*
       MTS-recovery gaps gathering is placed onto common execution path
       for either START-SLAVE and --skip-start-replica= 0
     */
+    // 如果有并行工作者，进行 MTS 恢复组的收集
     if (mi->rli->recovery_parallel_workers != 0) {
       if (mts_recovery_groups(mi->rli)) {
-        is_error = true;
-        my_error(ER_MTS_RECOVERY_FAILURE, MYF(0));
+        is_error = true; // 设置错误标志
+        my_error(ER_MTS_RECOVERY_FAILURE, MYF(0)); // 报告 MTS 恢复失败
       }
     }
     if (!is_error)
       is_error = start_slave_thread(
           key_thread_replica_sql, handle_slave_sql, lock_sql, lock_cond_sql,
-          cond_sql, &mi->rli->slave_running, &mi->rli->slave_run_id, mi);
+          cond_sql, &mi->rli->slave_running, &mi->rli->slave_run_id, mi); // 启动 SQL 线程
     if (is_error)
       terminate_slave_threads(mi, thread_mask & (SLAVE_IO | SLAVE_MONITOR),
-                              rpl_stop_replica_timeout, need_lock_slave);
+                              rpl_stop_replica_timeout, need_lock_slave); // 终止从线程
   }
-  return is_error;
+  return is_error; // 返回错误状态
 }
 
 /*
@@ -2225,15 +2272,19 @@ static bool is_autocommit_off_and_infotables(THD *thd) {
              : false;
 }
 
+// 检查 I/O 线程是否被杀死
 static bool monitor_io_replica_killed(THD *thd, Master_info *mi) {
+  // 调用 Source_IO_monitor 的实例来检查线程是否被杀死
   return Source_IO_monitor::get_instance()->is_monitor_killed(thd, mi);
 }
 
+// 检查 I/O 从线程是否被杀死
 static bool io_slave_killed(THD *thd, Master_info *mi) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
-  assert(mi->info_thd == thd);
+  assert(mi->info_thd == thd); // 确保传入的线程与 Master_info 中的线程一致
   assert(mi->slave_running);  // tracking buffer overrun
+  // 返回是否有任何条件导致从线程被杀死
   return mi->abort_slave || connection_events_loop_aborted() || thd->killed;
 }
 
@@ -2480,71 +2531,85 @@ static enum_command_status io_thread_init_command(
 
 /**
   Set user variables after connecting to the master.
+  设置用户变量在连接到主服务器后。
 
   @param  mysql MYSQL to request uuid from master.
   @param  mi    Master_info to set master_uuid
+  @param  mysql MYSQL 对象，用于请求主服务器的 UUID。
+  @param  mi    Master_info 对象，用于设置 master_uuid
 
   @return 0: Success, 1: Fatal error, 2: Transient network error.
+  @return 0: 成功, 1: 致命错误, 2: 瞬态网络错误。
  */
 int io_thread_init_commands(MYSQL *mysql, Master_info *mi) {
-  char query[256];
-  int ret = 0;
-  DBUG_EXECUTE_IF("fake_5_5_version_replica", return ret;);
+  char query[256]; // 查询字符串缓冲区
+  int ret = 0; // 返回值
+  DBUG_EXECUTE_IF("fake_5_5_version_replica", return ret;); // 调试执行
 
-  mi->reset_network_error();
+  mi->reset_network_error(); // 重置网络错误状态
 
+  // 格式化查询字符串，设置从服务器和副本的 UUID
   sprintf(query, "SET @slave_uuid = '%s', @replica_uuid = '%s'", server_uuid,
           server_uuid);
+  // 执行查询，如果失败且从线程未被杀死，则跳转到错误处理
   if (mysql_real_query(mysql, query, static_cast<ulong>(strlen(query))) &&
       !check_io_slave_killed(mi->info_thd, mi, nullptr))
     goto err;
 
+  // 释放查询结果
   mysql_free_result(mysql_store_result(mysql));
-  return ret;
+  return ret; // 返回成功
 
 err:
+  // 如果有错误且是网络错误，报告警告
   if (mysql_errno(mysql) && is_network_error(mysql_errno(mysql))) {
     mi->report(WARNING_LEVEL, mysql_errno(mysql),
                "The initialization command '%s' failed with the following"
                " error: '%s'.",
                query, mysql_error(mysql));
-    mi->set_network_error();
-    ret = 2;
+    mi->set_network_error(); // 设置网络错误状态
+    ret = 2; // 设置返回值为2，表示瞬态网络错误
   } else {
-    char errmsg[512];
+    char errmsg[512]; // 错误信息缓冲区
     const char *errmsg_fmt =
         "The slave I/O thread stops because a fatal error is encountered "
         "when it tries to send query to master(query: %s).";
 
+    // 格式化错误信息
     sprintf(errmsg, errmsg_fmt, query);
     mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg);
-    ret = 1;
+    ret = 1; // 设置返回值为1，表示致命错误
   }
+  // 释放查询结果
   mysql_free_result(mysql_store_result(mysql));
-  return ret;
+  return ret; // 返回错误代码
 }
 
 /**
   Get master's uuid on connecting.
+  获取主服务器的 UUID 以便连接。
 
   @param  mysql MYSQL to request uuid from master.
   @param  mi    Master_info to set master_uuid
+  @param  mysql MYSQL 对象，用于请求主服务器的 UUID。
+  @param  mi    Master_info 对象，用于设置 master_uuid。
 
   @return 0: Success, 1: Fatal error, 2: Transient network error.
+  @return 0: 成功, 1: 致命错误, 2: 瞬态网络错误。
 */
 static int get_master_uuid(MYSQL *mysql, Master_info *mi) {
-  const char *errmsg;
-  MYSQL_RES *master_res = nullptr;
-  MYSQL_ROW master_row = nullptr;
-  int ret = 0;
-  char query_buf[] = "SELECT @@GLOBAL.SERVER_UUID";
+  const char *errmsg; // 错误信息指针
+  MYSQL_RES *master_res = nullptr; // 主服务器结果集
+  MYSQL_ROW master_row = nullptr; // 主服务器行
+  int ret = 0; // 返回值
+  char query_buf[] = "SELECT @@GLOBAL.SERVER_UUID"; // 查询主服务器 UUID 的 SQL 语句
 
-  mi->reset_network_error();
+  mi->reset_network_error(); // 重置网络错误状态
 
   DBUG_EXECUTE_IF("dbug.return_null_SOURCE_UUID", {
-    mi->master_uuid[0] = 0;
-    return 0;
+    mi->master_uuid[0] = 0; // 如果调试条件满足，设置 master_uuid 为 0
+    return 0; // 返回成功
   };);
 
   DBUG_EXECUTE_IF("dbug.before_get_SOURCE_UUID",
@@ -2554,57 +2619,63 @@ static int get_master_uuid(MYSQL *mysql, Master_info *mi) {
                   { rpl_replica_debug_point(DBUG_RPL_S_SIMULATE_BUSY_IO); };);
 #ifndef NDEBUG
   DBUG_EXECUTE_IF("dbug.simulate_no_such_var_server_uuid", {
-    query_buf[strlen(query_buf) - 1] = '_';  // corrupt the last char
+    query_buf[strlen(query_buf) - 1] = '_';  // 损坏最后一个字符
   });
 #endif
+  // 执行查询并获取结果
   if (!mysql_real_query(mysql, STRING_WITH_LEN(query_buf)) &&
       (master_res = mysql_store_result(mysql)) &&
       (master_row = mysql_fetch_row(master_res))) {
+    // 检查主服务器 UUID 是否与当前服务器相同
     if (!strcmp(::server_uuid, master_row[0]) &&
         !mi->rli->replicate_same_server_id) {
       errmsg =
           "The slave I/O thread stops because master and slave have equal "
           "MySQL server UUIDs; these UUIDs must be different for "
-          "replication to work.";
+          "replication to work."; // 错误信息
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                  ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg);
-      // Fatal error
-      ret = 1;
+      // 致命错误
+      ret = 1; // 设置返回值为 1
     } else {
+      // 如果 master_uuid 不为空且与查询结果不同，记录警告
       if (mi->master_uuid[0] != 0 && strcmp(mi->master_uuid, master_row[0]))
         LogErr(WARNING_LEVEL, ER_RPL_SLAVE_MASTER_UUID_HAS_CHANGED,
                mi->master_uuid);
+      // 复制主服务器的 UUID
       strncpy(mi->master_uuid, master_row[0], UUID_LENGTH);
-      mi->master_uuid[UUID_LENGTH] = 0;
+      mi->master_uuid[UUID_LENGTH] = 0; // 确保字符串以 null 结尾
     }
   } else if (mysql_errno(mysql) != ER_UNKNOWN_SYSTEM_VARIABLE) {
+    // 如果查询失败且不是未知系统变量错误
     if (is_network_error(mysql_errno(mysql))) {
       mi->report(WARNING_LEVEL, mysql_errno(mysql),
                  "Get master SERVER_UUID failed with error: %s",
-                 mysql_error(mysql));
-      mi->set_network_error();
-      ret = 2;
+                 mysql_error(mysql)); // 报告网络错误
+      mi->set_network_error(); // 设置网络错误状态
+      ret = 2; // 设置返回值为 2
     } else {
-      /* Fatal error */
+      /* 致命错误 */
       errmsg =
           "The slave I/O thread stops because a fatal error is encountered "
-          "when it tries to get the value of SERVER_UUID variable from master.";
+          "when it tries to get the value of SERVER_UUID variable from master."; // 错误信息
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                  ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg);
-      ret = 1;
+      ret = 1; // 设置返回值为 1
     }
   } else {
-    mi->master_uuid[0] = 0;
+    // 如果主服务器上未知系统变量
+    mi->master_uuid[0] = 0; // 设置 master_uuid 为 0
     mi->report(
         WARNING_LEVEL, ER_UNKNOWN_SYSTEM_VARIABLE,
         "Unknown system variable 'SERVER_UUID' on master. "
         "A probable cause is that the variable is not supported on the "
         "master (version: %s), even though it is on the slave (version: %s)",
-        mysql->server_version, server_version);
+        mysql->server_version, server_version); // 报告未知系统变量
   }
 
-  if (master_res) mysql_free_result(master_res);
-  return ret;
+  if (master_res) mysql_free_result(master_res); // 释放结果集
+  return ret; // 返回结果
 }
 
 /*
@@ -2622,40 +2693,42 @@ static int get_master_uuid(MYSQL *mysql, Master_info *mi) {
   2       transient network problem, the caller should try to reconnect
 */
 
+// 获取主服务器的版本和时钟
 static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
-  char err_buff[MAX_SLAVE_ERRMSG];
-  const char *errmsg = nullptr;
-  int err_code = 0;
-  int version_number = 0;
-  version_number = atoi(mysql->server_version);
+  char err_buff[MAX_SLAVE_ERRMSG]; // 错误信息缓冲区
+  const char *errmsg = nullptr; // 错误信息指针
+  int err_code = 0; // 错误代码
+  int version_number = 0; // 版本号
+  version_number = atoi(mysql->server_version); // 将服务器版本转换为整数
 
-  MYSQL_RES *master_res = nullptr;
-  MYSQL_ROW master_row;
-  DBUG_TRACE;
+  MYSQL_RES *master_res = nullptr; // 主服务器结果集
+  MYSQL_ROW master_row; // 主服务器行
+  DBUG_TRACE; // 调试跟踪
 
-  DBUG_EXECUTE_IF("unrecognized_source_version", { version_number = 1; };);
+  DBUG_EXECUTE_IF("unrecognized_source_version", { version_number = 1; };); // 调试执行
 
-  mi->reset_network_error();
+  mi->reset_network_error(); // 重置网络错误
 
+  // 检查版本号是否有效
   if (!my_isdigit(&my_charset_bin, *mysql->server_version) ||
       version_number < 5) {
-    errmsg = "Master reported unrecognized MySQL version";
-    err_code = ER_SLAVE_FATAL_ERROR;
-    sprintf(err_buff, ER_THD_NONCONST(current_thd, err_code), errmsg);
-    goto err;
+    errmsg = "Master reported unrecognized MySQL version"; // 错误信息
+    err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+    sprintf(err_buff, ER_THD_NONCONST(current_thd, err_code), errmsg); // 格式化错误信息
+    goto err; // 跳转到错误处理
   }
 
-  mysql_mutex_lock(mi->rli->relay_log.get_log_lock());
-  mysql_mutex_lock(&mi->data_lock);
-  mi->set_mi_description_event(new Format_description_log_event());
+  mysql_mutex_lock(mi->rli->relay_log.get_log_lock()); // 锁定中继日志
+  mysql_mutex_lock(&mi->data_lock); // 锁定数据
+  mi->set_mi_description_event(new Format_description_log_event()); // 设置描述事件
   /* as we are here, we tried to allocate the event */
-  if (mi->get_mi_description_event() == nullptr) {
-    mysql_mutex_unlock(&mi->data_lock);
-    mysql_mutex_unlock(mi->rli->relay_log.get_log_lock());
-    errmsg = "default Format_description_log_event";
-    err_code = ER_SLAVE_CREATE_EVENT_FAILURE;
-    sprintf(err_buff, ER_THD_NONCONST(current_thd, err_code), errmsg);
-    goto err;
+  if (mi->get_mi_description_event() == nullptr) { // 检查事件是否分配成功
+    mysql_mutex_unlock(&mi->data_lock); // 解锁数据
+    mysql_mutex_unlock(mi->rli->relay_log.get_log_lock()); // 解锁中继日志
+    errmsg = "default Format_description_log_event"; // 错误信息
+    err_code = ER_SLAVE_CREATE_EVENT_FAILURE; // 错误代码
+    sprintf(err_buff, ER_THD_NONCONST(current_thd, err_code), errmsg); // 格式化错误信息
+    goto err; // 跳转到错误处理
   }
 
   /*
@@ -2694,15 +2767,15 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
     until it has received a new FD_m.
   */
   mi->get_mi_description_event()->common_footer->checksum_alg =
-      mi->rli->relay_log.relay_log_checksum_alg;
+      mi->rli->relay_log.relay_log_checksum_alg; // 设置校验和算法
 
   assert(mi->get_mi_description_event()->common_footer->checksum_alg !=
-         binary_log::BINLOG_CHECKSUM_ALG_UNDEF);
+         binary_log::BINLOG_CHECKSUM_ALG_UNDEF); // 确保校验和算法有效
   assert(mi->rli->relay_log.relay_log_checksum_alg !=
-         binary_log::BINLOG_CHECKSUM_ALG_UNDEF);
+         binary_log::BINLOG_CHECKSUM_ALG_UNDEF); // 确保中继日志校验和算法有效
 
-  mysql_mutex_unlock(&mi->data_lock);
-  mysql_mutex_unlock(mi->rli->relay_log.get_log_lock());
+  mysql_mutex_unlock(&mi->data_lock); // 解锁数据
+  mysql_mutex_unlock(mi->rli->relay_log.get_log_lock()); // 解锁中继日志
 
   /*
     Compare the master and slave's clock. Do not die if master's clock is
@@ -2713,7 +2786,7 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
     rpl_replica_debug_point(DBUG_RPL_S_BEFORE_UNIX_TIMESTAMP);
   };);
 
-  master_res = nullptr;
+  master_res = nullptr; // 初始化主服务器结果集
   DBUG_EXECUTE_IF("get_master_version.timestamp.ER_NET_READ_INTERRUPTED", {
     DBUG_SET("+d,inject_ER_NET_READ_INTERRUPTED");
     DBUG_SET(
@@ -2722,29 +2795,29 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
   });
   if (!mysql_real_query(mysql, STRING_WITH_LEN("SELECT UNIX_TIMESTAMP()")) &&
       (master_res = mysql_store_result(mysql)) &&
-      (master_row = mysql_fetch_row(master_res))) {
-    mysql_mutex_lock(&mi->data_lock);
+      (master_row = mysql_fetch_row(master_res))) { // 查询主服务器的UNIX时间戳
+    mysql_mutex_lock(&mi->data_lock); // 锁定数据
     mi->clock_diff_with_master =
-        (long)(time((time_t *)nullptr) - strtoul(master_row[0], nullptr, 10));
+        (long)(time((time_t *)nullptr) - strtoul(master_row[0], nullptr, 10)); // 计算主从时钟差
     DBUG_EXECUTE_IF("dbug.mta.force_clock_diff_eq_0",
-                    mi->clock_diff_with_master = 0;);
-    mysql_mutex_unlock(&mi->data_lock);
-  } else if (check_io_slave_killed(mi->info_thd, mi, nullptr))
-    goto slave_killed_err;
-  else if (is_network_error(mysql_errno(mysql))) {
+                    mi->clock_diff_with_master = 0;); // 强制时钟差为0
+    mysql_mutex_unlock(&mi->data_lock); // 解锁数据
+  } else if (check_io_slave_killed(mi->info_thd, mi, nullptr)) // 检查从线程是否被杀死
+    goto slave_killed_err; // 跳转到从线程被杀死处理
+  else if (is_network_error(mysql_errno(mysql))) { // 检查网络错误
     mi->report(WARNING_LEVEL, mysql_errno(mysql),
-               "Get master clock failed with error: %s", mysql_error(mysql));
-    goto network_err;
+               "Get master clock failed with error: %s", mysql_error(mysql)); // 报告错误
+    goto network_err; // 跳转到网络错误处理
   } else {
-    mysql_mutex_lock(&mi->data_lock);
-    mi->clock_diff_with_master = 0; /* The "most sensible" value */
-    mysql_mutex_unlock(&mi->data_lock);
+    mysql_mutex_lock(&mi->data_lock); // 锁定数据
+    mi->clock_diff_with_master = 0; /* The "most sensible" value */ // 设置时钟差为0
+    mysql_mutex_unlock(&mi->data_lock); // 解锁数据
     LogErr(WARNING_LEVEL, ER_RPL_SLAVE_SECONDS_BEHIND_MASTER_DUBIOUS,
-           mysql_error(mysql), mysql_errno(mysql));
+           mysql_error(mysql), mysql_errno(mysql)); // 记录警告
   }
   if (master_res) {
-    mysql_free_result(master_res);
-    master_res = nullptr;
+    mysql_free_result(master_res); // 释放结果集
+    master_res = nullptr; // 清空结果集指针
   }
 
   /*
@@ -2758,8 +2831,8 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
   */
   DBUG_EXECUTE_IF("dbug.before_get_SERVER_ID",
                   { rpl_replica_debug_point(DBUG_RPL_S_BEFORE_SERVER_ID); };);
-  master_res = nullptr;
-  master_row = nullptr;
+  master_res = nullptr; // 初始化主服务器结果集
+  master_row = nullptr; // 初始化主服务器行
   DBUG_EXECUTE_IF("get_source_server_id.ER_NET_READ_INTERRUPTED", {
     DBUG_SET("+d,inject_ER_NET_READ_INTERRUPTED");
     DBUG_SET(
@@ -2768,64 +2841,64 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
   });
   if (!mysql_real_query(mysql, STRING_WITH_LEN("SELECT @@GLOBAL.SERVER_ID")) &&
       (master_res = mysql_store_result(mysql)) &&
-      (master_row = mysql_fetch_row(master_res))) {
+      (master_row = mysql_fetch_row(master_res))) { // 查询主服务器的SERVER_ID
     if ((::server_id ==
          (mi->master_id = strtoul(master_row[0], nullptr, 10))) &&
-        !mi->rli->replicate_same_server_id) {
+        !mi->rli->replicate_same_server_id) { // 检查主从服务器ID是否相同
       errmsg =
           "The slave I/O thread stops because master and slave have equal "
           "MySQL server ids; these ids must be different for replication to "
           "work (or the --replicate-same-server-id option must be used on "
           "slave but this does not always make sense; please check the "
-          "manual before using it).";
-      err_code = ER_SLAVE_FATAL_ERROR;
-      sprintf(err_buff, ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg);
-      goto err;
+          "manual before using it)."; // 错误信息
+      err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+      sprintf(err_buff, ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg); // 格式化错误信息
+      goto err; // 跳转到错误处理
     }
-  } else if (mysql_errno(mysql) != ER_UNKNOWN_SYSTEM_VARIABLE) {
-    if (check_io_slave_killed(mi->info_thd, mi, nullptr))
-      goto slave_killed_err;
-    else if (is_network_error(mysql_errno(mysql))) {
+  } else if (mysql_errno(mysql) != ER_UNKNOWN_SYSTEM_VARIABLE) { // 检查是否为未知系统变量错误
+    if (check_io_slave_killed(mi->info_thd, mi, nullptr)) // 检查从线程是否被杀死
+      goto slave_killed_err; // 跳转到从线程被杀死处理
+    else if (is_network_error(mysql_errno(mysql))) { // 检查网络错误
       mi->report(WARNING_LEVEL, mysql_errno(mysql),
                  "Get master SERVER_ID failed with error: %s",
-                 mysql_error(mysql));
-      goto network_err;
+                 mysql_error(mysql)); // 报告错误
+      goto network_err; // 跳转到网络错误处理
     }
     /* Fatal error */
     errmsg =
         "The slave I/O thread stops because a fatal error is encountered "
-        "when it try to get the value of SERVER_ID variable from master.";
-    err_code = mysql_errno(mysql);
-    sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
-    goto err;
+        "when it try to get the value of SERVER_ID variable from master."; // 错误信息
+    err_code = mysql_errno(mysql); // 错误代码
+    sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql)); // 格式化错误信息
+    goto err; // 跳转到错误处理
   } else {
     mi->report(WARNING_LEVEL, ER_SERVER_UNKNOWN_SYSTEM_VARIABLE,
                "Unknown system variable 'SERVER_ID' on master, maybe it "
-               "is a *VERY OLD MASTER*.");
+               "is a *VERY OLD MASTER*."); // 报告未知系统变量警告
   }
   if (master_res) {
-    mysql_free_result(master_res);
-    master_res = nullptr;
+    mysql_free_result(master_res); // 释放结果集
+    master_res = nullptr; // 清空结果集指针
   }
-  if (mi->master_id == 0 && mi->ignore_server_ids->dynamic_ids.size() > 0) {
+  if (mi->master_id == 0 && mi->ignore_server_ids->dynamic_ids.size() > 0) { // 检查服务器ID过滤
     errmsg =
         "Slave configured with server id filtering could not detect the master "
-        "server id.";
-    err_code = ER_SLAVE_FATAL_ERROR;
-    sprintf(err_buff, ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg);
-    goto err;
+        "server id."; // 错误信息
+    err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+    sprintf(err_buff, ER_THD(current_thd, ER_SLAVE_FATAL_ERROR), errmsg); // 格式化错误信息
+    goto err; // 跳转到错误处理
   }
 
-  if (mi->heartbeat_period != 0.0) {
-    char llbuf[22];
+  if (mi->heartbeat_period != 0.0) { // 检查心跳周期
+    char llbuf[22]; // 缓冲区
     const char query_format[] =
-        "SET @master_heartbeat_period = %s, @source_heartbeat_period = %s";
-    char query[sizeof(query_format) - 2 * 2 + 2 * sizeof(llbuf) + 1];
+        "SET @master_heartbeat_period = %s, @source_heartbeat_period = %s"; // 查询格式
+    char query[sizeof(query_format) - 2 * 2 + 2 * sizeof(llbuf) + 1]; // 查询缓冲区
     /*
        the period is an ulonglong of nano-secs.
     */
-    llstr((ulonglong)(mi->heartbeat_period * 1000000000UL), llbuf);
-    sprintf(query, query_format, llbuf, llbuf);
+    llstr((ulonglong)(mi->heartbeat_period * 1000000000UL), llbuf); // 将心跳周期转换为纳秒
+    sprintf(query, query_format, llbuf, llbuf); // 格式化查询
 
     DBUG_EXECUTE_IF("get_master_version.heartbeat.ER_NET_READ_INTERRUPTED", {
       DBUG_SET("+d,inject_ER_NET_READ_INTERRUPTED");
@@ -2834,29 +2907,29 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
           "ER_NET_READ_INTERRUPTED");
     });
 
-    if (mysql_real_query(mysql, query, static_cast<ulong>(strlen(query)))) {
-      if (check_io_slave_killed(mi->info_thd, mi, nullptr))
-        goto slave_killed_err;
+    if (mysql_real_query(mysql, query, static_cast<ulong>(strlen(query)))) { // 执行查询
+      if (check_io_slave_killed(mi->info_thd, mi, nullptr)) // 检查从线程是否被杀死
+        goto slave_killed_err; // 跳转到从线程被杀死处理
 
-      if (is_network_error(mysql_errno(mysql))) {
+      if (is_network_error(mysql_errno(mysql))) { // 检查网络错误
         mi->report(
             WARNING_LEVEL, mysql_errno(mysql),
             "SET @master_heartbeat_period to master failed with error: %s",
-            mysql_error(mysql));
-        mysql_free_result(mysql_store_result(mysql));
-        goto network_err;
+            mysql_error(mysql)); // 报告错误
+        mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+        goto network_err; // 跳转到网络错误处理
       } else {
         /* Fatal error */
         errmsg =
             "The slave I/O thread stops because a fatal error is encountered "
-            " when it tries to SET @master_heartbeat_period on master.";
-        err_code = ER_SLAVE_FATAL_ERROR;
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
-        mysql_free_result(mysql_store_result(mysql));
-        goto err;
+            " when it tries to SET @master_heartbeat_period on master."; // 错误信息
+        err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql)); // 格式化错误信息
+        mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+        goto err; // 跳转到错误处理
       }
     }
-    mysql_free_result(mysql_store_result(mysql));
+    mysql_free_result(mysql_store_result(mysql)); // 释放结果集
   }
 
   /*
@@ -2866,154 +2939,154 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
     to become known in consensus by master and slave.
   */
   if (DBUG_EVALUATE_IF("simulate_replica_unaware_checksum", 0, 1)) {
-    int rc;
+    int rc; // 返回码
     // Set both variables, so that it works equally on both old and new
     // source server.
     const char query[] =
         "SET @master_binlog_checksum = @@global.binlog_checksum, "
-        "@source_binlog_checksum = @@global.binlog_checksum";
-    master_res = nullptr;
+        "@source_binlog_checksum = @@global.binlog_checksum"; // 查询
+    master_res = nullptr; // 初始化主服务器结果集
     // initially undefined
-    mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_UNDEF;
+    mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_UNDEF; // 初始化校验和算法
     /*
       @c checksum_alg_before_fd is queried from master in this block.
       If master is old checksum-unaware the value stays undefined.
       Once the first FD will be received its alg descriptor will replace
       the being queried one.
     */
-    rc = mysql_real_query(mysql, query, static_cast<ulong>(strlen(query)));
-    if (rc != 0) {
-      mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_OFF;
-      if (check_io_slave_killed(mi->info_thd, mi, nullptr))
-        goto slave_killed_err;
+    rc = mysql_real_query(mysql, query, static_cast<ulong>(strlen(query))); // 执行查询
+    if (rc != 0) { // 检查返回码
+      mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_OFF; // 设置校验和算法为关闭
+      if (check_io_slave_killed(mi->info_thd, mi, nullptr)) // 检查从线程是否被杀死
+        goto slave_killed_err; // 跳转到从线程被杀死处理
 
-      if (mysql_errno(mysql) == ER_UNKNOWN_SYSTEM_VARIABLE) {
+      if (mysql_errno(mysql) == ER_UNKNOWN_SYSTEM_VARIABLE) { // 检查是否为未知系统变量错误
         // this is tolerable as OM -> NS is supported
         mi->report(WARNING_LEVEL, mysql_errno(mysql),
                    "Notifying master by %s failed with "
                    "error: %s",
-                   query, mysql_error(mysql));
+                   query, mysql_error(mysql)); // 报告错误
       } else {
-        if (is_network_error(mysql_errno(mysql))) {
+        if (is_network_error(mysql_errno(mysql))) { // 检查网络错误
           mi->report(WARNING_LEVEL, mysql_errno(mysql),
                      "Notifying master by %s failed with "
                      "error: %s",
-                     query, mysql_error(mysql));
-          mysql_free_result(mysql_store_result(mysql));
-          goto network_err;
+                     query, mysql_error(mysql)); // 报告错误
+          mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+          goto network_err; // 跳转到网络错误处理
         } else {
           errmsg =
               "The slave I/O thread stops because a fatal error is encountered "
-              "when it tried to SET @master_binlog_checksum on master.";
-          err_code = ER_SLAVE_FATAL_ERROR;
-          sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
-          mysql_free_result(mysql_store_result(mysql));
-          goto err;
+              "when it tried to SET @master_binlog_checksum on master."; // 错误信息
+          err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+          sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql)); // 格式化错误信息
+          mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+          goto err; // 跳转到错误处理
         }
       }
     } else {
-      mysql_free_result(mysql_store_result(mysql));
+      mysql_free_result(mysql_store_result(mysql)); // 释放结果集
       // Read back the user variable that we just set, to verify that
       // the source recognized the checksum algorithm.
       if (!mysql_real_query(
               mysql, STRING_WITH_LEN("SELECT @source_binlog_checksum")) &&
           (master_res = mysql_store_result(mysql)) &&
           (master_row = mysql_fetch_row(master_res)) &&
-          (master_row[0] != nullptr)) {
+          (master_row[0] != nullptr)) { // 查询源服务器的校验和
         mi->checksum_alg_before_fd = static_cast<enum_binlog_checksum_alg>(
-            find_type(master_row[0], &binlog_checksum_typelib, 1) - 1);
+            find_type(master_row[0], &binlog_checksum_typelib, 1) - 1); // 设置校验和算法
 
         DBUG_EXECUTE_IF("undefined_algorithm_on_replica",
                         mi->checksum_alg_before_fd =
-                            binary_log::BINLOG_CHECKSUM_ALG_UNDEF;);
+                            binary_log::BINLOG_CHECKSUM_ALG_UNDEF;); // 调试执行
         if (mi->checksum_alg_before_fd ==
-            binary_log::BINLOG_CHECKSUM_ALG_UNDEF) {
+            binary_log::BINLOG_CHECKSUM_ALG_UNDEF) { // 检查校验和算法是否未定义
           errmsg =
               "The slave I/O thread was stopped because a fatal error is "
               "encountered "
-              "The checksum algorithm used by master is unknown to slave.";
-          err_code = ER_SLAVE_FATAL_ERROR;
-          sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
-          mysql_free_result(mysql_store_result(mysql));
-          goto err;
+              "The checksum algorithm used by master is unknown to slave."; // 错误信息
+          err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+          sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql)); // 格式化错误信息
+          mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+          goto err; // 跳转到错误处理
         }
 
         // valid outcome is either of
         assert(mi->checksum_alg_before_fd ==
                    binary_log::BINLOG_CHECKSUM_ALG_OFF ||
                mi->checksum_alg_before_fd ==
-                   binary_log::BINLOG_CHECKSUM_ALG_CRC32);
-      } else if (check_io_slave_killed(mi->info_thd, mi, nullptr))
-        goto slave_killed_err;
-      else if (is_network_error(mysql_errno(mysql))) {
+                   binary_log::BINLOG_CHECKSUM_ALG_CRC32); // 确保校验和算法有效
+      } else if (check_io_slave_killed(mi->info_thd, mi, nullptr)) // 检查从线程是否被杀死
+        goto slave_killed_err; // 跳转到从线程被杀死处理
+      else if (is_network_error(mysql_errno(mysql))) { // 检查网络错误
         mi->report(WARNING_LEVEL, mysql_errno(mysql),
                    "Get master BINLOG_CHECKSUM failed with error: %s",
-                   mysql_error(mysql));
-        goto network_err;
+                   mysql_error(mysql)); // 报告错误
+        goto network_err; // 跳转到网络错误处理
       } else {
         errmsg =
             "The slave I/O thread stops because a fatal error is encountered "
-            "when it tried to SELECT @master_binlog_checksum.";
-        err_code = ER_SLAVE_FATAL_ERROR;
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
-        mysql_free_result(mysql_store_result(mysql));
-        goto err;
+            "when it tried to SELECT @master_binlog_checksum."; // 错误信息
+        err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql)); // 格式化错误信息
+        mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+        goto err; // 跳转到错误处理
       }
     }
     if (master_res) {
-      mysql_free_result(master_res);
-      master_res = nullptr;
+      mysql_free_result(master_res); // 释放结果集
+      master_res = nullptr; // 清空结果集指针
     }
   } else
-    mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_OFF;
+    mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_OFF; // 设置校验和算法为关闭
 
   if (DBUG_EVALUATE_IF("bug32442749_simulate_null_checksum", 1, 0)) {
-    const char query[] = "SET @source_binlog_checksum= NULL";
-    int rc = mysql_real_query(mysql, query, static_cast<ulong>(strlen(query)));
-    if (rc != 0) {
+    const char query[] = "SET @source_binlog_checksum= NULL"; // 查询
+    int rc = mysql_real_query(mysql, query, static_cast<ulong>(strlen(query))); // 执行查询
+    if (rc != 0) { // 检查返回码
       errmsg =
           "The slave I/O thread stops because a fatal error is encountered "
-          "when it tried to SET @source_binlog_checksum.";
-      err_code = ER_SLAVE_FATAL_ERROR;
-      sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
-      mysql_free_result(mysql_store_result(mysql));
-      goto err;
+          "when it tried to SET @source_binlog_checksum."; // 错误信息
+      err_code = ER_SLAVE_FATAL_ERROR; // 错误代码
+      sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql)); // 格式化错误信息
+      mysql_free_result(mysql_store_result(mysql)); // 释放结果集
+      goto err; // 跳转到错误处理
     }
-    mysql_free_result(mysql_store_result(mysql));
+    mysql_free_result(mysql_store_result(mysql)); // 释放结果集
   }
 
   if (DBUG_EVALUATE_IF("simulate_replica_unaware_gtid", 0, 1)) {
-    auto master_gtid_mode = Gtid_mode::OFF;
-    auto slave_gtid_mode = global_gtid_mode.get();
+    auto master_gtid_mode = Gtid_mode::OFF; // 主服务器GTID模式
+    auto slave_gtid_mode = global_gtid_mode.get(); // 从服务器GTID模式
     switch (io_thread_init_command(mi, "SELECT @@GLOBAL.GTID_MODE",
                                    ER_UNKNOWN_SYSTEM_VARIABLE, &master_res,
-                                   &master_row)) {
+                                   &master_row)) { // 查询GTID模式
       case COMMAND_STATUS_ERROR:
-        return 2;
+        return 2; // 返回错误
       case COMMAND_STATUS_ALLOWED_ERROR:
         // master is old and does not have @@GLOBAL.GTID_MODE
-        master_gtid_mode = Gtid_mode::OFF;
+        master_gtid_mode = Gtid_mode::OFF; // 设置主服务器GTID模式为关闭
         break;
       case COMMAND_STATUS_OK: {
-        const char *master_gtid_mode_string = master_row[0];
+        const char *master_gtid_mode_string = master_row[0]; // 主服务器GTID模式字符串
         DBUG_EXECUTE_IF("simulate_source_has_gtid_mode_on_something",
-                        { master_gtid_mode_string = "on_something"; });
+                        { master_gtid_mode_string = "on_something"; }); // 调试执行
         DBUG_EXECUTE_IF("simulate_source_has_gtid_mode_off_something",
-                        { master_gtid_mode_string = "off_something"; });
+                        { master_gtid_mode_string = "off_something"; }); // 调试执行
         DBUG_EXECUTE_IF("simulate_source_has_unknown_gtid_mode",
-                        { master_gtid_mode_string = "Krakel Spektakel"; });
-        bool error;
+                        { master_gtid_mode_string = "Krakel Spektakel"; }); // 调试执行
+        bool error; // 错误标志
         std::tie(error, master_gtid_mode) =
-            Gtid_mode::from_string(master_gtid_mode_string);
+            Gtid_mode::from_string(master_gtid_mode_string); // 从字符串获取GTID模式
         if (error) {
           mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                      "The slave IO thread stops because the master has "
                      "an unknown @@GLOBAL.GTID_MODE '%s'.",
-                     master_gtid_mode_string);
-          mysql_free_result(master_res);
-          return 1;
+                     master_gtid_mode_string); // 报告错误
+          mysql_free_result(master_res); // 释放结果集
+          return 1; // 返回错误
         }
-        mysql_free_result(master_res);
+        mysql_free_result(master_res); // 释放结果集
         break;
       }
     }
@@ -3023,44 +3096,45 @@ static int get_master_version_and_clock(MYSQL *mysql, Master_info *mi) {
          master_gtid_mode <= Gtid_mode::OFF_PERMISSIVE &&
          mi->rli->m_assign_gtids_to_anonymous_transactions_info.get_type() ==
              Assign_gtids_to_anonymous_transactions_info::enum_type::
-                 AGAT_OFF)) {
+                 AGAT_OFF)) { // 检查GTID模式兼容性
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                  "The replication receiver thread cannot start because "
                  "the master has GTID_MODE = %.192s and this server has "
                  "GTID_MODE = %.192s.",
                  Gtid_mode::to_string(master_gtid_mode),
-                 Gtid_mode::to_string(slave_gtid_mode));
-      return 1;
+                 Gtid_mode::to_string(slave_gtid_mode)); // 报告错误
+      return 1; // 返回错误
     }
-    if (mi->is_auto_position() && master_gtid_mode != Gtid_mode::ON) {
+    if (mi->is_auto_position() && master_gtid_mode != Gtid_mode::ON) { // 检查自动位置模式
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                  "The replication receiver thread cannot start in "
                  "AUTO_POSITION mode: the master has GTID_MODE = %.192s "
                  "instead of ON.",
-                 Gtid_mode::to_string(master_gtid_mode));
-      return 1;
+                 Gtid_mode::to_string(master_gtid_mode)); // 报告错误
+      return 1; // 返回错误
     }
   }
 
 err:
-  if (errmsg) {
-    if (master_res) mysql_free_result(master_res);
-    assert(err_code != 0);
-    mi->report(ERROR_LEVEL, err_code, "%s", err_buff);
-    return 1;
+  if (errmsg) { // 检查错误信息
+    if (master_res) mysql_free_result(master_res); // 释放结果集
+    assert(err_code != 0); // 确保错误代码不为0
+    mi->report(ERROR_LEVEL, err_code, "%s", err_buff); // 报告错误
+    return 1; // 返回错误
   }
 
-  return 0;
+  return 0; // 返回成功
 
 network_err:
-  if (master_res) mysql_free_result(master_res);
-  mi->set_network_error();
-  return 2;
+  if (master_res) mysql_free_result(master_res); // 释放结果集
+  mi->set_network_error(); // 设置网络错误
+  return 2; // 返回网络错误
 
 slave_killed_err:
-  if (master_res) mysql_free_result(master_res);
-  return 2;
+  if (master_res) mysql_free_result(master_res); // 释放结果集
+  return 2; // 返回从线程被杀死错误
 }
+
 
 static bool wait_for_relay_log_space(Relay_log_info *rli) {
   bool slave_killed = false;
@@ -3240,72 +3314,86 @@ static int write_ignored_events_info_to_relay_log(THD *thd, Master_info *mi) {
   return error;
 }
 
+
+/**
+  向主服务器注册从服务器。
+
+  @param mysql MYSQL 对象，用于与主服务器通信。
+  @param mi Master_info 对象，包含从服务器的元数据。
+  @param suppress_warnings 指向布尔值的指针，用于指示是否抑制警告。
+
+  @retval 0: 成功, 1: 失败。
+*/
 static int register_slave_on_master(MYSQL *mysql, Master_info *mi,
                                     bool *suppress_warnings) {
-  uchar buf[1024], *pos = buf;
-  size_t report_host_len = 0, report_user_len = 0, report_password_len = 0;
-  DBUG_TRACE;
+  uchar buf[1024], *pos = buf; // 缓冲区，用于存储要发送的数据
+  size_t report_host_len = 0, report_user_len = 0, report_password_len = 0; // 存储主机、用户和密码的长度
+  DBUG_TRACE; // 调试跟踪
 
-  *suppress_warnings = false;
-  if (report_host) report_host_len = strlen(report_host);
-  if (report_host_len > HOSTNAME_LENGTH) {
+  *suppress_warnings = false; // 初始化抑制警告标志
+  if (report_host) report_host_len = strlen(report_host); // 获取主机名长度
+  if (report_host_len > HOSTNAME_LENGTH) { // 检查主机名长度是否超过限制
     LogErr(WARNING_LEVEL, ER_RPL_SLAVE_REPORT_HOST_TOO_LONG, report_host_len,
-           HOSTNAME_LENGTH, mi->get_for_channel_str());
-    return 0;
+           HOSTNAME_LENGTH, mi->get_for_channel_str()); // 记录警告
+    return 0; // 返回成功
   }
 
-  if (report_user) report_user_len = strlen(report_user);
-  if (report_user_len > USERNAME_LENGTH) {
+  if (report_user) report_user_len = strlen(report_user); // 获取用户名长度
+  if (report_user_len > USERNAME_LENGTH) { // 检查用户名长度是否超过限制
     LogErr(WARNING_LEVEL, ER_RPL_SLAVE_REPORT_USER_TOO_LONG, report_user_len,
-           USERNAME_LENGTH, mi->get_for_channel_str());
-    return 0;
+           USERNAME_LENGTH, mi->get_for_channel_str()); // 记录警告
+    return 0; // 返回成功
   }
 
-  if (report_password) report_password_len = strlen(report_password);
-  if (report_password_len > MAX_PASSWORD_LENGTH) {
+  if (report_password) report_password_len = strlen(report_password); // 获取密码长度
+  if (report_password_len > MAX_PASSWORD_LENGTH) { // 检查密码长度是否超过限制
     LogErr(WARNING_LEVEL, ER_RPL_SLAVE_REPORT_PASSWORD_TOO_LONG,
-           report_password_len, MAX_PASSWORD_LENGTH, mi->get_for_channel_str());
-    return 0;
+           report_password_len, MAX_PASSWORD_LENGTH, mi->get_for_channel_str()); // 记录警告
+    return 0; // 返回成功
   }
 
+  // 将服务器 ID 存储到缓冲区
   int4store(pos, server_id);
-  pos += 4;
+  pos += 4; // 移动缓冲区指针
+  // 将主机名、用户名和密码存储到缓冲区
   pos = net_store_data(pos, (uchar *)report_host, report_host_len);
   pos = net_store_data(pos, (uchar *)report_user, report_user_len);
   pos = net_store_data(pos, (uchar *)report_password, report_password_len);
+  // 存储端口号
   int2store(pos, (uint16)report_port);
-  pos += 2;
+  pos += 2; // 移动缓冲区指针
   /*
     Fake rpl_recovery_rank, which was removed in BUG#13963,
     so that this server can register itself on old servers,
     see BUG#49259.
    */
-  int4store(pos, /* rpl_recovery_rank */ 0);
-  pos += 4;
+  int4store(pos, /* rpl_recovery_rank */ 0); // 存储伪造的恢复排名
+  pos += 4; // 移动缓冲区指针
   /* The master will fill in master_id */
-  int4store(pos, 0);
-  pos += 4;
+  int4store(pos, 0); // 存储主服务器 ID（由主服务器填写）
+  pos += 4; // 移动缓冲区指针
 
+  // 发送注册命令到主服务器
   if (simple_command(mysql, COM_REGISTER_SLAVE, buf, (size_t)(pos - buf), 0)) {
-    uint err{mysql_errno(mysql)};
-    if (err == ER_NET_READ_INTERRUPTED) {
+    uint err{mysql_errno(mysql)}; // 获取错误代码
+    if (err == ER_NET_READ_INTERRUPTED) { // 检查是否为网络读取中断错误
       *suppress_warnings = true;  // Suppress reconnect warning
-    } else if (!check_io_slave_killed(mi->info_thd, mi, nullptr)) {
-      std::stringstream ss;
-      ss << mysql_error(mysql) << " (Errno: " << err << ")";
+    } else if (!check_io_slave_killed(mi->info_thd, mi, nullptr)) { // 检查从线程是否被杀死
+      std::stringstream ss; // 创建字符串流
+      ss << mysql_error(mysql) << " (Errno: " << err << ")"; // 记录错误信息
       mi->report(ERROR_LEVEL, ER_SLAVE_MASTER_COM_FAILURE,
                  ER_THD(current_thd, ER_SLAVE_MASTER_COM_FAILURE),
-                 "COM_REGISTER_SLAVE", ss.str().c_str());
+                 "COM_REGISTER_SLAVE", ss.str().c_str()); // 报告错误
     }
-    if (is_network_error(err)) mi->set_network_error();
-    return 1;
+    if (is_network_error(err)) mi->set_network_error(); // 设置网络错误状态
+    return 1; // 返回失败
   }
 
-  DBUG_EXECUTE_IF("simulate_register_replica_killed", {
-    mi->abort_slave = 1;
-    return 1;
+  DBUG_EXECUTE_IF("simulate_register_replica_killed", { // 模拟从服务器被杀死的情况
+    mi->abort_slave = 1; // 设置标志
+    return 1; // 返回失败
   };);
-  return 0;
+  return 0; // 返回成功
 }
 
 /**
@@ -4031,63 +4119,74 @@ void set_slave_thread_default_charset(THD *thd, Relay_log_info const *rli) {
   const_cast<Relay_log_info *>(rli)->cached_charset_invalidate();
 }
 
+
 /*
   init_replica_thread()
+  初始化复制线程
 */
 
 int init_replica_thread(THD *thd, SLAVE_THD_TYPE thd_type) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 #if !defined(NDEBUG)
-  int simulate_error = 0;
+  int simulate_error = 0; // 模拟错误标志
 #endif
+  // 设置线程类型
   thd->system_thread = (thd_type == SLAVE_THD_WORKER)
-                           ? SYSTEM_THREAD_SLAVE_WORKER
+                           ? SYSTEM_THREAD_SLAVE_WORKER // 工作线程
                            : (thd_type == SLAVE_THD_SQL)
-                                 ? SYSTEM_THREAD_SLAVE_SQL
-                                 : SYSTEM_THREAD_SLAVE_IO;
-  thd->get_protocol_classic()->init_net(nullptr);
-  thd->slave_thread = true;
-  thd->enable_slow_log = opt_log_slow_replica_statements;
-  set_slave_thread_options(thd);
+                                 ? SYSTEM_THREAD_SLAVE_SQL // SQL 线程
+                                 : SYSTEM_THREAD_SLAVE_IO; // IO 线程
+  thd->get_protocol_classic()->init_net(nullptr); // 初始化网络协议
+  thd->slave_thread = true; // 标记为复制线程
+  thd->enable_slow_log = opt_log_slow_replica_statements; // 启用慢日志
+  set_slave_thread_options(thd); // 设置线程选项
 
   /*
     Replication threads are:
     - background threads in the server, not user sessions,
     - yet still assigned a PROCESSLIST_ID,
       for historical reasons (displayed in SHOW PROCESSLIST).
+    复制线程是：
+    - 服务器中的后台线程，而不是用户会话，
+    - 但仍然分配了一个 PROCESSLIST_ID，
+      出于历史原因（在 SHOW PROCESSLIST 中显示）。
   */
-  thd->set_new_thread_id();
+  thd->set_new_thread_id(); // 设置新的线程 ID
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
   /*
     Populate the PROCESSLIST_ID in the instrumentation.
+    在仪器中填充 PROCESSLIST_ID。
   */
   struct PSI_thread *psi = PSI_THREAD_CALL(get_thread)();
   PSI_THREAD_CALL(set_thread_id)(psi, thd->thread_id());
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
+  // 模拟错误
   DBUG_EXECUTE_IF("simulate_io_replica_error_on_init",
                   simulate_error |= (1 << SLAVE_THD_IO););
   DBUG_EXECUTE_IF("simulate_sql_replica_error_on_init",
                   simulate_error |= (1 << SLAVE_THD_SQL););
-  thd->store_globals();
+  thd->store_globals(); // 存储全局变量
 #if !defined(NDEBUG)
+  // 如果模拟错误，则返回 -1
   if (simulate_error & (1 << thd_type)) {
-    return -1;
+    return -1; // 返回错误
   }
 #endif
 
+  // 设置 SQL 线程的状态
   if (thd_type == SLAVE_THD_SQL) {
-    THD_STAGE_INFO(thd, stage_waiting_for_the_next_event_in_relay_log);
+    THD_STAGE_INFO(thd, stage_waiting_for_the_next_event_in_relay_log); // 等待下一个事件
     thd->set_command(
-        COM_QUERY);  // the SQL thread does not use the server protocol
+        COM_QUERY);  // SQL 线程不使用服务器协议
   } else {
-    THD_STAGE_INFO(thd, stage_waiting_for_source_update);
+    THD_STAGE_INFO(thd, stage_waiting_for_source_update); // 等待源更新
   }
-  thd->set_time();
-  /* Do not use user-supplied timeout value for system threads. */
-  thd->variables.lock_wait_timeout = LONG_TIMEOUT;
-  return 0;
+  thd->set_time(); // 设置时间
+  /* 不使用用户提供的超时值用于系统线程。 */
+  thd->variables.lock_wait_timeout = LONG_TIMEOUT; // 设置锁等待超时
+  return 0; // 返回成功
 }
 
 /**
@@ -4140,9 +4239,22 @@ static void fix_gtid_set(MYSQL_RPL *rpl, uchar *packet_gtid_set) {
   gtid_set->encode(packet_gtid_set);
 }
 
+/**
+  请求转储数据的函数
+
+  @param thd        当前线程的上下文
+  @param mysql      MySQL连接
+  @param rpl       复制流信息
+  @param mi        主连接信息
+  @param suppress_warnings   是否抑制警告的标志
+
+  @retval 0        成功
+  @retval 1        失败
+*/
 static int request_dump(THD *thd, MYSQL *mysql, MYSQL_RPL *rpl, Master_info *mi,
                         bool *suppress_warnings) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
+  // 根据是否自动定位选择命令
   enum_server_command command =
       mi->is_auto_position() ? COM_BINLOG_DUMP_GTID : COM_BINLOG_DUMP;
   /*
@@ -4153,16 +4265,17 @@ static int request_dump(THD *thd, MYSQL *mysql, MYSQL_RPL *rpl, Master_info *mi,
     if we ever start to use the flags, we should leave the three
     lowest bits unused.
   */
-  uint binlog_flags = 0;
-  binlog_flags |= USE_HEARTBEAT_EVENT_V2;
+  uint binlog_flags = 0; // 初始化binlog标志
+  binlog_flags |= USE_HEARTBEAT_EVENT_V2; // 设置心跳事件标志
 
-  *suppress_warnings = false;
+  *suppress_warnings = false; // 初始化抑制警告标志
+  // 运行钩子函数
   if (RUN_HOOK(binlog_relay_io, before_request_transmit,
                (thd, mi, binlog_flags)))
-    return 1;
+    return 1; // 如果钩子函数返回1，则请求失败
 
-  rpl->server_id = server_id;
-  rpl->flags = binlog_flags;
+  rpl->server_id = server_id; // 设置服务器ID
+  rpl->flags = binlog_flags; // 设置binlog标志
 
   Sid_map sid_map(nullptr); /* No lock needed */
   /*
@@ -4170,59 +4283,59 @@ static int request_dump(THD *thd, MYSQL *mysql, MYSQL_RPL *rpl, Master_info *mi,
     as the latter might call fix_gtid_set() which in turns calls
     gtid_executed->encode().
   */
-  Gtid_set gtid_executed(&sid_map);
+  Gtid_set gtid_executed(&sid_map); // 创建GTID集合
 
   if (command == COM_BINLOG_DUMP_GTID) {
-    // get set of GTIDs
-    mi->rli->get_sid_lock()->wrlock();
+    // 获取GTID集合
+    mi->rli->get_sid_lock()->wrlock(); // 获取SID锁
 
     if (gtid_executed.add_gtid_set(mi->rli->get_gtid_set()) !=
         RETURN_STATUS_OK) {
-      mi->rli->get_sid_lock()->unlock();
-      return 1;
+      mi->rli->get_sid_lock()->unlock(); // 解锁
+      return 1; // 返回失败
     }
-    mi->rli->get_sid_lock()->unlock();
+    mi->rli->get_sid_lock()->unlock(); // 解锁
 
-    global_sid_lock->wrlock();
-    gtid_state->dbug_print();
+    global_sid_lock->wrlock(); // 获取全局SID锁
+    gtid_state->dbug_print(); // 调试打印GTID状态
 
     if (gtid_executed.add_gtid_set(gtid_state->get_executed_gtids()) !=
         RETURN_STATUS_OK) {
-      global_sid_lock->unlock();
-      return 1;
+      global_sid_lock->unlock(); // 解锁
+      return 1; // 返回失败
     }
-    global_sid_lock->unlock();
+    global_sid_lock->unlock(); // 解锁
 
     rpl->file_name = nullptr; /* No need to set rpl.file_name_length */
-    rpl->start_position = 4;
-    rpl->flags |= MYSQL_RPL_GTID;
-    rpl->gtid_set_encoded_size = gtid_executed.get_encoded_length();
-    rpl->fix_gtid_set = fix_gtid_set;
-    rpl->gtid_set_arg = (void *)&gtid_executed;
+    rpl->start_position = 4; // 设置起始位置
+    rpl->flags |= MYSQL_RPL_GTID; // 设置GTID标志
+    rpl->gtid_set_encoded_size = gtid_executed.get_encoded_length(); // 获取GTID集合编码长度
+    rpl->fix_gtid_set = fix_gtid_set; // 设置GTID修复函数
+    rpl->gtid_set_arg = (void *)&gtid_executed; // 设置GTID集合参数
   } else {
-    rpl->file_name_length = 0;
-    rpl->file_name = mi->get_master_log_name();
+    rpl->file_name_length = 0; // 文件名长度为0
+    rpl->file_name = mi->get_master_log_name(); // 获取主日志名称
     rpl->start_position = DBUG_EVALUATE_IF("request_source_log_pos_3", 3,
-                                           mi->get_master_log_pos());
+                                           mi->get_master_log_pos()); // 获取主日志位置
   }
-  if (mysql_binlog_open(mysql, rpl)) {
+  if (mysql_binlog_open(mysql, rpl)) { // 打开binlog
     /*
       Something went wrong, so we will just reconnect and retry later
       in the future, we should do a better error analysis, but for
       now we just fill up the error log :-)
     */
-    uint err{mysql_errno(mysql)};
+    uint err{mysql_errno(mysql)}; // 获取错误代码
     if (err == ER_NET_READ_INTERRUPTED)
       *suppress_warnings = true;  // Suppress reconnect warning
     else
       LogErr(ERROR_LEVEL, ER_RPL_SLAVE_ERROR_RETRYING,
              Command_names::str_global(command).c_str(), err,
-             mysql_error(mysql), mi->connect_retry);
-    if (is_network_error(err)) mi->set_network_error();
-    return 1;
+             mysql_error(mysql), mi->connect_retry); // 记录错误
+    if (is_network_error(err)) mi->set_network_error(); // 设置网络错误状态
+    return 1; // 返回失败
   }
 
-  return 0;
+  return 0; // 返回成功
 }
 
 /**
@@ -5303,105 +5416,110 @@ static int try_to_reconnect(THD *thd, MYSQL *mysql, Master_info *mi,
   return 0;
 }
 
+
 /**
   Slave IO thread entry point.
+  从属 IO 线程入口点。
 
   @param arg Pointer to Master_info struct that holds information for
   the IO thread.
+  @param arg 指向 Master_info 结构的指针，该结构保存 IO 线程的信息。
 
-  @return Always 0.
+  @return 始终返回 0。
 */
 extern "C" void *handle_slave_io(void *arg) {
-  THD *thd{nullptr};  // needs to be first for thread_stack
-  bool thd_added{false};
-  MYSQL *mysql;
-  Master_info *mi = (Master_info *)arg;
-  Relay_log_info *rli = mi->rli;
-  char llbuff[22];
-  uint retry_count;
-  bool suppress_warnings;
-  int ret;
-  Global_THD_manager *thd_manager = Global_THD_manager::get_instance();
-  // needs to call my_thread_init(), otherwise we get a coredump in DBUG_ stuff
+  THD *thd{nullptr};  // 需要首先定义以便于线程栈
+  bool thd_added{false}; // 线程是否已添加的标志
+  MYSQL *mysql; // MySQL 连接指针
+  Master_info *mi = (Master_info *)arg; // 从属信息结构
+  Relay_log_info *rli = mi->rli; // 中继日志信息
+  char llbuff[22]; // 用于存储日志位置的缓冲区
+  uint retry_count; // 重试计数
+  bool suppress_warnings; // 是否抑制警告
+  int ret; // 返回值
+  Global_THD_manager *thd_manager = Global_THD_manager::get_instance(); // 全局线程管理器实例
+  // 需要调用 my_thread_init()，否则在 DBUG_ 相关代码中会导致崩溃
+  //分配线程需要的内存以及保存线程ID
   my_thread_init();
   {
-    DBUG_TRACE;
+    DBUG_TRACE; // 调试跟踪
 
-    assert(mi->inited);
-    mysql = nullptr;
+    assert(mi->inited); // 确保 mi 已初始化
+    mysql = nullptr; // 初始化 mysql 指针
 
-    mysql_mutex_lock(&mi->run_lock);
+    mysql_mutex_lock(&mi->run_lock); // 锁定运行锁
 
     /* Inform waiting threads that slave has started */
+    /* 通知等待线程从属线程已启动 */
     mi->slave_run_id++;
 
 #ifndef NDEBUG
-    mi->events_until_exit = disconnect_slave_event_count;
+    mi->events_until_exit = disconnect_slave_event_count; // 仅在调试模式下
 #endif
 
-    thd = new THD;  // note that constructor of THD uses DBUG_ !
-    THD_CHECK_SENTRY(thd);
-    mi->info_thd = thd;
+    thd = new THD;  // 注意 THD 的构造函数使用了 DBUG_ !
+    THD_CHECK_SENTRY(thd); // 检查 THD 的有效性
+    mi->info_thd = thd; // 将当前线程信息保存到 mi 中
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
-    // save the instrumentation for IO thread in mi->info_thd
+    // 将 IO 线程的仪表信息保存到 mi->info_thd
     struct PSI_thread *psi = PSI_THREAD_CALL(get_thread)();
     thd_set_psi(mi->info_thd, psi);
 #endif
-    mysql_thread_set_psi_THD(thd);
+    mysql_thread_set_psi_THD(thd); // 设置线程的 PSI
 
-    thd->thread_stack = (char *)&thd;  // remember where our stack is
-    mi->clear_error();
-    mi->slave_running = 1;
-    if (init_replica_thread(thd, SLAVE_THD_IO)) {
-      mysql_cond_broadcast(&mi->start_cond);
-      mysql_mutex_unlock(&mi->run_lock);
+    thd->thread_stack = (char *)&thd;  // 记住我们的栈位置
+    mi->clear_error(); // 清除错误信息
+    mi->slave_running = 1; // 设置从属线程为运行状态
+    if (init_replica_thread(thd, SLAVE_THD_IO)) { // 初始化从属线程
+      mysql_cond_broadcast(&mi->start_cond); // 广播启动条件
+      mysql_mutex_unlock(&mi->run_lock); // 解锁
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                  ER_THD(thd, ER_SLAVE_FATAL_ERROR),
-                 "Failed during slave I/O thread initialization ");
-      goto err;
+                 "Failed during slave I/O thread initialization "); // 报告错误
+      goto err; // 跳转到错误处理
     }
 
-    thd_manager->add_thd(thd);
-    thd_added = true;
+    thd_manager->add_thd(thd); // 将线程添加到管理器
+    thd_added = true; // 标记线程已添加
 
-    mi->abort_slave = false;
-    mysql_mutex_unlock(&mi->run_lock);
-    mysql_cond_broadcast(&mi->start_cond);
+    mi->abort_slave = false; // 设置从属线程未中止
+    mysql_mutex_unlock(&mi->run_lock); // 解锁
+    mysql_cond_broadcast(&mi->start_cond); // 广播启动条件
 
   connect_init:
     DBUG_PRINT("master_info",
                ("log_file_name: '%s'  position: %s", mi->get_master_log_name(),
-                llstr(mi->get_master_log_pos(), llbuff)));
+                llstr(mi->get_master_log_pos(), llbuff))); // 打印主服务器信息
 
-    /* This must be called before run any binlog_relay_io hooks */
-    RPL_MASTER_INFO = mi;
+    /* 这必须在运行任何 binlog_relay_io 钩子之前调用 */
+    RPL_MASTER_INFO = mi; // 设置主服务器信息
 
-    if (RUN_HOOK(binlog_relay_io, thread_start, (thd, mi))) {
+    if (RUN_HOOK(binlog_relay_io, thread_start, (thd, mi))) { // 运行线程启动钩子
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                  ER_THD(thd, ER_SLAVE_FATAL_ERROR),
-                 "Failed to run 'thread_start' hook");
-      goto err;
+                 "Failed to run 'thread_start' hook"); // 报告错误
+      goto err; // 跳转到错误处理
     }
 
-    retry_count = 0;
-    if (!(mi->mysql = mysql = mysql_init(nullptr))) {
+    retry_count = 0; // 初始化重试计数
+    if (!(mi->mysql = mysql = mysql_init(nullptr))) { // 初始化 MySQL 连接
       mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
-                 ER_THD(thd, ER_SLAVE_FATAL_ERROR), "error in mysql_init()");
-      goto err;
+                 ER_THD(thd, ER_SLAVE_FATAL_ERROR), "error in mysql_init()"); // 报告错误
+      goto err; // 跳转到错误处理
     }
 
-    THD_STAGE_INFO(thd, stage_connecting_to_source);
+    THD_STAGE_INFO(thd, stage_connecting_to_source); // 设置阶段信息
 
-    if (!safe_connect(thd, mysql, mi)) {
+    if (!safe_connect(thd, mysql, mi)) { // 安全连接到主服务器
       LogErr(SYSTEM_LEVEL, ER_RPL_SLAVE_CONNECTED_TO_MASTER_REPLICATION_STARTED,
              mi->get_for_channel_str(), mi->get_user(), mi->host, mi->port,
              mi->get_io_rpl_log_name(),
-             llstr(mi->get_master_log_pos(), llbuff));
+             llstr(mi->get_master_log_pos(), llbuff)); // 记录连接成功信息
     } else {
       LogErr(INFORMATION_LEVEL, ER_RPL_SLAVE_IO_THREAD_KILLED,
-             mi->get_for_channel_str());
-      goto err;
+             mi->get_for_channel_str()); // 记录从属线程被杀死的信息
+      goto err; // 跳转到错误处理
     }
 
   connected:
@@ -5415,40 +5533,45 @@ extern "C" void *handle_slave_io(void *arg) {
       care of putting the mi->transaction_parser in the correct state when
       initializing Received_gtid_set from relay log during slave server starts,
       as the IO thread might had stopped in the middle of a transaction.
+      当使用自动定位时，从属 IO 线程将始终从事务的开始读取事务（事务的第一个事件）。
+      因此，我们必须在（重新）连接后重置事务边界解析器。
+      如果不使用自动定位，Relay_log_info::rli_init_info() 在从属服务器启动时
+      初始化 Received_gtid_set 时已将 mi->transaction_parser 放置在正确的状态，
+      因为 IO 线程可能在事务中间停止。
     */
     if (mi->is_auto_position()) {
-      mi->transaction_parser.reset();
-      mi->clear_queueing_trx(true /* need_lock*/);
+      mi->transaction_parser.reset(); // 重置事务解析器
+      mi->clear_queueing_trx(true /* need_lock*/); // 清除排队的事务
     }
 
-    mi->reset_network_error();
+    mi->reset_network_error(); // 重置网络错误
 
     DBUG_EXECUTE_IF("dbug.before_get_running_status_yes", {
       rpl_replica_debug_point(DBUG_RPL_S_BEFORE_RUNNING_STATUS, thd);
     };);
     DBUG_EXECUTE_IF("dbug.calculate_sbm_after_previous_gtid_log_event", {
-      /* Fake that thread started 3 minutes ago */
+      /* 假装线程在 3 分钟前启动 */
       thd->start_time.tv_sec -= 180;
     };);
     DBUG_EXECUTE_IF("dbug.calculate_sbm_after_fake_rotate_log_event", {
-      /* Fake that thread started 3 minutes ago */
+      /* 假装线程在 3 分钟前启动 */
       thd->start_time.tv_sec -= 180;
     };);
-    mysql_mutex_lock(&mi->run_lock);
-    mi->slave_running = MYSQL_SLAVE_RUN_CONNECT;
-    mysql_mutex_unlock(&mi->run_lock);
+    mysql_mutex_lock(&mi->run_lock); // 锁定运行锁
+    mi->slave_running = MYSQL_SLAVE_RUN_CONNECT; // 设置从属线程为连接状态
+    mysql_mutex_unlock(&mi->run_lock); // 解锁
 
-    THD_STAGE_INFO(thd, stage_checking_source_version);
-    ret = get_master_version_and_clock(mysql, mi);
-    if (!ret) ret = get_master_uuid(mysql, mi);
-    if (!ret) ret = io_thread_init_commands(mysql, mi);
+    THD_STAGE_INFO(thd, stage_checking_source_version); // 设置阶段信息
+    ret = get_master_version_and_clock(mysql, mi); // 获取主服务器版本和时钟
+    if (!ret) ret = get_master_uuid(mysql, mi); // 获取主服务器 UUID
+    if (!ret) ret = io_thread_init_commands(mysql, mi); // 初始化 IO 线程命令
 
     if (!ret && mi->is_source_connection_auto_failover()) {
-      ret = Async_conn_failover_manager::get_source_quorum_status(mysql, mi);
+      ret = Async_conn_failover_manager::get_source_quorum_status(mysql, mi); // 获取源连接的法定人数状态
     }
 
-    if (ret == 1) /* Fatal error */
-      goto err;
+    if (ret == 1) /* 致命错误 */
+      goto err; // 跳转到错误处理
 
     if (ret == 2 || DBUG_EVALUATE_IF(
                         "simulate_reconnect_after_failed_registration", 1, 0)) {
@@ -5456,64 +5579,67 @@ extern "C" void *handle_slave_io(void *arg) {
               mi->info_thd, mi,
               "Slave I/O thread killed "
               "while calling get_master_version_and_clock(...)"))
-        goto err;
-      suppress_warnings = false;
-      /* Try to reconnect because the error was caused by a transient network
-       * problem */
+        goto err; // 检查从属 IO 线程是否被杀死
+      suppress_warnings = false; // 不抑制警告
+      /* 尝试重新连接，因为错误是由瞬态网络问题引起的 */
       if (try_to_reconnect(thd, mysql, mi, &retry_count, suppress_warnings,
                            reconnect_messages_after_failed_registration))
-        goto err;
-      goto connected;
+        goto err; // 尝试重新连接
+      goto connected; // 重新连接
     }
 
     /*
       Register ourselves with the master.
+      在主服务器上注册自己。
     */
-    THD_STAGE_INFO(thd, stage_registering_replica_on_source);
-    if (register_slave_on_master(mysql, mi, &suppress_warnings)) {
+    THD_STAGE_INFO(thd, stage_registering_replica_on_source); // 设置阶段信息
+    if (register_slave_on_master(mysql, mi, &suppress_warnings)) { // 在主服务器上注册从属
       if (!check_io_slave_killed(thd, mi,
                                  "Slave I/O thread killed "
                                  "while registering slave on master")) {
-        LogErr(ERROR_LEVEL, ER_RPL_SLAVE_IO_THREAD_CANT_REGISTER_ON_MASTER);
+        LogErr(ERROR_LEVEL, ER_RPL_SLAVE_IO_THREAD_CANT_REGISTER_ON_MASTER); // 报告错误
         if (try_to_reconnect(thd, mysql, mi, &retry_count, suppress_warnings,
                              reconnect_messages_after_failed_registration))
-          goto err;
+          goto err; // 尝试重新连接
       } else
-        goto err;
-      goto connected;
+        goto err; // 跳转到错误处理
+      goto connected; // 重新连接
     }
 
-    DBUG_PRINT("info", ("Starting reading binary log from master"));
-    while (!io_slave_killed(thd, mi)) {
-      MYSQL_RPL rpl;
+    DBUG_PRINT("info", ("Starting reading binary log from master")); // 打印开始读取二进制日志的信息
+    while (!io_slave_killed(thd, mi)) { // 当从属线程未被杀死时
+      MYSQL_RPL rpl; // MySQL 复制结构
 
-      THD_STAGE_INFO(thd, stage_requesting_binlog_dump);
+      THD_STAGE_INFO(thd, stage_requesting_binlog_dump); // 设置阶段信息
       if (request_dump(thd, mysql, &rpl, mi, &suppress_warnings) ||
           DBUG_EVALUATE_IF("simulate_reconnect_after_failed_binlog_dump", 1,
                            0)) {
         LogErr(ERROR_LEVEL, ER_RPL_SLAVE_ERROR_REQUESTING_BINLOG_DUMP,
-               mi->get_for_channel_str());
+               mi->get_for_channel_str()); // 报告请求二进制日志转储时的错误
         if (check_io_slave_killed(thd, mi,
                                   "Slave I/O thread killed while "
                                   "requesting master dump") ||
             try_to_reconnect(thd, mysql, mi, &retry_count, suppress_warnings,
                              reconnect_messages_after_failed_dump))
-          goto err;
-        goto connected;
+          goto err; // 检查从属 IO 线程是否被杀死
+        goto connected; // 重新连接
       }
-      const char *event_buf;
+      const char *event_buf; // 事件缓冲区
 
-      assert(mi->last_error().number == 0);
-      while (!io_slave_killed(thd, mi)) {
-        ulong event_len;
+      assert(mi->last_error().number == 0); // 确保没有错误
+      while (!io_slave_killed(thd, mi)) { // 当从属线程未被杀死时
+        ulong event_len; // 事件长度
         /*
            We say "waiting" because read_event() will wait if there's nothing to
            read. But if there's something to read, it will not wait. The
            important thing is to not confuse users by saying "reading" whereas
            we're in fact receiving nothing.
+           我们说“等待”，因为 read_event() 会在没有内容可读时等待。
+           但如果有内容可读，它将不会等待。重要的是不要让用户混淆
+           说“读取”，而实际上我们并没有接收任何内容。
         */
-        THD_STAGE_INFO(thd, stage_waiting_for_source_to_send_event);
-        event_len = read_event(mysql, &rpl, mi, &suppress_warnings);
+        THD_STAGE_INFO(thd, stage_waiting_for_source_to_send_event); // 设置阶段信息
+        event_len = read_event(mysql, &rpl, mi, &suppress_warnings); // 读取事件
 
         DBUG_EXECUTE_IF(
             "relay_xid_trigger", if (event_len != packet_error) {
@@ -5532,72 +5658,71 @@ extern "C" void *handle_slave_io(void *arg) {
         if (check_io_slave_killed(thd, mi,
                                   "Slave I/O thread killed while "
                                   "reading event"))
-          goto err;
+          goto err; // 检查从属 IO 线程是否被杀死
 
         if (event_len == packet_error ||
             DBUG_EVALUATE_IF("simulate_reconnect_after_failed_event_read", 1,
                              0)) {
-          uint mysql_error_number = mysql_errno(mysql);
+          uint mysql_error_number = mysql_errno(mysql); // 获取 MySQL 错误号
           switch (mysql_error_number) {
             case CR_NET_PACKET_TOO_LARGE:
               LogErr(ERROR_LEVEL,
                      ER_RPL_LOG_ENTRY_EXCEEDS_REPLICA_MAX_ALLOWED_PACKET,
-                     replica_max_allowed_packet);
+                     replica_max_allowed_packet); // 报告日志条目超出最大允许包的错误
               mi->report(ERROR_LEVEL, ER_SERVER_NET_PACKET_TOO_LARGE, "%s",
                          "Got a packet bigger than "
-                         "'replica_max_allowed_packet' bytes");
-              goto err;
+                         "'replica_max_allowed_packet' bytes"); // 报告错误
+              goto err; // 跳转到错误处理
             case ER_MASTER_FATAL_ERROR_READING_BINLOG:
               mi->report(ERROR_LEVEL,
                          ER_SERVER_MASTER_FATAL_ERROR_READING_BINLOG,
                          ER_THD(thd, ER_MASTER_FATAL_ERROR_READING_BINLOG),
-                         mysql_error_number, mysql_error(mysql));
-              goto err;
+                         mysql_error_number, mysql_error(mysql)); // 报告主服务器读取二进制日志时的致命错误
+              goto err; // 跳转到错误处理
             case ER_OUT_OF_RESOURCES:
-              LogErr(ERROR_LEVEL, ER_RPL_SLAVE_STOPPING_AS_MASTER_OOM);
+              LogErr(ERROR_LEVEL, ER_RPL_SLAVE_STOPPING_AS_MASTER_OOM); // 报告主服务器内存不足的错误
               mi->report(ERROR_LEVEL, ER_SERVER_OUT_OF_RESOURCES, "%s",
-                         ER_THD(thd, ER_SERVER_OUT_OF_RESOURCES));
-              goto err;
+                         ER_THD(thd, ER_SERVER_OUT_OF_RESOURCES)); // 报告错误
+              goto err; // 跳转到错误处理
           }
           if (try_to_reconnect(thd, mysql, mi, &retry_count, suppress_warnings,
                                reconnect_messages_after_failed_event_read))
-            goto err;
-          goto connected;
+            goto err; // 尝试重新连接
+          goto connected; // 重新连接
         }  // if (event_len == packet_error)
 
-        retry_count = 0;  // ok event, reset retry counter
-        THD_STAGE_INFO(thd, stage_queueing_source_event_to_the_relay_log);
-        event_buf = (const char *)mysql->net.read_pos + 1;
+        retry_count = 0;  // 事件正常，重置重试计数
+        THD_STAGE_INFO(thd, stage_queueing_source_event_to_the_relay_log); // 设置阶段信息
+        event_buf = (const char *)mysql->net.read_pos + 1; // 获取事件缓冲区
         DBUG_PRINT("info", ("IO thread received event of type %s",
                             Log_event::get_type_str(
-                                (Log_event_type)event_buf[EVENT_TYPE_OFFSET])));
+                                (Log_event_type)event_buf[EVENT_TYPE_OFFSET]))); // 打印接收到的事件类型
         if (RUN_HOOK(binlog_relay_io, after_read_event,
                      (thd, mi, (const char *)mysql->net.read_pos + 1, event_len,
                       &event_buf, &event_len))) {
           mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                      ER_THD(thd, ER_SLAVE_FATAL_ERROR),
-                     "Failed to run 'after_read_event' hook");
-          goto err;
+                     "Failed to run 'after_read_event' hook"); // 报告错误
+          goto err; // 跳转到错误处理
         }
 
-        /* XXX: 'synced' should be updated by queue_event to indicate
-           whether event has been synced to disk */
-        bool synced = false;
+        /* XXX: 'synced' 应该由 queue_event 更新以指示事件是否已同步到磁盘 */
+        bool synced = false; // 事件是否已同步的标志
 #ifndef NDEBUG
-        bool was_in_trx = false;
+        bool was_in_trx = false; // 是否在事务中的标志
         if (mi->is_queueing_trx()) {
-          was_in_trx = true;
+          was_in_trx = true; // 标记为在事务中
           DBUG_EXECUTE_IF("rpl_ps_tables_queue", {
             rpl_replica_debug_point(DBUG_RPL_S_PS_TABLE_QUEUE);
           };);
         }
 #endif
-        QUEUE_EVENT_RESULT queue_res = queue_event(mi, event_buf, event_len);
+        QUEUE_EVENT_RESULT queue_res = queue_event(mi, event_buf, event_len); // 将事件排队
         if (queue_res == QUEUE_EVENT_ERROR_QUEUING) {
           mi->report(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_WRITE_FAILURE,
                      ER_THD(thd, ER_SLAVE_RELAY_LOG_WRITE_FAILURE),
-                     "could not queue event from master");
-          goto err;
+                     "could not queue event from master"); // 报告排队事件失败的错误
+          goto err; // 跳转到错误处理
         }
 #ifndef NDEBUG
         if (was_in_trx && !mi->is_queueing_trx()) {
@@ -5609,23 +5734,27 @@ extern "C" void *handle_slave_io(void *arg) {
                      (thd, mi, event_buf, event_len, synced))) {
           mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                      ER_THD(thd, ER_SLAVE_FATAL_ERROR),
-                     "Failed to run 'after_queue_event' hook");
-          goto err;
+                     "Failed to run 'after_queue_event' hook"); // 报告错误
+          goto err; // 跳转到错误处理
         }
 
         /* The event was queued, but there was a failure flushing master info */
+        /* 事件已排队，但刷新主信息时发生故障 */
         if (queue_res == QUEUE_EVENT_ERROR_FLUSHING_INFO) {
           mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                      ER_THD(thd, ER_SLAVE_FATAL_ERROR),
-                     "Failed to flush master info.");
-          goto err;
+                     "Failed to flush master info."); // 报告刷新主信息失败的错误
+          goto err; // 跳转到错误处理
         }
 
-        assert(queue_res == QUEUE_EVENT_OK);
+        assert(queue_res == QUEUE_EVENT_OK); // 确保事件排队成功
         /*
           Pause the IO thread execution and wait for
           'continue_after_queue_event' signal to continue IO thread
           execution.
+          暂停 IO 线程执行并等待
+          'continue_after_queue_event' 信号以继续 IO 线程
+          执行。
         */
         DBUG_EXECUTE_IF("pause_after_queue_event", {
           rpl_replica_debug_point(DBUG_RPL_S_PAUSE_AFTER_QUEUE_EV);
@@ -5642,6 +5771,16 @@ extern "C" void *handle_slave_io(void *arg) {
           the clean value is 1), then we are going into
           wait_for_relay_log_space() for no reason, but this function will do a
           clean read, notice the clean value and exit immediately.
+          查看中继日志是否占用过多空间。
+          我们在这里不锁定 mi->rli->log_space_lock；这个脏读节省了时间
+          并且不会引入任何问题：
+          - 如果 mi->rli->ignore_log_space_limit 为 1，但在此之后变为 0（因此
+          清洁值为 0），那么我们只会读取多一个事件，正如我们应该的那样，
+          并且我们将在下一个事件中阻塞。没什么大不了的。
+          - 如果 mi->rli->ignore_log_space_limit 为 0，但在此之后变为 1（因此
+          清洁值为 1），那么我们将无缘无故进入
+          wait_for_relay_log_space()，但这个函数将进行清洁读取，注意到
+          清洁值并立即退出。
         */
 #ifndef NDEBUG
         {
@@ -5655,17 +5794,17 @@ extern "C" void *handle_slave_io(void *arg) {
 #endif
 
         DBUG_EXECUTE_IF("rpl_set_relay_log_limits", {
-          rli->log_space_limit = 10;
-          rli->log_space_total = 20;
+          rli->log_space_limit = 10; // 设置日志空间限制
+          rli->log_space_total = 20; // 设置日志空间总量
         };);
 
         if (rli->log_space_limit &&
             rli->log_space_limit < rli->log_space_total &&
             !rli->ignore_log_space_limit)
-          if (wait_for_relay_log_space(rli)) {
+          if (wait_for_relay_log_space(rli)) { // 等待中继日志空间
             LogErr(ERROR_LEVEL,
-                   ER_RPL_SLAVE_IO_THREAD_ABORTED_WAITING_FOR_RELAY_LOG_SPACE);
-            goto err;
+                   ER_RPL_SLAVE_IO_THREAD_ABORTED_WAITING_FOR_RELAY_LOG_SPACE); // 报告等待中继日志空间时的错误
+            goto err; // 跳转到错误处理
           }
         DBUG_EXECUTE_IF("flush_after_reading_user_var_event", {
           if (event_buf[EVENT_TYPE_OFFSET] == binary_log::USER_VAR_EVENT)
@@ -5674,57 +5813,66 @@ extern "C" void *handle_slave_io(void *arg) {
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_gtid_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::GTID_LOG_EVENT)
-                thd->killed = THD::KILLED_NO_VALUE;);
+                thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_query_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::QUERY_EVENT)
-                thd->killed = THD::KILLED_NO_VALUE;);
+                thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_user_var_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::USER_VAR_EVENT)
-                thd->killed = THD::KILLED_NO_VALUE;);
+                thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_table_map_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::TABLE_MAP_EVENT)
-                thd->killed = THD::KILLED_NO_VALUE;);
+                thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_xid_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::XID_EVENT)
-                thd->killed = THD::KILLED_NO_VALUE;);
+                thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_write_rows_log_event",
             if (event_buf[EVENT_TYPE_OFFSET] == binary_log::WRITE_ROWS_EVENT)
-                thd->killed = THD::KILLED_NO_VALUE;);
+                thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF(
             "stop_io_after_reading_unknown_event",
             /*
              * Cast to uchar, because of Percona's events
              * which have values > 128. This causes ENUM_END_EVENT to be > 128
              * but event_buf is char, so comparison does not work.
+             * 转换为 uchar，因为 Percona 的事件
+             * 具有大于 128 的值。这导致 ENUM_END_EVENT 大于 128
+             * 但 event_buf 是 char，因此比较不起作用。
              */
             if (static_cast<uchar>(event_buf[EVENT_TYPE_OFFSET]) >=
                 binary_log::ENUM_END_EVENT) thd->killed =
-                THD::KILLED_NO_VALUE;);
+                THD::KILLED_NO_VALUE;); // 设置线程状态
         DBUG_EXECUTE_IF("stop_io_after_queuing_event",
-                        thd->killed = THD::KILLED_NO_VALUE;);
+                        thd->killed = THD::KILLED_NO_VALUE;); // 设置线程状态
         /*
           After event is flushed to relay log file, memory used
           by thread's mem_root is not required any more.
           Hence adding ClearorReuse() to do the
           cleanup, otherwise a long running IO thread can
           cause OOM error.
+          在事件被刷新到中继日志文件后，线程的内存根不再需要。
+          因此添加 ClearorReuse() 以进行清理，否则长时间运行的 IO 线程可能
+          导致 OOM 错误。
         */
-        thd->mem_root->ClearForReuse();
+        thd->mem_root->ClearForReuse(); // 清理内存
       }
     }
 
-    // error = 0;
+    // error = 0; // 错误标志
   err:
     /*
       If source_connection_auto_failover (async connection failover) is
       enabled, this server is not a Group Replication SECONDARY and
       Replica IO thread is not killed but failed due to network error, a
       connection to another source is attempted.
+      如果启用了 source_connection_auto_failover（异步连接故障转移），
+      该服务器不是组复制的 SECONDARY，并且从属 IO 线程未被杀死
+      而是由于网络错误而失败，则尝试连接到另一个源。
     */
     if (mi->is_source_connection_auto_failover() &&
         !is_group_replication_member_secondary() &&
@@ -5737,6 +5885,9 @@ extern "C" void *handle_slave_io(void *arg) {
         If there is a STOP REPLICA ongoing for any channel, that is, a
         channel_map lock cannot be acquired by this channel IO thread,
         then this channel IO thread does skip the next sender selection.
+        获取要连接的发送者。
+        如果任何通道正在进行 STOP REPLICA，即该通道 IO 线程无法获取
+        channel_map 锁，则该通道 IO 线程将跳过下一个发送者选择。
       */
       Async_conn_failover_manager::enum_do_auto_conn_failover_error
           update_source_error =
@@ -5754,39 +5905,42 @@ extern "C" void *handle_slave_io(void *arg) {
 
       if (Async_conn_failover_manager::ACF_NO_SOURCES_ERROR !=
           update_source_error) {
-        /* Wait before reconnect to avoid resources starvation. */
-        my_sleep(1000000);
+        /* 等待重新连接以避免资源耗尽。 */
+        my_sleep(1000000); // 等待 1 秒
 
-        /* After waiting, recheck that a STOP REPLICA did not happen. */
+        /* 等待后，重新检查是否没有发生 STOP REPLICA。 */
         if (!io_slave_killed(thd, mi)) {
-          /* Reconnect. */
+          /* 重新连接。 */
           if (mysql) {
-            thd->clear_active_vio();
-            mysql_close(mysql);
-            mi->mysql = nullptr;
+            thd->clear_active_vio(); // 清除活动 VIO
+            mysql_close(mysql); // 关闭 MySQL 连接
+            mi->mysql = nullptr; // 清空 MySQL 指针
           }
-          goto connect_init;
+          goto connect_init; // 重新连接
         }
       }
     }
 
     // print the current replication position
+    // 打印当前复制位置
     LogErr(INFORMATION_LEVEL, ER_RPL_SLAVE_IO_THREAD_EXITING,
            mi->get_for_channel_str(), mi->get_io_rpl_log_name(),
-           llstr(mi->get_master_log_pos(), llbuff));
-    /* At this point the I/O thread will not try to reconnect anymore. */
-    mi->atomic_is_stopping = true;
-    (void)RUN_HOOK(binlog_relay_io, thread_stop, (thd, mi));
+           llstr(mi->get_master_log_pos(), llbuff)); // 打印从属线程退出信息
+    /* 此时 I/O 线程将不再尝试重新连接。 */
+    mi->atomic_is_stopping = true; // 设置停止标志
+    (void)RUN_HOOK(binlog_relay_io, thread_stop, (thd, mi)); // 运行线程停止钩子
     /*
       Pause the IO thread and wait for 'continue_to_stop_io_thread'
       signal to continue to shutdown the IO thread.
+      暂停 IO 线程并等待 'continue_to_stop_io_thread'
+      信号以继续关闭 IO 线程。
     */
     DBUG_EXECUTE_IF("pause_after_io_thread_stop_hook", {
       rpl_replica_debug_point(DBUG_RPL_S_PAUSE_AFTER_IO_STOP, thd);
     };);
 
-    thd->reset_query();
-    thd->reset_db(NULL_CSTR);
+    thd->reset_query(); // 重置查询
+    thd->reset_db(NULL_CSTR); // 重置数据库
     if (mysql) {
       /*
         Here we need to clear the active VIO before closing the
@@ -5795,65 +5949,77 @@ extern "C" void *handle_slave_io(void *arg) {
         issued a STOP SLAVE.  If that happends, the shutdown_active_vio()
         can be called in the middle of closing the VIO associated with
         the 'mysql' object, causing a crash.
+        在关闭与主服务器的连接之前，我们需要清除活动 VIO。
+        原因是 THD::awake() 可能会在 terminate_slave_thread() 中被调用，
+        因为有人发出了 STOP SLAVE。如果发生这种情况，shutdown_active_vio()
+        可能会在关闭与 'mysql' 对象相关的 VIO 的中间被调用，导致崩溃。
       */
-      thd->clear_active_vio();
-      mysql_close(mysql);
-      mi->mysql = nullptr;
+      thd->clear_active_vio(); // 清除活动 VIO
+      mysql_close(mysql); // 关闭 MySQL 连接
+      mi->mysql = nullptr; // 清空 MySQL 指针
     }
-    write_ignored_events_info_to_relay_log(thd, mi);
-    THD_STAGE_INFO(thd, stage_waiting_for_replica_mutex_on_exit);
-    mysql_mutex_lock(&mi->run_lock);
+    write_ignored_events_info_to_relay_log(thd, mi); // 写入被忽略的事件信息到中继日志
+    THD_STAGE_INFO(thd, stage_waiting_for_replica_mutex_on_exit); // 设置阶段信息
+    mysql_mutex_lock(&mi->run_lock); // 锁定运行锁
     /*
       Clean information used to start slave in order to avoid
       security issues.
+      清除用于启动从属的信息，以避免安全问题。
     */
-    mi->reset_start_info();
-    /* Forget the relay log's format */
-    mysql_mutex_lock(rli->relay_log.get_log_lock());
-    mi->set_mi_description_event(nullptr);
-    mysql_mutex_unlock(rli->relay_log.get_log_lock());
+    mi->reset_start_info(); // 重置启动信息
+    /* 忘记中继日志的格式 */
+    mysql_mutex_lock(rli->relay_log.get_log_lock()); // 锁定中继日志
+    mi->set_mi_description_event(nullptr); // 清空描述事件
+    mysql_mutex_unlock(rli->relay_log.get_log_lock()); // 解锁中继日志
 
-    // destructor will not free it, because net.vio is 0
-    thd->get_protocol_classic()->end_net();
+    // 析构函数不会释放它，因为 net.vio 为 0
+    thd->get_protocol_classic()->end_net(); // 结束网络连接
 
-    thd->release_resources();
-    THD_CHECK_SENTRY(thd);
-    if (thd_added) thd_manager->remove_thd(thd);
+    thd->release_resources(); // 释放资源
+    THD_CHECK_SENTRY(thd); // 检查 THD 的有效性
+    if (thd_added) thd_manager->remove_thd(thd); // 从管理器中移除线程
 
-    mi->abort_slave = false;
-    mi->slave_running = 0;
-    mi->atomic_is_stopping = false;
-    mysql_mutex_lock(&mi->info_thd_lock);
-    mi->info_thd = nullptr;
-    mysql_mutex_unlock(&mi->info_thd_lock);
+    mi->abort_slave = false; // 设置从属线程未中止
+    mi->slave_running = 0; // 设置从属线程为未运行状态
+    mi->atomic_is_stopping = false; // 设置停止标志为 false
+    mysql_mutex_lock(&mi->info_thd_lock); // 锁定信息线程锁
+    mi->info_thd = nullptr; // 清空信息线程指针
+    mysql_mutex_unlock(&mi->info_thd_lock); // 解锁信息线程锁
 
     /*
       The thd can only be destructed after indirect references
       through mi->info_thd are cleared: mi->info_thd= NULL.
+      thd 只能在通过 mi->info_thd 清除间接引用后析构：mi->info_thd= NULL。
 
       For instance, user thread might be issuing show_slave_status
       and attempting to read mi->info_thd->proc_info().
       Therefore thd must only be deleted after info_thd is set
       to NULL.
+      例如，用户线程可能会发出 show_slave_status
+      并尝试读取 mi->info_thd->proc_info()。
+      因此，thd 必须在 info_thd 设置为 NULL 后才被删除。
     */
-    mysql_thread_set_psi_THD(nullptr);
-    delete thd;
+    mysql_thread_set_psi_THD(nullptr); // 清空 PSI
+    delete thd; // 删除线程
 
     /*
       Note: the order of the two following calls (first broadcast, then unlock)
       is important. Otherwise a killer_thread can execute between the calls and
       delete the mi structure leading to a crash! (see BUG#25306 for details)
+      注意：以下两个调用的顺序（先广播，然后解锁）很重要。
+      否则，杀手线程可能会在调用之间执行并删除 mi 结构，导致崩溃！
+      （请参见 BUG#25306 的详细信息）
      */
-    mysql_cond_broadcast(&mi->stop_cond);  // tell the world we are done
-    DBUG_EXECUTE_IF("simulate_replica_delay_at_terminate_bug38694", sleep(5););
-    mysql_mutex_unlock(&mi->run_lock);
+    mysql_cond_broadcast(&mi->stop_cond);  // 通知所有人我们完成了
+    DBUG_EXECUTE_IF("simulate_replica_delay_at_terminate_bug38694", sleep(5);); // 模拟延迟
+    mysql_mutex_unlock(&mi->run_lock); // 解锁
   }
-  my_thread_end();
+  my_thread_end(); // 结束线程
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-  ERR_remove_thread_state(0);
+  ERR_remove_thread_state(0); // 移除线程状态
 #endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
-  my_thread_exit(nullptr);
-  return (nullptr);  // Avoid compiler warnings
+  my_thread_exit(nullptr); // 线程退出
+  return (nullptr);  // 避免编译器警告
 }
 
 /*
@@ -8260,43 +8426,61 @@ void slave_io_thread_detach_vio() {
 /*
   Set network namespace if channel is using network namespace and connect
   to master.
+  设置网络命名空间，如果通道使用网络命名空间并连接到主服务器。
 
   @param  thd                THD context
   @param  mysql              MYSQL connection handler
   @param  mi                 Master info corresponding to this channel.
   @param  reconnect          Reconnect if true
   @param  suppress_warnings  suppress warnings if required.
+  @param  thd                THD 上下文
+  @param  mysql              MYSQL 连接处理程序
+  @param  mi                 对应于此通道的主信息。
+  @param  reconnect          如果为真，则重新连接
+  @param  suppress_warnings  如果需要，抑制警告。
 
   @retval 0   ok.
   @retval 1   not ok.
+  @retval 0   成功。
+  @retval 1   失败。
 */
 static int connect_to_master_via_namespace(THD *thd, MYSQL *mysql,
                                            Master_info *mi, bool reconnect,
                                            bool suppress_warnings,
                                            const std::string &host,
                                            const uint port) {
+  // 检查是否设置了网络命名空间
   if (mi->is_set_network_namespace()) {
 #ifdef HAVE_SETNS
+    // 尝试设置网络命名空间，如果失败则返回 1
     if (set_network_namespace(mi->network_namespace)) return 1;
 #else
     // Network namespace not supported by the platform. Report error.
+    // 如果平台不支持网络命名空间，记录错误
     LogErr(ERROR_LEVEL, ER_NETWORK_NAMESPACES_NOT_SUPPORTED);
     return 1;
 #endif
     // Save default value of network namespace
     // Set network namespace before sockets be created
+    // 保存默认的网络命名空间值
+    // 在创建套接字之前设置网络命名空间
   }
+  
+  // 调用 connect_to_master 函数尝试连接到主服务器
   int connect_res = connect_to_master(thd, mysql, mi, reconnect,
                                       suppress_warnings, host, port);
   // we can get killed during safe_connect
+  
+  // 在 safe_connect 期间可能会被杀死
 #ifdef HAVE_SETNS
+  // 如果设置了网络命名空间，恢复原始的网络命名空间
   if (mi->is_set_network_namespace()) {
     // Restore original network namespace used to be before connection has
     // been created
     (void)restore_original_network_namespace();
   }
 #endif
-  return connect_res;
+  return connect_res;  // 返回连接结果
 }
 
 /*
@@ -8314,176 +8498,193 @@ static int connect_to_master_via_namespace(THD *thd, MYSQL *mysql,
 */
 static int safe_connect(THD *thd, MYSQL *mysql, Master_info *mi,
                         const std::string &host, const uint port) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
+  // 调用 connect_to_master_via_namespace 函数尝试连接到主服务器
   return connect_to_master_via_namespace(thd, mysql, mi,
-                                         /*reconnect=*/false,
-                                         /*suppress_warnings=*/false, host,
-                                         port);
+                                         /*reconnect=*/false,  // 不重新连接
+                                         /*suppress_warnings=*/false,  // 不抑制警告
+                                         host,  // 主服务器的主机名
+                                         port);  // 主服务器的端口号
 }
 
+
+
+/**
+  尝试连接到主服务器，直到成功或从属被杀死
+
+  SYNPOSIS
+    connect_to_master()
+    thd                 从属的线程处理程序
+    mysql               MySQL 连接句柄
+    mi                  复制句柄
+
+  RETURN
+    0   ok
+    #   Error
+*/
 int connect_to_master(THD *thd, MYSQL *mysql, Master_info *mi, bool reconnect,
                       bool suppress_warnings, const std::string &host,
                       const uint port, bool is_io_thread) {
   int last_errno = -2;  // impossible error
-  ulong err_count = 0;
-  char llbuff[22];
-  char password[MAX_PASSWORD_LENGTH + 1];
-  size_t password_size = sizeof(password);
-  DBUG_TRACE;
-  set_replica_max_allowed_packet(thd, mysql);
+  ulong err_count = 0;  // 错误计数
+  char llbuff[22];      // 用于存储日志缓冲区
+  char password[MAX_PASSWORD_LENGTH + 1]; // 存储密码
+  size_t password_size = sizeof(password); // 密码大小
+  DBUG_TRACE; // 调试跟踪
+  set_replica_max_allowed_packet(thd, mysql); // 设置最大允许的数据包大小
 #ifndef NDEBUG
-  mi->events_until_exit = disconnect_slave_event_count;
+  mi->events_until_exit = disconnect_slave_event_count; // 事件计数
 #endif
-  ulong client_flag = CLIENT_REMEMBER_OPTIONS;
+  ulong client_flag = CLIENT_REMEMBER_OPTIONS; // 客户端标志
 
   /* Always reset public key to remove cached copy */
-  mysql_reset_server_public_key();
+  mysql_reset_server_public_key(); // 重置公钥以移除缓存副本
 
-  mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *)&replica_net_timeout);
-  mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *)&replica_net_timeout);
+  mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *)&replica_net_timeout); // 设置连接超时
+  mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *)&replica_net_timeout); // 设置读取超时
 
   if (mi->bind_addr[0]) {
-    DBUG_PRINT("info", ("bind_addr: %s", mi->bind_addr));
-    mysql_options(mysql, MYSQL_OPT_BIND, mi->bind_addr);
+    DBUG_PRINT("info", ("bind_addr: %s", mi->bind_addr)); // 打印绑定地址
+    mysql_options(mysql, MYSQL_OPT_BIND, mi->bind_addr); // 设置绑定地址
   }
 
   /* By default the channel is not configured to use SSL */
-  enum mysql_ssl_mode ssl_mode = SSL_MODE_DISABLED;
+  enum mysql_ssl_mode ssl_mode = SSL_MODE_DISABLED; // 默认不使用SSL
   if (mi->ssl) {
     /* The channel is configured to use SSL */
     mysql_ssl_set(mysql, mi->ssl_key[0] ? mi->ssl_key : nullptr,
                   mi->ssl_cert[0] ? mi->ssl_cert : nullptr,
                   mi->ssl_ca[0] ? mi->ssl_ca : nullptr,
                   mi->ssl_capath[0] ? mi->ssl_capath : nullptr,
-                  mi->ssl_cipher[0] ? mi->ssl_cipher : nullptr);
+                  mi->ssl_cipher[0] ? mi->ssl_cipher : nullptr); // 设置SSL参数
     mysql_options(mysql, MYSQL_OPT_SSL_CRL,
-                  mi->ssl_crl[0] ? mi->ssl_crl : nullptr);
+                  mi->ssl_crl[0] ? mi->ssl_crl : nullptr); // 设置SSL证书撤销列表
     mysql_options(mysql, MYSQL_OPT_TLS_VERSION,
-                  mi->tls_version[0] ? mi->tls_version : nullptr);
+                  mi->tls_version[0] ? mi->tls_version : nullptr); // 设置TLS版本
     mysql_options(mysql, MYSQL_OPT_TLS_CIPHERSUITES,
                   mi->tls_ciphersuites.first
                       ? nullptr
-                      : mi->tls_ciphersuites.second.c_str());
+                      : mi->tls_ciphersuites.second.c_str()); // 设置TLS密码套件
     mysql_options(mysql, MYSQL_OPT_SSL_CRLPATH,
-                  mi->ssl_crlpath[0] ? mi->ssl_crlpath : nullptr);
+                  mi->ssl_crlpath[0] ? mi->ssl_crlpath : nullptr); // 设置SSL证书撤销路径
     if (mi->ssl_verify_server_cert)
-      ssl_mode = SSL_MODE_VERIFY_IDENTITY;
+      ssl_mode = SSL_MODE_VERIFY_IDENTITY; // 验证服务器身份
     else if (mi->ssl_ca[0] || mi->ssl_capath[0])
-      ssl_mode = SSL_MODE_VERIFY_CA;
+      ssl_mode = SSL_MODE_VERIFY_CA; // 验证CA
     else
-      ssl_mode = SSL_MODE_REQUIRED;
+      ssl_mode = SSL_MODE_REQUIRED; // 强制使用SSL
   }
-  mysql_options(mysql, MYSQL_OPT_SSL_MODE, &ssl_mode);
+  mysql_options(mysql, MYSQL_OPT_SSL_MODE, &ssl_mode); // 设置SSL模式
 
   mysql_options(mysql, MYSQL_OPT_COMPRESSION_ALGORITHMS,
                 opt_replica_compressed_protocol ? COMPRESSION_ALGORITHM_ZLIB
-                                                : mi->compression_algorithm);
+                                                : mi->compression_algorithm); // 设置压缩算法
   mysql_options(mysql, MYSQL_OPT_ZSTD_COMPRESSION_LEVEL,
-                &mi->zstd_compression_level);
+                &mi->zstd_compression_level); // 设置ZSTD压缩级别
   /*
     If server's default charset is not supported (like utf16, utf32) as client
     charset, then set client charset to 'latin1' (default client charset).
   */
   if (is_supported_parser_charset(default_charset_info))
-    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, default_charset_info->csname);
+    mysql_options(mysql, MYSQL_SET_CHARSET_NAME, default_charset_info->csname); // 设置字符集
   else {
     LogErr(INFORMATION_LEVEL, ER_RPL_SLAVE_CANT_USE_CHARSET,
-           default_charset_info->csname, default_client_charset_info->csname);
+           default_charset_info->csname, default_client_charset_info->csname); // 日志错误
     mysql_options(mysql, MYSQL_SET_CHARSET_NAME,
-                  default_client_charset_info->csname);
+                  default_client_charset_info->csname); // 设置默认客户端字符集
   }
 
   if (mi->is_start_plugin_auth_configured()) {
     DBUG_PRINT("info", ("Slaving is using MYSQL_DEFAULT_AUTH %s",
-                        mi->get_start_plugin_auth()));
-    mysql_options(mysql, MYSQL_DEFAULT_AUTH, mi->get_start_plugin_auth());
+                        mi->get_start_plugin_auth())); // 打印使用的认证插件
+    mysql_options(mysql, MYSQL_DEFAULT_AUTH, mi->get_start_plugin_auth()); // 设置默认认证插件
   }
 
   if (mi->is_start_plugin_dir_configured()) {
     DBUG_PRINT("info", ("Slaving is using MYSQL_PLUGIN_DIR %s",
-                        mi->get_start_plugin_dir()));
-    mysql_options(mysql, MYSQL_PLUGIN_DIR, mi->get_start_plugin_dir());
+                        mi->get_start_plugin_dir())); // 打印插件目录
+    mysql_options(mysql, MYSQL_PLUGIN_DIR, mi->get_start_plugin_dir()); // 设置插件目录
   }
   /* Set MYSQL_PLUGIN_DIR in case master asks for an external authentication
      plugin */
   else if (opt_plugin_dir_ptr && *opt_plugin_dir_ptr)
-    mysql_options(mysql, MYSQL_PLUGIN_DIR, opt_plugin_dir_ptr);
+    mysql_options(mysql, MYSQL_PLUGIN_DIR, opt_plugin_dir_ptr); // 设置插件目录
 
   if (mi->public_key_path[0]) {
     /* Set public key path */
-    DBUG_PRINT("info", ("Set master's public key path"));
-    mysql_options(mysql, MYSQL_SERVER_PUBLIC_KEY, mi->public_key_path);
+    DBUG_PRINT("info", ("Set master's public key path")); // 打印主服务器公钥路径
+    mysql_options(mysql, MYSQL_SERVER_PUBLIC_KEY, mi->public_key_path); // 设置公钥路径
   }
 
   /* Get public key from master */
-  DBUG_PRINT("info", ("Set preference to get public key from master"));
-  mysql_options(mysql, MYSQL_OPT_GET_SERVER_PUBLIC_KEY, &mi->get_public_key);
+  DBUG_PRINT("info", ("Set preference to get public key from master")); // 打印获取公钥的偏好
+  mysql_options(mysql, MYSQL_OPT_GET_SERVER_PUBLIC_KEY, &mi->get_public_key); // 设置获取公钥的选项
 
   if (is_io_thread && !mi->is_start_user_configured())
-    LogErr(WARNING_LEVEL, ER_RPL_SLAVE_INSECURE_CHANGE_MASTER);
+    LogErr(WARNING_LEVEL, ER_RPL_SLAVE_INSECURE_CHANGE_MASTER); // 警告不安全的更改主服务器
 
   if (mi->get_password(password, &password_size)) {
     mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                ER_THD(thd, ER_SLAVE_FATAL_ERROR),
                "Unable to configure password when attempting to "
                "connect to the master server. Connection attempt "
-               "terminated.");
-    return 1;
+               "terminated."); // 报告密码配置错误
+    return 1; // 返回错误
   }
 
-  const char *user = mi->get_user();
+  const char *user = mi->get_user(); // 获取用户名
   if (user == nullptr || user[0] == 0) {
     mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                ER_THD(thd, ER_SLAVE_FATAL_ERROR),
                "Invalid (empty) username when attempting to "
                "connect to the master server. Connection attempt "
-               "terminated.");
-    return 1;
+               "terminated."); // 报告用户名无效
+    return 1; // 返回错误
   }
 
-  mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD, "program_name", "mysqld");
+  mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD, "program_name", "mysqld"); // 设置程序名称
   mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD, "_client_role",
-                 "binary_log_listener");
+                 "binary_log_listener"); // 设置客户端角色
   mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD,
-                 "_client_replication_channel_name", mi->get_channel());
+                 "_client_replication_channel_name", mi->get_channel()); // 设置复制通道名称
 
-  const char *tmp_host = host.empty() ? mi->host : host.c_str();
-  uint tmp_port = (port == 0) ? mi->port : port;
+  const char *tmp_host = host.empty() ? mi->host : host.c_str(); // 获取主机名
+  uint tmp_port = (port == 0) ? mi->port : port; // 获取端口号
 
-  bool replica_was_killed{false};
-  bool connected{false};
+  bool replica_was_killed{false}; // 从属是否被杀死
+  bool connected{false}; // 是否连接成功
 
   while (!connected) {
-    replica_was_killed = is_io_thread ? io_slave_killed(thd, mi)
+    replica_was_killed = is_io_thread ? io_slave_killed(thd, mi) // 检查从属是否被杀死
                                       : monitor_io_replica_killed(thd, mi);
-    if (replica_was_killed) break;
+    if (replica_was_killed) break; // 如果被杀死，退出循环
 
     if (reconnect) {
-      connected = !mysql_reconnect(mysql);
+      connected = !mysql_reconnect(mysql); // 尝试重新连接
     } else {
       // Set this each time mysql_real_connect() is called to make a connection
-      mysql_extension_set_server_extn(mysql, &mi->server_extn);
+      mysql_extension_set_server_extn(mysql, &mi->server_extn); // 设置服务器扩展
 
       connected = mysql_real_connect(mysql, tmp_host, user, password, nullptr,
-                                     tmp_port, nullptr, client_flag);
+                                     tmp_port, nullptr, client_flag); // 进行实际连接
     }
-    if (connected) break;
+    if (connected) break; // 如果连接成功，退出循环
 
     /*
        SHOW REPLICA STATUS will display the number of retries which
        would be real retry counts instead of mi->retry_count for
        each connection attempt by 'Last_IO_Error' entry.
     */
-    last_errno = mysql_errno(mysql);
-    suppress_warnings = false;
+    last_errno = mysql_errno(mysql); // 获取最后的错误号
+    suppress_warnings = false; // 不抑制警告
     if (is_io_thread) {
       mi->report(ERROR_LEVEL, last_errno,
                  "error %s to master '%s@%s:%d'"
                  " - retry-time: %d retries: %lu message: %s",
                  (reconnect ? "reconnecting" : "connecting"), mi->get_user(),
                  tmp_host, tmp_port, mi->connect_retry, err_count + 1,
-                 mysql_error(mysql));
+                 mysql_error(mysql)); // 报告连接错误
     }
 
     /*
@@ -8492,19 +8693,19 @@ int connect_to_master(THD *thd, MYSQL *mysql, Master_info *mi, bool reconnect,
       do not want to have election triggered on the first failure to
       connect
     */
-    if (++err_count == mi->retry_count) {
-      if (is_network_error(last_errno) && is_io_thread) mi->set_network_error();
-      replica_was_killed = true;
-      break;
+    if (++err_count == mi->retry_count) { // 如果达到重试次数
+      if (is_network_error(last_errno) && is_io_thread) mi->set_network_error(); // 设置网络错误
+      replica_was_killed = true; // 标记为被杀死
+      break; // 退出循环
     }
     slave_sleep(thd, mi->connect_retry,
-                is_io_thread ? io_slave_killed : monitor_io_replica_killed, mi);
+                is_io_thread ? io_slave_killed : monitor_io_replica_killed, mi); // 睡眠一段时间
   }
 
   if (!replica_was_killed) {
     if (is_io_thread) {
-      mi->clear_error();  // clear possible left over reconnect error
-      mi->reset_network_error();
+      mi->clear_error();  // clear possible left over reconnect error // 清除可能的重连错误
+      mi->reset_network_error(); // 重置网络错误
     }
 
     if (reconnect) {
@@ -8512,18 +8713,20 @@ int connect_to_master(THD *thd, MYSQL *mysql, Master_info *mi, bool reconnect,
         LogErr(
             SYSTEM_LEVEL, ER_RPL_SLAVE_CONNECTED_TO_MASTER_REPLICATION_RESUMED,
             mi->get_for_channel_str(), mi->get_user(), tmp_host, tmp_port,
-            mi->get_io_rpl_log_name(), llstr(mi->get_master_log_pos(), llbuff));
+            mi->get_io_rpl_log_name(), llstr(mi->get_master_log_pos(), llbuff)); // 日志连接成功
     } else {
       query_logger.general_log_print(thd, COM_CONNECT_OUT, "%s@%s:%d",
-                                     mi->get_user(), tmp_host, tmp_port);
+                                     mi->get_user(), tmp_host, tmp_port); // 打印连接日志
     }
 
-    thd->set_active_vio(mysql->net.vio);
+    thd->set_active_vio(mysql->net.vio); // 设置活动的VIO
   }
-  mysql->reconnect = true;
-  DBUG_PRINT("exit", ("replica_was_killed: %d", replica_was_killed));
-  return replica_was_killed;
+  mysql->reconnect = true; // 设置重新连接标志
+  DBUG_PRINT("exit", ("replica_was_killed: %d", replica_was_killed)); // 调试打印
+  return replica_was_killed; // 返回从属是否被杀死
 }
+
+
 
 /*
   safe_reconnect()
@@ -8862,193 +9065,214 @@ uint sql_replica_skip_counter;
 
 /**
    Executes a START SLAVE statement.
+   执行 START SLAVE 语句。
 
   @param thd                 Pointer to THD object for the client thread
                              executing the statement.
+                             指向执行语句的客户端线程的 THD 对象的指针。
 
-   @param connection_param   Connection parameters for starting threads
+  @param connection_param   Connection parameters for starting threads
+                            启动线程的连接参数。
 
-   @param master_param       Master parameters used for starting threads
+  @param master_param       Master parameters used for starting threads
+                            启动线程所需的主参数。
 
-   @param thread_mask_input  The thread mask that identifies which threads to
+  @param thread_mask_input  The thread mask that identifies which threads to
                              start. If 0 is passed (start no thread) then this
                              parameter is ignored and all stopped threads are
-                             started
+                             started.
+                             线程掩码，用于标识要启动的线程。如果传入 0（不启动任何线程），则忽略此参数，启动所有停止的线程。
 
-   @param mi                 Pointer to Master_info object for the slave's IO
+  @param mi                 Pointer to Master_info object for the slave's IO
                              thread.
+                             指向从属 IO 线程的 Master_info 对象的指针。
 
-   @param set_mts_settings   If true, the channel uses the server MTS
+  @param set_mts_settings   If true, the channel uses the server MTS
                              configured settings when starting the applier
                              thread.
+                             如果为真，则在启动应用线程时，通道使用服务器 MTS 配置的设置。
 
-   @retval false success
-   @retval true error
+  @retval false success
+  @retval true error
 */
 bool start_slave(THD *thd, LEX_SLAVE_CONNECTION *connection_param,
                  LEX_MASTER_INFO *master_param, int thread_mask_input,
                  Master_info *mi, bool set_mts_settings) {
-  bool is_error = false;
-  int thread_mask;
+  bool is_error = false; // 用于标识是否发生错误
+  int thread_mask; // 线程掩码
 
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
   /*
     START SLAVE command should ignore 'read-only' and 'super_read_only'
     options so that it can update 'mysql.slave_master_info' and
     'mysql.slave_relay_log_info' replication repository tables.
+    START SLAVE 命令应忽略 'read-only' 和 'super_read_only' 选项，以便能够更新 'mysql.slave_master_info' 和 'mysql.slave_relay_log_info' 复制存储库表。
   */
-  thd->set_skip_readonly_check();
-  Security_context *sctx = thd->security_context();
+  thd->set_skip_readonly_check(); // 跳过只读检查
+  Security_context *sctx = thd->security_context(); // 获取安全上下文
   if (!sctx->check_access(SUPER_ACL) &&
       !sctx->has_global_grant(STRING_WITH_LEN("REPLICATION_SLAVE_ADMIN"))
            .first) {
     my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-             "SUPER or REPLICATION_SLAVE_ADMIN");
-    return true;
+             "SUPER or REPLICATION_SLAVE_ADMIN"); // 报告权限错误
+    return true; // 返回错误
   }
 
-  mi->channel_wrlock();
+  mi->channel_wrlock(); // 锁定通道以进行写操作
 
   if (connection_param->user || connection_param->password) {
     if (!thd->get_ssl()) {
       push_warning(thd, Sql_condition::SL_NOTE, ER_INSECURE_PLAIN_TEXT,
-                   ER_THD(thd, ER_INSECURE_PLAIN_TEXT));
+                   ER_THD(thd, ER_INSECURE_PLAIN_TEXT)); // 报告不安全的明文警告
     }
   }
 
-  lock_slave_threads(mi);  // this allows us to cleanly read slave_running
+  lock_slave_threads(mi);  // 允许我们干净地读取 slave_running
   // Get a mask of _stopped_ threads
-  init_thread_mask(&thread_mask, mi, true /* inverse */);
+  init_thread_mask(&thread_mask, mi, true /* inverse */); // 初始化线程掩码，获取停止的线程
   /*
     Below we will start all stopped threads.  But if the user wants to
     start only one thread, do as if the other thread was running (as we
     don't want to touch the other thread), so set the bit to 0 for the
     other thread
+    下面我们将启动所有停止的线程。但如果用户只想启动一个线程，则将其他线程视为正在运行（因为我们不想触碰其他线程），因此将其他线程的位设置为 0。
   */
   if (thread_mask_input) {
-    thread_mask &= thread_mask_input;
+    thread_mask &= thread_mask_input; // 根据输入的线程掩码更新线程掩码
   }
   if (thread_mask)  // some threads are stopped, start them
   {
     if (load_mi_and_rli_from_repositories(mi, false, thread_mask)) {
-      is_error = true;
-      my_error(ER_MASTER_INFO, MYF(0));
+      is_error = true; // 加载失败，设置错误标志
+      my_error(ER_MASTER_INFO, MYF(0)); // 报告主信息错误
     } else if (*mi->host || !(thread_mask & SLAVE_IO)) {
       /*
         If we will start IO thread we need to take care of possible
         options provided through the START SLAVE if there is any.
+        如果我们将启动 IO 线程，则需要处理通过 START SLAVE 提供的可能选项（如果有）。
       */
       if (thread_mask & SLAVE_IO) {
         if (connection_param->user) {
-          mi->set_start_user_configured(true);
-          mi->set_user(connection_param->user);
+          mi->set_start_user_configured(true); // 设置用户配置标志
+          mi->set_user(connection_param->user); // 设置用户
         }
         if (connection_param->password) {
-          mi->set_start_user_configured(true);
-          mi->set_password(connection_param->password);
+          mi->set_start_user_configured(true); // 设置用户配置标志
+          mi->set_password(connection_param->password); // 设置密码
         }
         if (connection_param->plugin_auth)
-          mi->set_plugin_auth(connection_param->plugin_auth);
+          mi->set_plugin_auth(connection_param->plugin_auth); // 设置插件认证
         if (connection_param->plugin_dir)
-          mi->set_plugin_dir(connection_param->plugin_dir);
+          mi->set_plugin_dir(connection_param->plugin_dir); // 设置插件目录
       }
 
       /*
         If we will start SQL thread we will care about UNTIL options If
         not and they are specified we will ignore them and warn user
         about this fact.
+        如果我们将启动 SQL 线程，我们将处理 UNTIL 选项。如果没有并且它们被指定，我们将忽略它们并警告用户。
       */
       if (thread_mask & SLAVE_SQL) {
         /*
           sql_replica_skip_counter only effects the applier thread which is
           first started. So after sql_replica_skip_counter is copied to
           rli->slave_skip_counter, it is reset to 0.
+          sql_replica_skip_counter 仅影响第一个启动的应用线程。因此，在 sql_replica_skip_counter 被复制到 rli->slave_skip_counter 后，它被重置为 0。
         */
-        mysql_mutex_lock(&LOCK_sql_replica_skip_counter);
+        mysql_mutex_lock(&LOCK_sql_replica_skip_counter); // 锁定跳过计数器
         if (mi->rli->m_assign_gtids_to_anonymous_transactions_info.get_type() !=
                 Assign_gtids_to_anonymous_transactions_info::enum_type::
                     AGAT_OFF ||
             global_gtid_mode.get() != Gtid_mode::ON)
-          mi->rli->slave_skip_counter = sql_replica_skip_counter;
-        sql_replica_skip_counter = 0;
-        mysql_mutex_unlock(&LOCK_sql_replica_skip_counter);
+          mi->rli->slave_skip_counter = sql_replica_skip_counter; // 设置跳过计数器
+        sql_replica_skip_counter = 0; // 重置跳过计数器
+        mysql_mutex_unlock(&LOCK_sql_replica_skip_counter); // 解锁跳过计数器
         /*
           To cache the MTS system var values and used them in the following
           runtime. The system vars can change meanwhile but having no other
           effects.
           It also allows the per channel definition of this variables.
+          缓存 MTS 系统变量值并在后续运行中使用它们。系统变量可以在此期间更改，但没有其他影响。
+          这也允许每个通道定义这些变量。
         */
         if (set_mts_settings) {
           mi->rli->opt_replica_parallel_workers =
-              opt_mts_replica_parallel_workers;
+              opt_mts_replica_parallel_workers; // 设置并行工作线程
           if (mi->is_gtid_only_mode() &&
               opt_mts_replica_parallel_workers == 0) {
-            mi->rli->opt_replica_parallel_workers = 1;
+            mi->rli->opt_replica_parallel_workers = 1; // 如果是 GTID 仅模式，确保至少有一个工作线程
           }
           if (mts_parallel_option == MTS_PARALLEL_TYPE_DB_NAME)
-            mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_DB_NAME;
+            mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_DB_NAME; // 设置通道 MTS 子模式
           else
-            mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_LOGICAL_CLOCK;
+            mi->rli->channel_mts_submode = MTS_PARALLEL_TYPE_LOGICAL_CLOCK; // 设置逻辑时钟模式
 
 #ifndef NDEBUG
           if (!DBUG_EVALUATE_IF("check_replica_debug_group", 1, 0))
 #endif
-            mi->rli->checkpoint_group = opt_mta_checkpoint_group;
+            mi->rli->checkpoint_group = opt_mta_checkpoint_group; // 设置检查点组
         }
 
-        int slave_errno = mi->rli->init_until_option(thd, master_param);
+        int slave_errno = mi->rli->init_until_option(thd, master_param); // 初始化 UNTIL 选项
         if (slave_errno) {
-          my_error(slave_errno, MYF(0));
-          is_error = true;
+          my_error(slave_errno, MYF(0)); // 报告错误
+          is_error = true; // 设置错误标志
         }
 
-        if (!is_error) is_error = check_slave_sql_config_conflict(mi->rli);
+        if (!is_error) is_error = check_slave_sql_config_conflict(mi->rli); // 检查 SQL 配置冲突
       } else if (master_param->pos || master_param->relay_log_pos ||
                  master_param->gtid)
         push_warning(thd, Sql_condition::SL_NOTE, ER_UNTIL_COND_IGNORED,
-                     ER_THD(thd, ER_UNTIL_COND_IGNORED));
+                     ER_THD(thd, ER_UNTIL_COND_IGNORED)); // 报告 UNTIL 条件被忽略
 
       if (!is_error)
         is_error =
             start_slave_threads(false /*need_lock_slave=false*/,
-                                true /*wait_for_start=true*/, mi, thread_mask);
+                                true /*wait_for_start=true*/, mi, thread_mask); // 启动从属线程
     } else {
-      is_error = true;
-      my_error(ER_BAD_SLAVE, MYF(0));
+      is_error = true; // 设置错误标志
+      my_error(ER_BAD_SLAVE, MYF(0)); // 报告错误
     }
   } else {
     /* no error if all threads are already started, only a warning */
     push_warning_printf(
         thd, Sql_condition::SL_NOTE, ER_SLAVE_CHANNEL_WAS_RUNNING,
-        ER_THD(thd, ER_SLAVE_CHANNEL_WAS_RUNNING), mi->get_channel());
+        ER_THD(thd, ER_SLAVE_CHANNEL_WAS_RUNNING), mi->get_channel()); // 报告通道已在运行
   }
 
   /*
     Clean up start information if there was an attempt to start
     the IO thread to avoid any security issue.
+    如果尝试启动 IO 线程，则清理启动信息以避免任何安全问题。
   */
-  if (is_error && (thread_mask & SLAVE_IO) == SLAVE_IO) mi->reset_start_info();
+  if (is_error && (thread_mask & SLAVE_IO) == SLAVE_IO) mi->reset_start_info(); // 重置启动信息
 
-  unlock_slave_threads(mi);
+  unlock_slave_threads(mi); // 解锁从属线程
 
-  mi->channel_unlock();
+  mi->channel_unlock(); // 解锁通道
 
-  return is_error;
+  return is_error; // 返回错误状态
 }
 
+sql/rpl_replica.cc
 /**
   Execute a STOP SLAVE statement.
+  执行 STOP SLAVE 语句。
 
   @param thd              Pointer to THD object for the client thread executing
                           the statement.
+                          指向执行语句的客户端线程的 THD 对象的指针。
 
   @param mi               Pointer to Master_info object for the slave's IO
                           thread.
+                          指向从属 IO 线程的 Master_info 对象的指针。
 
   @param net_report       If true, saves the exit status into Diagnostics_area.
+                          如果为真，则将退出状态保存到 Diagnostics_area。
 
   @param for_one_channel  If the method is being invoked only for one channel
+                          如果该方法仅针对一个通道被调用。
 
   @param push_temp_tables_warning  If it should push a "have temp tables
                                    warning" once having open temp tables. This
@@ -9057,73 +9281,82 @@ bool start_slave(THD *thd, LEX_SLAVE_CONNECTION *connection_param,
                                    This parameter can be removed when the
                                    warning is issued with per-channel
                                    information.
+                                   如果在打开临时表时应该推送“有临时表警告”。这避免了在多个通道有打开的临时表时出现多个警告。
+                                   当警告以每个通道的信息发布时，可以删除此参数。
 
   @retval 0 success
   @retval 1 error
+  @retval 0 成功
+  @retval 1 错误
 */
 int stop_slave(THD *thd, Master_info *mi, bool net_report, bool for_one_channel,
                bool *push_temp_tables_warning) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
-  int slave_errno;
-  if (!thd) thd = current_thd;
+  int slave_errno; // 从属错误号
+  if (!thd) thd = current_thd; // 如果 thd 为 null，则使用当前线程
 
   /*
     STOP SLAVE command should ignore 'read-only' and 'super_read_only'
     options so that it can update 'mysql.slave_master_info' and
     'mysql.slave_relay_log_info' replication repository tables.
+    STOP SLAVE 命令应忽略 'read-only' 和 'super_read_only' 选项，以便能够更新 'mysql.slave_master_info' 和 'mysql.slave_relay_log_info' 复制存储库表。
   */
-  thd->set_skip_readonly_check();
+  thd->set_skip_readonly_check(); // 跳过只读检查
 
-  Security_context *sctx = thd->security_context();
-  if (!sctx->check_access(SUPER_ACL) &&
+  Security_context *sctx = thd->security_context(); // 获取安全上下文
+  if (!sctx->check_access(SUPER_ACL) && // 检查是否有超级权限
       !sctx->has_global_grant(STRING_WITH_LEN("REPLICATION_SLAVE_ADMIN"))
-           .first) {
+           .first) { // 检查是否有复制从属管理员权限
     my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-             "SUPER or REPLICATION_SLAVE_ADMIN");
-    return 1;
+             "SUPER or REPLICATION_SLAVE_ADMIN"); // 报告权限错误
+    return 1; // 返回错误
   }
 
-  mi->channel_wrlock();
+  mi->channel_wrlock(); // 锁定通道以进行写操作
 
-  THD_STAGE_INFO(thd, stage_killing_replica);
-  int thread_mask;
-  lock_slave_threads(mi);
+  THD_STAGE_INFO(thd, stage_killing_replica); // 设置线程阶段信息
+  int thread_mask; // 线程掩码
+  lock_slave_threads(mi); // 锁定从属线程
 
-  DBUG_EXECUTE_IF("simulate_hold_run_locks_on_stop_replica",
-                  my_sleep(10000000););
+  DBUG_EXECUTE_IF("simulate_hold_run_locks_on_stop_replica", // 模拟持有锁的情况
+                  my_sleep(10000000);); // 睡眠 10 秒
 
   // Get a mask of _running_ threads
-  init_thread_mask(&thread_mask, mi, false /* not inverse*/);
+  init_thread_mask(&thread_mask, mi, false /* not inverse*/); // 初始化线程掩码，获取正在运行的线程
 
   /*
     Below we will stop all running threads.
     But if the user wants to stop only one thread, do as if the other thread
     was stopped (as we don't want to touch the other thread), so set the
     bit to 0 for the other thread
+    下面我们将停止所有正在运行的线程。
+    但如果用户只想停止一个线程，则将其他线程视为已停止（因为我们不想触碰其他线程），因此将其他线程的位设置为 0。
   */
-  if (thd->lex->slave_thd_opt) {
-    thread_mask &= thd->lex->slave_thd_opt;
+  if (thd->lex->slave_thd_opt) { // 如果指定了线程选项
+    thread_mask &= thd->lex->slave_thd_opt; // 更新线程掩码
 
     /*
       If we are stopping IO thread, we also need to consider
       IO Monitor thread.
+      如果我们正在停止 IO 线程，则还需要考虑 IO 监控线程。
     */
     if ((thread_mask & SLAVE_IO) && mi->is_source_connection_auto_failover()) {
-      thread_mask |= SLAVE_MONITOR;
+      thread_mask |= SLAVE_MONITOR; // 将监控线程添加到线程掩码
     }
   }
 
-  if (thread_mask) {
+  if (thread_mask) { // 如果有线程需要停止
     slave_errno =
         terminate_slave_threads(mi, thread_mask, rpl_stop_replica_timeout,
-                                false /*need_lock_term=false*/);
+                                false /*need_lock_term=false*/); // 停止从属线程
   } else {
     // no error if both threads are already stopped, only a warning
-    slave_errno = 0;
+    // 如果两个线程已经停止，则没有错误，仅发出警告
+    slave_errno = 0; // 设置错误号为 0
     push_warning_printf(
         thd, Sql_condition::SL_NOTE, ER_SLAVE_CHANNEL_WAS_NOT_RUNNING,
-        ER_THD(thd, ER_SLAVE_CHANNEL_WAS_NOT_RUNNING), mi->get_channel());
+        ER_THD(thd, ER_SLAVE_CHANNEL_WAS_NOT_RUNNING), mi->get_channel()); // 报告通道未运行
   }
 
   /*
@@ -9132,186 +9365,203 @@ int stop_slave(THD *thd, Master_info *mi, bool net_report, bool for_one_channel,
     Though we dont restrict failover here, we do warn users. In future, we
     should have a command to delete open temp tables the slave has replicated.
     See WL#7441 regarding this command.
+    如果从属有打开的临时表，并且有后续的 CHANGE MASTER，则可能会导致临时表永远保持打开状态。
+    尽管我们不限制故障转移，但我们会警告用户。将来，我们应该有一个命令来删除从属已复制的打开的临时表。
+    有关此命令，请参见 WL#7441。
   */
-
   if (mi->rli->atomic_channel_open_temp_tables && *push_temp_tables_warning) {
     push_warning(thd, Sql_condition::SL_WARNING,
                  ER_WARN_OPEN_TEMP_TABLES_MUST_BE_ZERO,
-                 ER_THD(thd, ER_WARN_OPEN_TEMP_TABLES_MUST_BE_ZERO));
-    *push_temp_tables_warning = false;
+                 ER_THD(thd, ER_WARN_OPEN_TEMP_TABLES_MUST_BE_ZERO)); // 报告打开的临时表警告
+    *push_temp_tables_warning = false; // 重置警告标志
   }
 
-  unlock_slave_threads(mi);
+  unlock_slave_threads(mi); // 解锁从属线程
 
-  mi->channel_unlock();
+  mi->channel_unlock(); // 解锁通道
 
-  if (slave_errno) {
+  if (slave_errno) { // 如果有错误
     if ((slave_errno == ER_STOP_SLAVE_SQL_THREAD_TIMEOUT) ||
         (slave_errno == ER_STOP_REPLICA_MONITOR_IO_THREAD_TIMEOUT) ||
         (slave_errno == ER_STOP_SLAVE_IO_THREAD_TIMEOUT)) {
       push_warning(thd, Sql_condition::SL_NOTE, slave_errno,
-                   ER_THD_NONCONST(thd, slave_errno));
+                   ER_THD_NONCONST(thd, slave_errno)); // 报告超时警告
 
       /*
         If new slave_errno is added in the if() condition above then make sure
         that there are no % in the error message or change the logging API
         to use verbatim() to avoid % substitutions.
+        如果在上面的 if() 条件中添加了新的 slave_errno，则确保错误消息中没有 %，或者更改日志 API 以使用 verbatim() 避免 % 替换。
       */
       longlong log_errno = (slave_errno == ER_STOP_SLAVE_SQL_THREAD_TIMEOUT)
                                ? ER_RPL_SLAVE_SQL_THREAD_STOP_CMD_EXEC_TIMEOUT
-                               : ER_RPL_SLAVE_IO_THREAD_STOP_CMD_EXEC_TIMEOUT;
-      LogErr(WARNING_LEVEL, log_errno);
+                               : ER_RPL_SLAVE_IO_THREAD_STOP_CMD_EXEC_TIMEOUT; // 设置日志错误号
+      LogErr(WARNING_LEVEL, log_errno); // 记录警告
     }
-    if (net_report) my_error(slave_errno, MYF(0));
-    return 1;
-  } else if (net_report && for_one_channel)
-    my_ok(thd);
+    if (net_report) my_error(slave_errno, MYF(0)); // 报告错误
+    return 1; // 返回错误
+  } else if (net_report && for_one_channel) // 如果需要网络报告且仅针对一个通道
+    my_ok(thd); // 返回成功
 
-  return 0;
+  return 0; // 返回成功
 }
 
 /**
   Execute a RESET SLAVE (for all channels), used in Multisource replication.
   If resetting of a particular channel fails, it exits out.
 
-  @param[in]  thd  THD object of the client.
+  @param[in]  thd  THD object of the client. // 客户端的THD对象
 
-  @retval     0    success
-  @retval     1    error
+  @retval     0    success // 成功返回0
+  @retval     1    error // 错误返回1
  */
 
 int reset_slave(THD *thd) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
-  channel_map.assert_some_wrlock();
+  channel_map.assert_some_wrlock(); // 确保通道映射有写锁
 
-  Master_info *mi = nullptr;
-  int result = 0;
-  mi_map::iterator it, gr_channel_map_it;
-  if (thd->lex->reset_slave_info.all) {
+  Master_info *mi = nullptr; // 主信息指针初始化为nullptr
+  int result = 0; // 结果初始化为0
+  mi_map::iterator it, gr_channel_map_it; // 定义迭代器
+
+  if (thd->lex->reset_slave_info.all) { // 如果重置所有通道
     /* First do reset_slave for default channel */
-    mi = channel_map.get_default_channel_mi();
-    if (mi && reset_slave(thd, mi, thd->lex->reset_slave_info.all)) return 1;
+    mi = channel_map.get_default_channel_mi(); // 获取默认通道的主信息
+    if (mi && reset_slave(thd, mi, thd->lex->reset_slave_info.all)) return 1; // 重置默认通道，失败则返回1
+
     /* Do while iteration for rest of the channels */
-    it = channel_map.begin();
-    while (it != channel_map.end()) {
-      if (!it->first.compare(channel_map.get_default_channel())) {
-        it++;
-        continue;
+    it = channel_map.begin(); // 从通道映射开始迭代
+    while (it != channel_map.end()) { // 遍历所有通道
+      if (!it->first.compare(channel_map.get_default_channel())) { // 如果是默认通道
+        it++; // 跳过默认通道
+        continue; // 继续下一个
       }
-      mi = it->second;
-      assert(mi);
-      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all)))
-        break;
-      it = channel_map.begin();
+      mi = it->second; // 获取当前通道的主信息
+      assert(mi); // 确保主信息不为空
+      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all))) // 重置当前通道
+        break; // 如果失败则退出循环
+      it = channel_map.begin(); // 重新开始迭代
     }
+
     /* RESET group replication specific channels */
-    gr_channel_map_it = channel_map.begin(GROUP_REPLICATION_CHANNEL);
-    while (gr_channel_map_it != channel_map.end(GROUP_REPLICATION_CHANNEL)) {
-      mi = gr_channel_map_it->second;
-      assert(mi);
+    gr_channel_map_it = channel_map.begin(GROUP_REPLICATION_CHANNEL); // 获取组复制通道的迭代器
+    while (gr_channel_map_it != channel_map.end(GROUP_REPLICATION_CHANNEL)) { // 遍历组复制通道
+      mi = gr_channel_map_it->second; // 获取当前组复制通道的主信息
+      assert(mi); // 确保主信息不为空
       /*
         We cannot RESET a group replication channel while the group
         replication is running.
       */
-      if (is_group_replication_running()) {
-        my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0),
-                 "RESET SLAVE ALL FOR CHANNEL", mi->get_channel());
-        return 1;
+      if (is_group_replication_running()) { // 如果组复制正在运行
+        my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0), // 报告错误
+                 "RESET SLAVE ALL FOR CHANNEL", mi->get_channel()); // 输出错误信息
+        return 1; // 返回1表示错误
       }
-      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all)))
-        break;
-      gr_channel_map_it = channel_map.begin(GROUP_REPLICATION_CHANNEL);
+      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all))) // 重置当前组复制通道
+        break; // 如果失败则退出循环
+      gr_channel_map_it = channel_map.begin(GROUP_REPLICATION_CHANNEL); // 重新开始迭代
     }
-  } else {
-    it = channel_map.begin();
-    while (it != channel_map.end()) {
-      mi = it->second;
-      assert(mi);
-      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all)))
-        break;
-      it++;
+  } else { // 如果不是重置所有通道
+    it = channel_map.begin(); // 从通道映射开始迭代
+    while (it != channel_map.end()) { // 遍历所有通道
+      mi = it->second; // 获取当前通道的主信息
+      assert(mi); // 确保主信息不为空
+      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all))) // 重置当前通道
+        break; // 如果失败则退出循环
+      it++; // 继续下一个通道
     }
+
     /*
       RESET group replication specific channels.
 
       We cannot RESET a group replication channel while the group
       replication is running.
     */
-    gr_channel_map_it = channel_map.begin(GROUP_REPLICATION_CHANNEL);
-    while (gr_channel_map_it != channel_map.end(GROUP_REPLICATION_CHANNEL)) {
-      mi = gr_channel_map_it->second;
-      assert(mi);
-      if (is_group_replication_running()) {
-        my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0),
-                 "RESET SLAVE FOR CHANNEL", mi->get_channel());
-        return 1;
+    gr_channel_map_it = channel_map.begin(GROUP_REPLICATION_CHANNEL); // 获取组复制通道的迭代器
+    while (gr_channel_map_it != channel_map.end(GROUP_REPLICATION_CHANNEL)) { // 遍历组复制通道
+      mi = gr_channel_map_it->second; // 获取当前组复制通道的主信息
+      assert(mi); // 确保主信息不为空
+      if (is_group_replication_running()) { // 如果组复制正在运行
+        my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0), // 报告错误
+                 "RESET SLAVE FOR CHANNEL", mi->get_channel()); // 输出错误信息
+        return 1; // 返回1表示错误
       }
-      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all)))
-        break;
-      gr_channel_map_it++;
+      if ((result = reset_slave(thd, mi, thd->lex->reset_slave_info.all))) // 重置当前组复制通道
+        break; // 如果失败则退出循环
+      gr_channel_map_it++; // 继续下一个组复制通道
     }
   }
-  return result;
+  return result; // 返回结果
 }
 
 /**
   Execute a RESET REPLICA statement.
+  执行 RESET REPLICA 语句。
+  
   Locks slave threads and unlocks the slave threads after executing
   reset slave.
+  锁定从属线程并在执行重置从属后解锁从属线程。
+  
   The method also takes the mi->channel_wrlock; if this {mi} object
   is deleted (when the parameter reset_all is true) its destructor unlocks
   the lock. In case of error, the method shall always unlock the
   mi channel lock.
+  此方法还会获取 mi->channel_wrlock；如果此 {mi} 对象被删除（当参数 reset_all 为真时），其析构函数会解锁该锁。在发生错误的情况下，该方法应始终解锁 mi 通道锁。
 
   @param thd        Pointer to THD object of the client thread executing the
                     statement.
+                    指向执行语句的客户端线程的 THD 对象的指针。
 
   @param mi         Pointer to Master_info object for the slave.
+                    指向从属的 Master_info 对象的指针。
 
   @param reset_all  Do a full reset or only clean master info structures
+                    执行完全重置或仅清理主信息结构。
 
   @retval 0   success
   @retval !=0 error
 */
 int reset_slave(THD *thd, Master_info *mi, bool reset_all) {
-  int thread_mask = 0, error = 0;
-  const char *errmsg = "Unknown error occurred while reseting slave";
-  DBUG_TRACE;
+  int thread_mask = 0, error = 0; // 初始化线程掩码和错误码
+  const char *errmsg = "Unknown error occurred while reseting slave"; // 错误信息
+  DBUG_TRACE; // 调试跟踪
 
   bool is_default_channel =
-      strcmp(mi->get_channel(), channel_map.get_default_channel()) == 0;
+      strcmp(mi->get_channel(), channel_map.get_default_channel()) == 0; // 检查是否为默认通道
 
   /*
     RESET SLAVE command should ignore 'read-only' and 'super_read_only'
     options so that it can update 'mysql.slave_master_info' and
     'mysql.slave_relay_log_info' replication repository tables.
+    RESET SLAVE 命令应忽略 'read-only' 和 'super_read_only' 选项，以便能够更新 'mysql.slave_master_info' 和 'mysql.slave_relay_log_info' 复制存储库表。
   */
-  thd->set_skip_readonly_check();
-  mi->channel_wrlock();
+  thd->set_skip_readonly_check(); // 跳过只读检查
+  mi->channel_wrlock(); // 锁定通道以进行写操作
 
-  lock_slave_threads(mi);
+  lock_slave_threads(mi); // 锁定从属线程
   init_thread_mask(&thread_mask, mi, false /* not inverse */,
-                   true /* ignore_monitor_thread */);
+                   true /* ignore_monitor_thread */); // 初始化线程掩码，获取正在运行的线程
   if (thread_mask)  // We refuse if any slave thread is running
   {
-    my_error(ER_SLAVE_CHANNEL_MUST_STOP, MYF(0), mi->get_channel());
-    error = ER_SLAVE_CHANNEL_MUST_STOP;
-    unlock_slave_threads(mi);
-    mi->channel_unlock();
-    goto err;
+    my_error(ER_SLAVE_CHANNEL_MUST_STOP, MYF(0), mi->get_channel()); // 报告错误：必须停止从属通道
+    error = ER_SLAVE_CHANNEL_MUST_STOP; // 设置错误码
+    unlock_slave_threads(mi); // 解锁从属线程
+    mi->channel_unlock(); // 解锁通道
+    goto err; // 跳转到错误处理
   }
 
-  ha_reset_slave(thd);
+  ha_reset_slave(thd); // 重置从属
 
   // delete relay logs, clear relay log coordinates
+  // 删除中继日志，清除中继日志坐标
   if ((error = mi->rli->purge_relay_logs(thd, &errmsg,
                                          reset_all && !is_default_channel))) {
-    my_error(ER_RELAY_LOG_FAIL, MYF(0), errmsg);
-    error = ER_RELAY_LOG_FAIL;
-    unlock_slave_threads(mi);
-    mi->channel_unlock();
-    goto err;
+    my_error(ER_RELAY_LOG_FAIL, MYF(0), errmsg); // 报告中继日志失败错误
+    error = ER_RELAY_LOG_FAIL; // 设置错误码
+    unlock_slave_threads(mi); // 解锁从属线程
+    mi->channel_unlock(); // 解锁通道
+    goto err; // 跳转到错误处理
   }
 
   assert(!mi->rli || !mi->rli->slave_running);  // none writes in rli table
@@ -9319,51 +9569,53 @@ int reset_slave(THD *thd, Master_info *mi, bool reset_all) {
       (!reset_all && reset_info(mi))) {  // Resets log names, positions, etc,
                                          // but keeps configuration information
                                          // needed for a re-connection.
-    error = ER_UNKNOWN_ERROR;
-    my_error(ER_UNKNOWN_ERROR, MYF(0));
-    unlock_slave_threads(mi);
-    mi->channel_unlock();
-    goto err;
+    error = ER_UNKNOWN_ERROR; // 设置未知错误
+    my_error(ER_UNKNOWN_ERROR, MYF(0)); // 报告未知错误
+    unlock_slave_threads(mi); // 解锁从属线程
+    mi->channel_unlock(); // 解锁通道
+    goto err; // 跳转到错误处理
   }
-  unlock_slave_threads(mi);
+  unlock_slave_threads(mi); // 解锁从属线程
 
-  (void)RUN_HOOK(binlog_relay_io, after_reset_slave, (thd, mi));
+  (void)RUN_HOOK(binlog_relay_io, after_reset_slave, (thd, mi)); // 运行重置后钩子
 
   /*
      RESET SLAVE ALL deletes the channels(except default channel), so their mi
      and rli objects are removed. For default channel, its mi and rli are
      deleted and recreated to keep in clear status.
+     RESET SLAVE ALL 删除通道（除了默认通道），因此它们的 mi 和 rli 对象被移除。对于默认通道，其 mi 和 rli 被删除并重新创建以保持清晰状态。
   */
   if (reset_all) {
     bool is_default =
-        !strcmp(mi->get_channel(), channel_map.get_default_channel());
+        !strcmp(mi->get_channel(), channel_map.get_default_channel()); // 检查是否为默认通道
 
     rpl_acf_configuration_handler->delete_channel_status(
         mi->get_channel(),
-        Rpl_acf_status_configuration::SOURCE_CONNECTION_AUTO_FAILOVER);
+        Rpl_acf_status_configuration::SOURCE_CONNECTION_AUTO_FAILOVER); // 删除通道状态
 
     // delete_mi will call mi->channel_unlock in case it succeeds
+    // delete_mi 成功时会调用 mi->channel_unlock
     if (channel_map.delete_mi(mi->get_channel())) {
-      mi->channel_unlock();
-      error = ER_UNKNOWN_ERROR;
-      my_error(ER_UNKNOWN_ERROR, MYF(0));
-      goto err;
+      mi->channel_unlock(); // 解锁通道
+      error = ER_UNKNOWN_ERROR; // 设置未知错误
+      my_error(ER_UNKNOWN_ERROR, MYF(0)); // 报告未知错误
+      goto err; // 跳转到错误处理
     }
 
     if (is_default) {
       if (!Rpl_info_factory::create_mi_and_rli_objects(
               opt_mi_repository_id, opt_rli_repository_id,
               channel_map.get_default_channel(), true, &channel_map)) {
-        error = ER_MASTER_INFO;
-        my_message(ER_MASTER_INFO, ER_THD(thd, ER_MASTER_INFO), MYF(0));
+        error = ER_MASTER_INFO; // 设置主信息错误
+        my_message(ER_MASTER_INFO, ER_THD(thd, ER_MASTER_INFO), MYF(0)); // 报告主信息错误
       }
     }
   } else {
-    mi->channel_unlock();
+    mi->channel_unlock(); // 解锁通道
   }
 
 err:
-  return error;
+  return error; // 返回错误码
 }
 
 /**
@@ -9373,54 +9625,57 @@ err:
   are destroyed.
 
   @param[in]           thd          the client thread with the command.
+                                    指向执行命令的客户端线程的 THD 对象的指针。
 
   @retval              false        OK
   @retval              true         not OK
 */
 bool reset_slave_cmd(THD *thd) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
-  Master_info *mi;
-  LEX *lex = thd->lex;
-  bool res = true;  // default, an error
+  Master_info *mi; // 主信息指针
+  LEX *lex = thd->lex; // 获取当前线程的 LEX 对象
+  bool res = true;  // default, an error 默认情况下，设置为错误
 
-  channel_map.wrlock();
+  channel_map.wrlock(); // 获取通道映射的写锁
 
-  if (!is_slave_configured()) {
-    my_error(ER_SLAVE_CONFIGURATION, MYF(0));
-    channel_map.unlock();
-    return res = true;
+  if (!is_slave_configured()) { // 检查从属是否已配置
+    my_error(ER_SLAVE_CONFIGURATION, MYF(0)); // 报告从属配置错误
+    channel_map.unlock(); // 解锁通道映射
+    return res = true; // 返回错误
   }
 
-  if (!lex->mi.for_channel)
-    res = reset_slave(thd);
+  if (!lex->mi.for_channel) // 如果没有指定通道
+    res = reset_slave(thd); // 重置所有通道
   else {
-    mi = channel_map.get_mi(lex->mi.channel);
+    mi = channel_map.get_mi(lex->mi.channel); // 获取指定通道的主信息
     /*
       If the channel being used is a group replication channel and
       group_replication is still running we need to disable RESET SLAVE [ALL]
       command.
+      如果使用的通道是组复制通道并且组复制仍在运行，则需要禁用 RESET SLAVE [ALL] 命令。
     */
     if (mi &&
         channel_map.is_group_replication_channel_name(mi->get_channel(),
                                                       true) &&
-        is_group_replication_running()) {
+        is_group_replication_running()) { // 检查是否为组复制通道且正在运行
       my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0),
-               "RESET SLAVE [ALL] FOR CHANNEL", mi->get_channel());
-      channel_map.unlock();
-      return true;
+               "RESET SLAVE [ALL] FOR CHANNEL", mi->get_channel()); // 报告操作不允许
+      channel_map.unlock(); // 解锁通道映射
+      return true; // 返回错误
     }
 
-    if (mi)
-      res = reset_slave(thd, mi, thd->lex->reset_slave_info.all);
-    else if (strcmp(channel_map.get_default_channel(), lex->mi.channel))
-      my_error(ER_SLAVE_CHANNEL_DOES_NOT_EXIST, MYF(0), lex->mi.channel);
+    if (mi) // 如果主信息不为空
+      res = reset_slave(thd, mi, thd->lex->reset_slave_info.all); // 重置指定通道
+    else if (strcmp(channel_map.get_default_channel(), lex->mi.channel)) // 如果通道不存在
+      my_error(ER_SLAVE_CHANNEL_DOES_NOT_EXIST, MYF(0), lex->mi.channel); // 报告通道不存在错误
   }
 
-  channel_map.unlock();
+  channel_map.unlock(); // 解锁通道映射
 
-  return res;
+  return res; // 返回结果
 }
+
 
 /**
   This function checks if the given CHANGE MASTER/REPLICATION SOURCE command

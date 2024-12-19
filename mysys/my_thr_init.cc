@@ -93,15 +93,15 @@ static void install_sigabrt_handler();
 
 #ifndef NDEBUG
 struct st_my_thread_var {
-  my_thread_id id;
-  struct CODE_STATE *dbug;
+  my_thread_id id; // 线程ID
+  struct CODE_STATE *dbug; // 调试状态
 };
 
-static struct st_my_thread_var *mysys_thread_var() { return THR_mysys; }
+static struct st_my_thread_var *mysys_thread_var() { return THR_mysys; } // 获取当前线程特定变量
 
-static int set_mysys_thread_var(struct st_my_thread_var *mysys_var) {
-  THR_mysys = mysys_var;
-  return 0;
+static int set_mysys_thread_var(struct st_my_thread_var *mysys_var) { // 设置当前线程特定变量
+  THR_mysys = mysys_var; // 更新线程特定变量
+  return 0; // 返回成功
 }
 #endif
 
@@ -149,58 +149,62 @@ void my_thread_global_reinit() {
 }
 
 /**
-  initialize thread environment
+  初始化线程环境
 
   @retval  false  ok
   @retval  true   error
 */
 
 bool my_thread_global_init() {
-  if (my_thread_global_init_done) return false;
-  my_thread_global_init_done = true;
+  if (my_thread_global_init_done) return false; // 如果线程全局初始化已经完成，返回false
+  my_thread_global_init_done = true; // 标记线程全局初始化已完成
 
 #if defined(SAFE_MUTEX)
-  safe_mutex_global_init(); /* Must be called early */
+  safe_mutex_global_init(); /* Must be called early */ // 安全互斥体全局初始化，必须尽早调用
 #endif
 
 #ifdef PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
   /*
-    Set mutex type to "fast" a.k.a "adaptive"
+    设置互斥体类型为“快速”即“自适应”
 
     In this case the thread may steal the mutex from some other thread
     that is waiting for the same mutex.  This will save us some
     context switches but may cause a thread to 'starve forever' while
     waiting for the mutex (not likely if the code within the mutex is
     short).
+    在这种情况下，线程可以从其他等待同一互斥体的线程中窃取互斥体。
+    这将节省一些上下文切换，但可能导致线程在等待互斥体时“永远饿死”（如果互斥体内的代码很短，这种情况不太可能发生）。
   */
-  pthread_mutexattr_init(&my_fast_mutexattr);
-  pthread_mutexattr_settype(&my_fast_mutexattr, PTHREAD_MUTEX_ADAPTIVE_NP);
+  pthread_mutexattr_init(&my_fast_mutexattr); // 初始化自适应互斥体属性
+  pthread_mutexattr_settype(&my_fast_mutexattr, PTHREAD_MUTEX_ADAPTIVE_NP); // 设置互斥体类型为自适应
 #endif
 
 #ifdef PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP
   /*
-    Set mutex type to "errorcheck"
+    设置互斥体类型为“错误检查”
   */
-  pthread_mutexattr_init(&my_errorcheck_mutexattr);
-  pthread_mutexattr_settype(&my_errorcheck_mutexattr, PTHREAD_MUTEX_ERRORCHECK);
+  pthread_mutexattr_init(&my_errorcheck_mutexattr); // 初始化错误检查互斥体属性
+  pthread_mutexattr_settype(&my_errorcheck_mutexattr, PTHREAD_MUTEX_ERRORCHECK); // 设置互斥体类型为错误检查
 #endif
 
-  mysql_mutex_init(key_THR_LOCK_malloc, &THR_LOCK_malloc, MY_MUTEX_INIT_FAST);
-  mysql_mutex_init(key_THR_LOCK_open, &THR_LOCK_open, MY_MUTEX_INIT_FAST);
-  mysql_mutex_init(key_THR_LOCK_charset, &THR_LOCK_charset, MY_MUTEX_INIT_FAST);
-  mysql_mutex_init(key_THR_LOCK_lock, &THR_LOCK_lock, MY_MUTEX_INIT_FAST);
-  mysql_mutex_init(key_THR_LOCK_myisam, &THR_LOCK_myisam, MY_MUTEX_INIT_SLOW);
-  mysql_mutex_init(key_THR_LOCK_myisam_mmap, &THR_LOCK_myisam_mmap,
-                   MY_MUTEX_INIT_FAST);
-  mysql_mutex_init(key_THR_LOCK_heap, &THR_LOCK_heap, MY_MUTEX_INIT_FAST);
-  mysql_mutex_init(key_THR_LOCK_net, &THR_LOCK_net, MY_MUTEX_INIT_FAST);
+  // 初始化各种互斥体
+  mysql_mutex_init(key_THR_LOCK_malloc, &THR_LOCK_malloc, MY_MUTEX_INIT_FAST); // 初始化内存分配互斥体
+  mysql_mutex_init(key_THR_LOCK_open, &THR_LOCK_open, MY_MUTEX_INIT_FAST); // 初始化打开互斥体
+  mysql_mutex_init(key_THR_LOCK_charset, &THR_LOCK_charset, MY_MUTEX_INIT_FAST); // 初始化字符集互斥体
+  mysql_mutex_init(key_THR_LOCK_lock, &THR_LOCK_lock, MY_MUTEX_INIT_FAST); // 初始化锁互斥体
+  mysql_mutex_init(key_THR_LOCK_myisam, &THR_LOCK_myisam, MY_MUTEX_INIT_SLOW); // 初始化MyISAM互斥体
+  mysql_mutex_init(key_THR_LOCK_myisam_mmap, &THR_LOCK_myisam_mmap, MY_MUTEX_INIT_FAST); // 初始化MyISAM内存映射互斥体
+  mysql_mutex_init(key_THR_LOCK_heap, &THR_LOCK_heap, MY_MUTEX_INIT_FAST); // 初始化堆互斥体
+  mysql_mutex_init(key_THR_LOCK_net, &THR_LOCK_net, MY_MUTEX_INIT_FAST); // 初始化网络互斥体
 #ifndef NDEBUG
-  mysql_mutex_init(key_THR_LOCK_threads, &THR_LOCK_threads, MY_MUTEX_INIT_FAST);
-  mysql_cond_init(key_THR_COND_threads, &THR_COND_threads);
+  mysql_mutex_init(key_THR_LOCK_threads, &THR_LOCK_threads, MY_MUTEX_INIT_FAST); // 初始化线程互斥体
+  mysql_cond_init(key_THR_COND_threads, &THR_COND_threads); // 初始化线程条件变量
 #endif
 
-  return false;
+  return false; // 返回false表示初始化成功
 }
+
+
 
 void my_thread_global_end() {
 #ifndef NDEBUG
@@ -257,40 +261,47 @@ void my_thread_global_end() {
 
 /**
   Allocate thread specific memory for the thread, used by mysys and dbug
+  为线程分配特定的内存，用于mysys和dbug
 
   @note This function may called multiple times for a thread, for example
   if one uses my_init() followed by mysql_server_init().
+  @note 此函数可能会被线程多次调用，例如
+  如果一个线程使用my_init()后跟mysql_server_init()。
 
   @retval false  ok
   @retval true   Fatal error; mysys/dbug functions can't be used
+  @retval true   致命错误；mysys/dbug函数无法使用
 */
 
-extern "C" bool my_thread_init() {
+extern "C" bool my_thread_init() { // 声明一个外部C函数，返回布尔值
 #ifndef NDEBUG
-  struct st_my_thread_var *tmp;
+  struct st_my_thread_var *tmp; // 定义一个指向线程特定变量的指针
 #endif
 
-  if (!my_thread_global_init_done)
-    return true; /* cannot proceed with uninitialized library */
+  if (!my_thread_global_init_done) // 检查线程全局初始化是否完成
+    return true; /* cannot proceed with uninitialized library */ // 如果未完成，返回true表示无法继续
 
 #ifdef _WIN32
-  install_sigabrt_handler();
+  install_sigabrt_handler(); // 安装SIGABRT信号处理程序
 #endif
 
 #ifndef NDEBUG
-  if (mysys_thread_var()) return false;
+  // 检查当前线程是否已经分配了线程特定的内存
+  if (mysys_thread_var()) return false; // 如果已分配，返回false
 
-  if (!(tmp = (struct st_my_thread_var *)calloc(1, sizeof(*tmp)))) return true;
+  // 分配线程特定的内存
+  if (!(tmp = (struct st_my_thread_var *)calloc(1, sizeof(*tmp)))) return true; // 如果分配失败，返回true
 
-  mysql_mutex_lock(&THR_LOCK_threads);
-  tmp->id = ++thread_id;
-  ++THR_thread_count;
-  mysql_mutex_unlock(&THR_LOCK_threads);
-  set_mysys_thread_var(tmp);
+  mysql_mutex_lock(&THR_LOCK_threads); // 锁定线程互斥体
+  tmp->id = ++thread_id; // 设置线程ID
+  ++THR_thread_count; // 增加线程计数
+  mysql_mutex_unlock(&THR_LOCK_threads); // 解锁线程互斥体
+  set_mysys_thread_var(tmp); // 设置当前线程的特定变量
 #endif
 
-  return false;
+  return false; // 返回false表示初始化成功
 }
+
 
 /**
   Deallocate memory used by the thread for book-keeping

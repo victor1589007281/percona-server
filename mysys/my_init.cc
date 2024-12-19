@@ -124,92 +124,99 @@ int set_crt_report_leaks() {
 
 /**
   Initialize my_sys functions, resources and variables
+  初始化 my_sys 函数、资源和变量
 
   @return Initialization result
     @retval false Success
     @retval true  Error. Couldn't initialize environment
+  @return 初始化结果
+    @retval false 成功
+    @retval true  错误。无法初始化环境
 */
 bool my_init() {
-  char *str;
+  char *str; // 用于存储环境变量的字符串
 
-  if (my_init_done) return false;
+  if (my_init_done) return false; // 如果已经初始化，返回 false
 
-  my_init_done = true;
+  my_init_done = true; // 标记为已初始化
 
 #if defined(MY_MSCRT_DEBUG)
-  set_crt_report_leaks();
+  set_crt_report_leaks(); // 设置 CRT 报告内存泄漏
 #endif
 
-  my_umask = 0640;     /* Default umask for new files */
-  my_umask_dir = 0750; /* Default umask for new directories */
+  my_umask = 0640;     /* 默认新文件的 umask */
+  my_umask_dir = 0750; /* 默认新目录的 umask */
 
-  /* Default creation of new files */
-  if ((str = getenv("UMASK")) != nullptr)
-    my_umask = (int)(atoi_octal(str) | 0600);
-  /* Default creation of new dir's */
-  if ((str = getenv("UMASK_DIR")) != nullptr)
-    my_umask_dir = (int)(atoi_octal(str) | 0700);
+  /* 默认创建新文件 */
+  if ((str = getenv("UMASK")) != nullptr) // 获取环境变量 UMASK
+    my_umask = (int)(atoi_octal(str) | 0600); // 设置 umask
+  /* 默认创建新目录 */
+  if ((str = getenv("UMASK_DIR")) != nullptr) // 获取环境变量 UMASK_DIR
+    my_umask_dir = (int)(atoi_octal(str) | 0700); // 设置 umask
 
-  instrumented_stdin.m_file = stdin;
-  instrumented_stdin.m_psi = NULL; /* not yet instrumented */
-  mysql_stdin = &instrumented_stdin;
+  instrumented_stdin.m_file = stdin; // 将标准输入赋值给 instrumented_stdin
+  instrumented_stdin.m_psi = NULL; /* 尚未仪器化 */
+  mysql_stdin = &instrumented_stdin; // 设置 mysql_stdin 为 instrumented_stdin 的地址
 
-  if (my_thread_global_init()) return true;
+  if (my_thread_global_init()) return true; // 初始化线程全局状态，如果失败则返回 true
 
-  if (my_thread_init()) return true;
+  if (my_thread_init()) return true; // 初始化线程，如果失败则返回 true
 
-  /* $HOME is needed early to parse configuration files located in ~/ */
-  if ((home_dir = getenv("HOME")) != nullptr)
-    home_dir = intern_filename(home_dir_buff, home_dir);
+  /* $HOME 需要在早期解析位于 ~/ 的配置文件 */
+  if ((home_dir = getenv("HOME")) != nullptr) // 获取环境变量 HOME
+    home_dir = intern_filename(home_dir_buff, home_dir); // 将 HOME 路径存储到 home_dir
 
   {
-    DBUG_TRACE;
-    DBUG_PROCESS(my_progname ? my_progname : "unknown");
+    DBUG_TRACE; // 调试跟踪
+    DBUG_PROCESS(my_progname ? my_progname : "unknown"); // 记录进程名称
 #ifdef _WIN32
-    my_win_init();
+    my_win_init(); // Windows 特定的初始化
 #endif
-    MyFileInit();
+    MyFileInit(); // 初始化文件系统
 
-    DBUG_PRINT("exit", ("home: '%s'", home_dir));
-    return false;
+    DBUG_PRINT("exit", ("home: '%s'", home_dir)); // 打印退出信息
+    return false; // 返回 false，表示初始化成功
   }
 } /* my_init */
 
+
 /* End my_sys */
+/**
+  my_end 函数用于清理 my_sys 函数、资源和变量
+
+  @param infoflag 信息标志，指示是否提供额外信息
+*/
 void my_end(int infoflag) {
   /*
     We do not use DBUG_TRACE here, as after cleanup DBUG is no longer
     operational, so we cannot use DBUG_RETURN.
   */
 
-  FILE *info_file = (DBUG_FILE ? DBUG_FILE : stderr);
+  FILE *info_file = (DBUG_FILE ? DBUG_FILE : stderr); // 选择输出文件
 
-  if (!my_init_done) return;
+  if (!my_init_done) return; // 如果未初始化，直接返回
 
-  MyFileEnd();
+  MyFileEnd(); // 结束文件操作
 #ifdef _WIN32
-  MyWinfileEnd();
+  MyWinfileEnd(); // Windows 特定的文件结束操作
 #endif /* WIN32 */
 
-  if ((infoflag & MY_CHECK_ERROR) || (info_file != stderr))
-
-  { /* Test if some file is left open */
-    if (my_file_opened | my_stream_opened) {
-      char ebuff[512];
-      snprintf(ebuff, sizeof(ebuff), EE(EE_OPEN_WARNING), my_file_opened,
-               my_stream_opened);
-      my_message_stderr(EE_OPEN_WARNING, ebuff, MYF(0));
-      DBUG_PRINT("error", ("%s", ebuff));
+  if ((infoflag & MY_CHECK_ERROR) || (info_file != stderr)) { /* Test if some file is left open */
+    if (my_file_opened | my_stream_opened) { // 检查是否有文件仍然打开
+      char ebuff[512]; // 错误缓冲区
+      snprintf(ebuff, sizeof(ebuff), EE(EE_OPEN_WARNING), my_file_opened, my_stream_opened); // 格式化错误信息
+      my_message_stderr(EE_OPEN_WARNING, ebuff, MYF(0)); // 输出警告信息
+      DBUG_PRINT("error", ("%s", ebuff)); // 打印错误信息
     }
   }
-  my_error_unregister_all();
-  charset_uninit();
-  my_once_free();
+  my_error_unregister_all(); // 注销所有错误
+  charset_uninit(); // 反初始化字符集
+  my_once_free(); // 释放一次性资源
 
-  if ((infoflag & MY_GIVE_INFO) || (info_file != stderr)) {
+  if ((infoflag & MY_GIVE_INFO) || (info_file != stderr)) { // 检查是否需要提供额外信息
 #ifdef HAVE_GETRUSAGE
-    struct rusage rus;
-    if (!getrusage(RUSAGE_SELF, &rus))
+    struct rusage rus; // 资源使用情况结构体
+    if (!getrusage(RUSAGE_SELF, &rus)) // 获取当前进程的资源使用情况
       fprintf(info_file,
               "\n\
 User time %.2f, System time %.2f\n                              \
@@ -225,35 +232,36 @@ Voluntary context switches %ld, Involuntary context switches %ld\n",
                   100.0,
               rus.ru_maxrss, rus.ru_idrss, rus.ru_minflt, rus.ru_majflt,
               rus.ru_nswap, rus.ru_inblock, rus.ru_oublock, rus.ru_msgsnd,
-              rus.ru_msgrcv, rus.ru_nsignals, rus.ru_nvcsw, rus.ru_nivcsw);
+              rus.ru_msgrcv, rus.ru_nsignals, rus.ru_nvcsw, rus.ru_nivcsw); // 输出资源使用情况
 #endif
 #ifdef _WIN32
-    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
-    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
-    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
-    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
-    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
-    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE); // 设置警告报告模式
+    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR); // 设置警告报告文件
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE); // 设置错误报告模式
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR); // 设置错误报告文件
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE); // 设置断言报告模式
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR); // 设置断言报告文件
 #ifdef MY_MSCRT_DEBUG
-    _CrtCheckMemory();
-    _CrtDumpMemoryLeaks();
+    _CrtCheckMemory(); // 检查内存
+    _CrtDumpMemoryLeaks(); // 转储内存泄漏
 #endif /* MY_MSCRT_DEBUG */
 #endif /* _WIN32 */
   }
 
   if (!(infoflag & MY_DONT_FREE_DBUG)) {
-    DBUG_END(); /* Must be done before my_thread_end */
+    DBUG_END(); /* Must be done before my_thread_end */ // 在结束线程之前必须结束调试
   }
 
-  my_thread_end();
-  my_thread_global_end();
+  my_thread_end(); // 结束线程
+  my_thread_global_end(); // 结束全局线程
 
 #ifdef _WIN32
-  if (have_tcpip) WSACleanup();
+  if (have_tcpip) WSACleanup(); // 如果有 TCP/IP，清理 Winsock
 #endif /* _WIN32 */
 
-  my_init_done = false;
+  my_init_done = false; // 标记为未初始化
 } /* my_end */
+
 
 /**
   Pointer to function that handles abort. It is the std's abort() by default.

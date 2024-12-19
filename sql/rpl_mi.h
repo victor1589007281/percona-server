@@ -404,12 +404,21 @@ class Master_info : public Rpl_info {
 
   /**
     Clears the processing_trx monitoring info.
+    清除处理中的事务监控信息。
 
     Normally called when there is an error while queueing the transaction.
+    通常在队列事务时发生错误时调用。
+    
+    @param need_lock 是否需要锁定，默认为 false。
   */
   void clear_queueing_trx(bool need_lock = false) {
+    // 如果需要锁定，则对数据锁进行加锁
     if (need_lock) mysql_mutex_lock(&data_lock);
+    
+    // 清除正在处理的事务监控信息
     gtid_monitoring_info->clear_processing_trx();
+    
+    // 如果需要锁定，则对数据锁进行解锁
     if (need_lock) mysql_mutex_unlock(&data_lock);
   }
 
@@ -504,13 +513,17 @@ class Master_info : public Rpl_info {
 
   /**
     Checks if Asynchronous Replication Connection Failover feature is enabled.
+    检查异步复制连接故障转移功能是否启用。
 
     @returns true   if Asynchronous Replication Connection Failover feature is
                     enabled.
              false  otherwise.
+    @returns true   如果异步复制连接故障转移功能已启用。
+             false  否则。
   */
   bool is_source_connection_auto_failover() {
-    return m_source_connection_auto_failover;
+    // 返回当前的异步复制连接故障转移状态
+    return m_source_connection_auto_failover; // 返回 m_source_connection_auto_failover 的值
   }
 
   /**
