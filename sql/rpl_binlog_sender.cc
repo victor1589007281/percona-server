@@ -365,33 +365,34 @@ void Binlog_sender::cleanup() {
     (void)RUN_HOOK(binlog_transmit, transmit_stop, (thd, m_flag));
 
   mysql_mutex_lock(&thd->LOCK_thd_data);
-  thd->current_linfo = nullptr;
+  thd->current_linfo = nullptr;  // 清空当前线程的日志信息
   mysql_mutex_unlock(&thd->LOCK_thd_data);
 
   thd->variables.max_allowed_packet =
-      global_system_variables.max_allowed_packet;
+      global_system_variables.max_allowed_packet;  // 恢复最大允许的数据包大小
 
-  thd->pop_diagnostics_area();
+  thd->pop_diagnostics_area();  // 弹出诊断区域
   if (has_error())
-    my_message(m_errno, m_errmsg, MYF(0));
+    my_message(m_errno, m_errmsg, MYF(0));  // 如果有错误，显示错误信息
   else
-    my_eof(thd);
+    my_eof(thd);  // 否则，发送结束信号
 }
 
 void Binlog_sender::run() {
-  DBUG_TRACE;
-  init();
+  DBUG_TRACE;  // 调试跟踪
+  init();  // 初始化
 
+  // 计算最大事件大小
   unsigned int max_event_size =
       std::max(m_thd->variables.max_allowed_packet,
                binlog_row_event_max_size + MAX_LOG_EVENT_HEADER);
-  File_reader reader(opt_source_verify_checksum, max_event_size);
-  my_off_t start_pos = m_start_pos;
-  const char *log_file = m_linfo.log_file_name;
-  bool is_index_file_reopened_on_binlog_disable = false;
+  File_reader reader(opt_source_verify_checksum, max_event_size);  // 创建文件读取器
+  my_off_t start_pos = m_start_pos;  // 设置起始位置
+  const char *log_file = m_linfo.log_file_name;  // 获取日志文件名
+  bool is_index_file_reopened_on_binlog_disable = false;  // 标记索引文件是否在二进制日志禁用时重新打开
 
-  reader.allocator()->set_sender(this);
-  while (!has_error() && !m_thd->killed) {
+  reader.allocator()->set_sender(this);  // 设置发送者为当前对象
+  while (!has_error() && !m_thd->killed) {  // 循环直到发生错误或线程被杀死
     /*
       Faked rotate event is only required in a few cases(see comment of the
       function). But even so, a faked rotate event is always sent before sending
@@ -402,90 +403,90 @@ void Binlog_sender::run() {
       The main issue here are some dependencies on mysqlbinlog, that should be
       solved in the future.
     */
-    if (unlikely(fake_rotate_event(log_file, start_pos))) break;
+    if (unlikely(fake_rotate_event(log_file, start_pos))) break;  // 发送伪旋转事件
 
-    if (reader.open(log_file)) {
-      set_fatal_error(log_read_error_msg(reader.get_error_type()));
+    if (reader.open(log_file)) {  // 打开日志文件
+      set_fatal_error(log_read_error_msg(reader.get_error_type()));  // 设置致命错误
       break;
     }
 
-    THD_STAGE_INFO(m_thd, stage_sending_binlog_event_to_replica);
-    if (send_binlog(reader, start_pos)) break;
+    THD_STAGE_INFO(m_thd, stage_sending_binlog_event_to_replica);  // 设置阶段信息
+    if (send_binlog(reader, start_pos)) break;  // 发送二进制日志
 
     /* Will go to next file, need to copy log file name */
-    set_last_file(log_file);
+    set_last_file(log_file);  // 设置最后的文件名
 
     THD_STAGE_INFO(m_thd,
-                   stage_finished_reading_one_binlog_switching_to_next_binlog);
+                   stage_finished_reading_one_binlog_switching_to_next_binlog);  // 设置阶段信息
     DBUG_EXECUTE_IF("waiting_for_disable_binlog", {
       const char act[] =
           "now "
           "signal dump_thread_reached_wait_point "
           "wait_for continue_dump_thread no_clear_event";
-      assert(!debug_sync_set_action(m_thd, STRING_WITH_LEN(act)));
+      assert(!debug_sync_set_action(m_thd, STRING_WITH_LEN(act)));  // 调试同步
     };);
-    mysql_bin_log.lock_index();
-    if (!mysql_bin_log.is_open()) {
+    mysql_bin_log.lock_index();  // 锁定索引
+    if (!mysql_bin_log.is_open()) {  // 如果二进制日志未打开
       if (mysql_bin_log.open_index_file(mysql_bin_log.get_index_fname(),
-                                        log_file, false)) {
+                                        log_file, false)) {  // 打开索引文件
         set_fatal_error(
             "Binary log is not open and failed to open index file "
-            "to retrieve next file.");
-        mysql_bin_log.unlock_index();
+            "to retrieve next file.");  // 设置致命错误
+        mysql_bin_log.unlock_index();  // 解锁索引
         break;
       }
-      is_index_file_reopened_on_binlog_disable = true;
+      is_index_file_reopened_on_binlog_disable = true;  // 标记索引文件已重新打开
     }
-    int error = mysql_bin_log.find_next_log(&m_linfo, false);
-    mysql_bin_log.unlock_index();
-    if (unlikely(error)) {
+    int error = mysql_bin_log.find_next_log(&m_linfo, false);  // 查找下一个日志
+    mysql_bin_log.unlock_index();  // 解锁索引
+    if (unlikely(error)) {  // 如果发生错误
       DBUG_EXECUTE_IF("waiting_for_disable_binlog", {
-        const char act[] = "now signal consumed_binlog";
+        const char act[] = "now signal consumed_binlog";  // 调试同步
         assert(!debug_sync_set_action(m_thd, STRING_WITH_LEN(act)));
       };);
       if (is_index_file_reopened_on_binlog_disable)
         mysql_bin_log.close(LOG_CLOSE_INDEX, true /*need_lock_log=true*/,
-                            true /*need_lock_index=true*/);
-      set_fatal_error("could not find next log");
+                            true /*need_lock_index=true*/);  // 关闭索引文件
+      set_fatal_error("could not find next log");  // 设置致命错误
       break;
     }
 
-    start_pos = BIN_LOG_HEADER_SIZE;
-    reader.close();
+    start_pos = BIN_LOG_HEADER_SIZE;  // 设置起始位置为二进制日志头部大小
+    reader.close();  // 关闭读取器
   }
 
-  THD_STAGE_INFO(m_thd, stage_waiting_to_finalize_termination);
-  char error_text[MAX_SLAVE_ERRMSG + 100];
+  THD_STAGE_INFO(m_thd, stage_waiting_to_finalize_termination);  // 设置阶段信息
+  char error_text[MAX_SLAVE_ERRMSG + 100];  // 错误信息文本
 
   /*
     If the dump thread was killed because of a duplicate slave UUID we
     will fail throwing an error to the slave so it will not try to
     reconnect anymore.
   */
-  mysql_mutex_lock(&m_thd->LOCK_thd_data);
-  bool was_killed_by_duplicate_slave_id = m_thd->duplicate_slave_id;
-  mysql_mutex_unlock(&m_thd->LOCK_thd_data);
+  mysql_mutex_lock(&m_thd->LOCK_thd_data);  // 锁定线程数据
+  bool was_killed_by_duplicate_slave_id = m_thd->duplicate_slave_id;  // 检查是否因重复的从属UUID被杀死
+  mysql_mutex_unlock(&m_thd->LOCK_thd_data);  // 解锁线程数据
   if (was_killed_by_duplicate_slave_id)
     set_fatal_error(
         "A slave with the same server_uuid/server_id as this slave "
-        "has connected to the master");
+        "has connected to the master");  // 设置致命错误
 
-  if (reader.is_open()) {
-    if (is_fatal_error()) {
+  if (reader.is_open()) {  // 如果读取器仍然打开
+    if (is_fatal_error()) {  // 如果发生致命错误
       /* output events range to error message */
       my_snprintf_8bit(nullptr, error_text, sizeof(error_text),
                        "%s; the first event '%s' at %lld, "
                        "the last event read from '%s' at %lld, "
                        "the last byte read from '%s' at %lld.",
                        m_errmsg, m_start_file, m_start_pos, m_last_file,
-                       m_last_pos, log_file, reader.position());
-      set_fatal_error(error_text);
+                       m_last_pos, log_file, reader.position());  // 格式化错误信息
+      set_fatal_error(error_text);  // 设置致命错误
     }
 
-    reader.close();
+    reader.close();  // 关闭读取器
   }
 
-  cleanup();
+  cleanup();  // 清理
 }
 
 int Binlog_sender::send_binlog(File_reader &reader, my_off_t start_pos) {
