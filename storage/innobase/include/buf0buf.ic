@@ -499,14 +499,29 @@ static inline void buf_page_unset_sticky(
 
 /** Determine if a buffer block can be relocated in memory.  The block
  can be dirty, but it must not be I/O-fixed or bufferfixed. */
+// 确定一个缓冲块是否可以在内存中重新定位。块可以是脏的，但不能是 I/O 固定或缓冲固定的。
 static inline bool buf_page_can_relocate(
     const buf_page_t *bpage) /*!< control block being relocated */
+// 控制块正在重新定位
 {
-  ut_ad(mutex_own(buf_page_get_mutex(bpage)));
-  ut_ad(buf_page_in_file(bpage));
-  ut_ad(bpage->in_LRU_list);
+  ut_ad(mutex_own(buf_page_get_mutex(bpage))); // 断言当前线程拥有该页的互斥锁
+  ut_ad(buf_page_in_file(bpage)); // 断言该页在文件中
+  ut_ad(bpage->in_LRU_list); // 断言该页在 LRU 列表中
 
-  return (buf_page_get_io_fix(bpage) == BUF_IO_NONE &&
+/*
+BUF_IO_NONE 表示页面当前没有任何 I/O 操作正在进行。页面的 I/O 固定状态可以有以下几种：
+BUF_IO_NONE: 没有 I/O 操作正在进行。
+BUF_IO_READ: 页面正在被读取。
+BUF_IO_WRITE: 页面正在被写入。
+
+buf_fix_count 是一个计数器，表示有多少个线程或操作正在使用或固定该页面。
+当 buf_fix_count 为 0 时，表示没有任何线程或操作正在使用该页面，
+可以安全地对其进行重新定位或其他操作。
+buf_fix_count 为 0 的情况通常出现在页面没有被任何线程或操作使用时。例如：
+页面没有被任何查询或事务访问。
+页面没有被任何后台任务（如检查点或刷新操作）固定。
+*/
+  return (buf_page_get_io_fix(bpage) == BUF_IO_NONE && // 返回该页的 I/O 固定状态为 BUF_IO_NONE 且缓冲固定计数为 0
           bpage->buf_fix_count == 0);
 }
 

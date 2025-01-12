@@ -1857,20 +1857,24 @@ that there was a sufficient memory barrier to read curr_size and old_size.
 @param[in]      buf_pool        buffer pool instance
 @param[in]      block           pointer to control block
 @retval true    if will be withdrawn */
+// 确定一个块是否将被撤回。调用者必须确保有足够的内存屏障来读取 curr_size 和 old_size。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      block           控制块指针
+// @retval true    如果将被撤回
 bool buf_block_will_withdrawn(buf_pool_t *buf_pool, const buf_block_t *block) {
-  ut_ad(buf_pool->curr_size < buf_pool->old_size);
+  ut_ad(buf_pool->curr_size < buf_pool->old_size); // 断言当前大小小于旧大小
 
-  const buf_chunk_t *chunk = buf_pool->chunks + buf_pool->n_chunks_new;
-  const buf_chunk_t *echunk = buf_pool->chunks + buf_pool->n_chunks;
+  const buf_chunk_t *chunk = buf_pool->chunks + buf_pool->n_chunks_new; // 获取新块的起始位置
+  const buf_chunk_t *echunk = buf_pool->chunks + buf_pool->n_chunks; // 获取块的结束位置
 
-  while (chunk < echunk) {
-    if (block >= chunk->blocks && block < chunk->blocks + chunk->size) {
-      return (true);
+  while (chunk < echunk) { // 遍历块
+    if (block >= chunk->blocks && block < chunk->blocks + chunk->size) { // 如果块在当前块范围内
+      return (true); // 返回 true，表示将被撤回
     }
-    ++chunk;
+    ++chunk; // 移动到下一个块
   }
 
-  return (false);
+  return (false); // 返回 false，表示不会被撤回
 }
 
 /** Determines if a frame is intended to be withdrawn. The caller must ensure
@@ -1878,21 +1882,25 @@ that there was a sufficient memory barrier to read curr_size and old_size.
 @param[in]      buf_pool        buffer pool instance
 @param[in]      ptr             pointer to a frame
 @retval true    if will be withdrawn */
+// 确定一个帧是否将被撤回。调用者必须确保有足够的内存屏障来读取 curr_size 和 old_size。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      ptr             帧指针
+// @retval true    如果将被撤回
 bool buf_frame_will_withdrawn(buf_pool_t *buf_pool, const byte *ptr) {
-  ut_ad(buf_pool->curr_size < buf_pool->old_size);
+  ut_ad(buf_pool->curr_size < buf_pool->old_size); // 断言当前大小小于旧大小
 
-  const buf_chunk_t *chunk = buf_pool->chunks + buf_pool->n_chunks_new;
-  const buf_chunk_t *echunk = buf_pool->chunks + buf_pool->n_chunks;
+  const buf_chunk_t *chunk = buf_pool->chunks + buf_pool->n_chunks_new; // 获取新块的起始位置
+  const buf_chunk_t *echunk = buf_pool->chunks + buf_pool->n_chunks; // 获取块的结束位置
 
-  while (chunk < echunk) {
-    if (ptr >= chunk->blocks->frame &&
+  while (chunk < echunk) { // 遍历块
+    if (ptr >= chunk->blocks->frame && // 如果帧指针在当前块范围内
         ptr < (chunk->blocks + chunk->size - 1)->frame + UNIV_PAGE_SIZE) {
-      return (true);
+      return (true); // 返回 true，表示将被撤回
     }
-    ++chunk;
+    ++chunk; // 移动到下一个块
   }
 
-  return (false);
+  return (false); // 返回 false，表示不会被撤回
 }
 
 /** Withdraw the buffer pool blocks from end of the buffer pool instance
@@ -1900,86 +1908,110 @@ until withdrawn by buf_pool->withdraw_target.
 @param[in]      buf_pool        buffer pool instance
 @retval true    if retry is needed */
 static bool buf_pool_withdraw_blocks(buf_pool_t *buf_pool) {
-  buf_block_t *block;
-  ulint loop_count = 0;
-  ulint i = buf_pool_index(buf_pool);
+  buf_block_t *block; // 定义缓冲块指针
+  ulint loop_count = 0; // 定义循环计数器
+  ulint i = buf_pool_index(buf_pool); // 获取缓冲池索引
 
   ib::info(ER_IB_MSG_56) << "buffer pool " << i
                          << " : start to withdraw the last "
-                         << buf_pool->withdraw_target << " blocks.";
+                         << buf_pool->withdraw_target << " blocks."; // 输出信息，开始撤回缓冲池块
 
+/*
+zip_free 数组是一个链表数组，每个链表存储了相同大小的空闲块。例如，索引 0 表示大小为 4K 的块，索引 1 表示大小为 8K 的块，依此类推。
+
+具体操作
+找到相邻的空闲块: 遍历 zip_free 数组中的链表，找到相邻的、大小相同的空闲块。
+合并空闲块: 将相邻的两个空闲块合并成一个更大的块。例如，将两个 4K 的块合并成一个 8K 的块。
+更新链表: 将合并后的块从原来的链表中移除，并添加到适当大小的链表中。例如，将合并后的 8K 块添加到 8K 链表中。
+*/
   /* Minimize buf_pool->zip_free[i] lists */
-  buf_buddy_condense_free(buf_pool);
+  buf_buddy_condense_free(buf_pool); // 最小化 buf_pool->zip_free[i] 列表
 
-  mutex_enter(&buf_pool->free_list_mutex);
-  while (UT_LIST_GET_LEN(buf_pool->withdraw) < buf_pool->withdraw_target) {
+  mutex_enter(&buf_pool->free_list_mutex); // 进入 free_list 互斥锁
+  while (UT_LIST_GET_LEN(buf_pool->withdraw) < buf_pool->withdraw_target) { // 当撤回的块数小于目标时，继续循环
     /* try to withdraw from free_list */
-    ulint count1 = 0;
+    ulint count1 = 0; // 定义计数器
 
-    block = reinterpret_cast<buf_block_t *>(UT_LIST_GET_FIRST(buf_pool->free));
+    block = reinterpret_cast<buf_block_t *>(UT_LIST_GET_FIRST(buf_pool->free)); // 获取 free_list 中的第一个块
     while (block != nullptr &&
-           UT_LIST_GET_LEN(buf_pool->withdraw) < buf_pool->withdraw_target) {
-      ut_ad(block->page.in_free_list);
-      ut_ad(!block->page.in_flush_list);
-      ut_ad(!block->page.in_LRU_list);
-      ut_a(!buf_page_in_file(&block->page));
+           UT_LIST_GET_LEN(buf_pool->withdraw) < buf_pool->withdraw_target) { // 当块不为空且撤回的块数小于目标时，继续循环
+      ut_ad(block->page.in_free_list); // 确认块在 free_list 中
+      ut_ad(!block->page.in_flush_list); // 确认块不在 flush_list 中
+      ut_ad(!block->page.in_LRU_list); // 确认块不在 LRU_list 中
+      ut_a(!buf_page_in_file(&block->page)); // 确认块不在文件中
 
       buf_block_t *next_block;
       next_block =
-          reinterpret_cast<buf_block_t *>(UT_LIST_GET_NEXT(list, &block->page));
+          reinterpret_cast<buf_block_t *>(UT_LIST_GET_NEXT(list, &block->page)); // 获取下一个块
 
-      if (buf_block_will_withdrawn(buf_pool, block)) {
+      if (buf_block_will_withdrawn(buf_pool, block)) { // 如果块将被撤回
         /* This should be withdrawn */
-        UT_LIST_REMOVE(buf_pool->free, &block->page);
-        UT_LIST_ADD_LAST(buf_pool->withdraw, &block->page);
-        ut_d(block->in_withdraw_list = true);
-        count1++;
+        UT_LIST_REMOVE(buf_pool->free, &block->page); // 从 free_list 中移除块
+        UT_LIST_ADD_LAST(buf_pool->withdraw, &block->page); // 将块添加到 withdraw 列表的末尾
+        ut_d(block->in_withdraw_list = true); // 设置块在 withdraw 列表中
+        count1++; // 计数器加一
       }
 
-      block = next_block;
+      block = next_block; // 移动到下一个块
     }
-    mutex_exit(&buf_pool->free_list_mutex);
+    mutex_exit(&buf_pool->free_list_mutex); // 退出 free_list 互斥锁
 
     /* relocate blocks/buddies in withdrawn area */
-    ulint count2 = 0;
-    auto loop_start_time = std::chrono::steady_clock::now();
-    uint32_t remove_loop_count = 0;
+    ulint count2 = 0; // 定义计数器
+    auto loop_start_time = std::chrono::steady_clock::now(); // 获取当前时间
+    uint32_t remove_loop_count = 0; // 定义移除循环计数器
 
-    mutex_enter(&buf_pool->LRU_list_mutex);
-    for (auto bpage : buf_pool->LRU.removable()) {
+    mutex_enter(&buf_pool->LRU_list_mutex); // 进入 LRU_list 互斥锁
+    for (auto bpage : buf_pool->LRU.removable()) { // 遍历可移除的 LRU 页
       BPageMutex *block_mutex;
 
-      block_mutex = buf_page_get_mutex(bpage);
+      block_mutex = buf_page_get_mutex(bpage); // 获取页的互斥锁
       mutex_enter(block_mutex);
 
+//buf_frame_will_withdrawn：表示块在回收范围内
       if (bpage->zip.data != nullptr &&
           buf_frame_will_withdrawn(buf_pool,
-                                   static_cast<byte *>(bpage->zip.data))) {
-        if (buf_page_can_relocate(bpage)) {
+                                   static_cast<byte *>(bpage->zip.data))) { // 如果页的压缩数据不为空且将被撤回
+//buf_page_can_relocate：表示页没有被任何线程使用同时也没有任何IO操作它                                   
+        if (buf_page_can_relocate(bpage)) { // 如果页可以重新分配
           mutex_exit(block_mutex);
           if (!buf_buddy_realloc(buf_pool, bpage->zip.data,
-                                 page_zip_get_size(&bpage->zip))) {
+                                 page_zip_get_size(&bpage->zip))) { // 重新分配页
             /* failed to allocate block */
-            break;
+            break; // 如果重新分配失败
           }
           mutex_enter(block_mutex);
-          count2++;
+          count2++; // 计数器加一
         }
         /* NOTE: if the page is in use,
         not reallocated yet */
       }
 
+/*
+页面状态可以有多种类型，包括但不限于：
+BUF_BLOCK_FILE_PAGE: 表示页面是一个文件页面，通常是从磁盘读取到缓冲池中的数据页面。
+BUF_BLOCK_ZIP_PAGE: 表示页面是一个压缩页面。
+BUF_BLOCK_NOT_USED: 表示页面未被使用。
+BUF_BLOCK_READY_FOR_USE: 表示页面已准备好使用。
+BUF_BLOCK_REMOVE_HASH: 表示页面正在从哈希表中移除。
+BUF_BLOCK_FILE_PAGE 状态
+页面状态为 BUF_BLOCK_FILE_PAGE 的情况通常出现在以下场景：
+
+从磁盘读取页面: 当一个页面从磁盘读取到缓冲池中时，它的状态会被设置为 BUF_BLOCK_FILE_PAGE。
+页面被访问: 当一个事务或查询访问一个页面时，如果该页面在缓冲池中，它的状态可能会被设置为 BUF_BLOCK_FILE_PAGE。
+页面被修改: 当一个页面被修改并且需要写回磁盘时，它的状态可能会被设置为 BUF_BLOCK_FILE_PAGE。
+*/
       if (buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE &&
           buf_block_will_withdrawn(buf_pool,
-                                   reinterpret_cast<buf_block_t *>(bpage))) {
-        if (buf_page_can_relocate(bpage)) {
+                                   reinterpret_cast<buf_block_t *>(bpage))) { // 如果页的状态是文件页且将被撤回
+        if (buf_page_can_relocate(bpage)) { // 如果页可以重新分配
           mutex_exit(block_mutex);
           if (!buf_page_realloc(buf_pool,
-                                reinterpret_cast<buf_block_t *>(bpage))) {
+                                reinterpret_cast<buf_block_t *>(bpage))) { // 重新分配页
             /* failed to allocate block */
-            break;
+            break; // 如果重新分配失败
           }
-          count2++;
+          count2++; // 计数器加一
         } else {
           mutex_exit(block_mutex);
         }
@@ -1989,103 +2021,134 @@ static bool buf_pool_withdraw_blocks(buf_pool_t *buf_pool) {
         mutex_exit(block_mutex);
       }
 
-      if ((remove_loop_count++) % 1000 == 0) {
+/*
+信号量（Semaphore）是一种用于多线程编程中的同步机制，用于控制对共享资源的访问。
+信号量可以用来解决多个线程之间的竞争问题，确保线程在访问共享资源时不会发生冲突。
+信号量的基本概念
+信号量通常有两个主要操作：
+等待（Wait）: 也称为 P 操作，表示请求资源。如果信号量的值大于零，则将其减一并继续执行。
+             如果信号量的值等于零，则线程进入等待状态，直到信号量的值大于零。
+信号（Signal）: 也称为 V 操作，表示释放资源。
+             将信号量的值加一，如果有线程在等待信号量，则唤醒其中一个线程。
+
+信号量可以分为两种类型：
+计数信号量（Counting Semaphore）: 允许多个线程同时访问共享资源，信号量的值表示可用资源的数量。
+二进制信号量（Binary Semaphore）: 也称为互斥锁（Mutex），只允许一个线程访问共享资源，信号量的值只能是 0 或 1。
+
+使用场景
+资源管理: 控制对有限资源（如连接池、内存块等）的访问。
+线程同步: 确保多个线程按顺序执行，避免竞态条件。
+互斥锁: 确保同一时间只有一个线程可以访问共享资源。
+
+srv_fatal_semaphore_wait_threshold 是 InnoDB 中的一个配置参数，用于设置一个阈值，表示在等待信号量（semaphore）时的最大允许等待时间。
+如果等待时间超过这个阈值，InnoDB 会认为系统可能出现了死锁或其他严重问题，并采取相应的措施（例如记录错误日志或触发崩溃）。
+
+这里是一个预防措施，如果整理了1000次，
+同时时间超过了srv_fatal_semaphore_wait_threshold的一半，
+则退出LRU的遍历
+*/
+      if ((remove_loop_count++) % 1000 == 0) { // 每 1000 次循环检查一次时间
         const auto timeout = get_srv_fatal_semaphore_wait_threshold() / 2;
         const auto time_diff =
-            std::chrono::steady_clock::now() - loop_start_time;
-        if (time_diff > timeout) {
+            std::chrono::steady_clock::now() - loop_start_time; // 获取时间差
+        if (time_diff > timeout) { // 如果时间超过阈值的一半
           /* avoids crash at srv_fatal_semaphore_wait_threshold */
-          break;
+          break; // 避免在 srv_fatal_semaphore_wait_threshold 崩溃
         }
       }
     }
 
-    mutex_exit(&buf_pool->LRU_list_mutex);
+    mutex_exit(&buf_pool->LRU_list_mutex); // 退出 LRU_list 互斥锁
 
-    mutex_enter(&buf_pool->free_list_mutex);
+    mutex_enter(&buf_pool->free_list_mutex); // 进入 free_list 互斥锁
 
     buf_resize_status(
         BUF_POOL_RESIZE_WITHDRAW_BLOCKS,
         "buffer pool " ULINTPF " : withdrawing blocks. (%zu/" ULINTPF ")", i,
-        UT_LIST_GET_LEN(buf_pool->withdraw), buf_pool->withdraw_target);
+        UT_LIST_GET_LEN(buf_pool->withdraw), buf_pool->withdraw_target); // 更新缓冲池调整状态
 
     ib::info(ER_IB_MSG_57) << "buffer pool " << i << " : withdrew " << count1
                            << " blocks from free list."
                            << " Tried to relocate " << count2 << " pages ("
                            << UT_LIST_GET_LEN(buf_pool->withdraw) << "/"
-                           << buf_pool->withdraw_target << ").";
+                           << buf_pool->withdraw_target << ")."; // 输出信息，撤回的块数和重新分配的页数
 
-    if (++loop_count >= 10) {
+    if (++loop_count >= 10) { // 如果循环计数器达到 10
       /* give up for now.
       retried after user threads paused. */
 
-      mutex_exit(&buf_pool->free_list_mutex);
+      mutex_exit(&buf_pool->free_list_mutex); // 暂时放弃，稍后重试
 
       ib::info(ER_IB_MSG_58)
-          << "buffer pool " << i << " : will retry to withdraw later.";
+          << "buffer pool " << i << " : will retry to withdraw later."; // 输出信息，将稍后重试
 
       /* need retry later */
-      return (true);
+      return (true); // 需要稍后重试
     }
   }
-  mutex_exit(&buf_pool->free_list_mutex);
+  mutex_exit(&buf_pool->free_list_mutex); // 退出 free_list 互斥锁
 
   /* confirm withdrawn enough */
   const buf_chunk_t *chunk = buf_pool->chunks + buf_pool->n_chunks_new;
   const buf_chunk_t *echunk = buf_pool->chunks + buf_pool->n_chunks;
 
-  while (chunk < echunk) {
+  while (chunk < echunk) { // 遍历块，确认状态
     block = chunk->blocks;
     for (ulint j = chunk->size; j--; block++) {
       /* If !=BUF_BLOCK_NOT_USED block in the
       withdrawn area, it means corruption
       something */
-      ut_a(buf_block_get_state(block) == BUF_BLOCK_NOT_USED);
+      ut_a(buf_block_get_state(block) == BUF_BLOCK_NOT_USED); // 如果块状态不是 BUF_BLOCK_NOT_USED，表示数据损坏
       ut_ad(block->in_withdraw_list);
     }
     ++chunk;
   }
 
   ib::info(ER_IB_MSG_59) << "buffer pool " << i << " : withdrawn target "
-                         << UT_LIST_GET_LEN(buf_pool->withdraw) << " blocks.";
+                         << UT_LIST_GET_LEN(buf_pool->withdraw) << " blocks."; // 输出信息，撤回的目标块数
 
   /* retry is not needed */
   os_wmb;
 
-  return (false);
+  return (false); // 不需要重试
 }
 
 /** resize page_hash and zip_hash for a buffer pool instance.
 @param[in]      buf_pool        buffer pool instance */
+// 调整缓冲池实例的 page_hash 和 zip_hash 的大小。
+// @param[in]      buf_pool        缓冲池实例
 static void buf_pool_resize_hash(buf_pool_t *buf_pool) {
   hash_table_t *new_hash_table;
 
-  ut_ad(mutex_own(&buf_pool->zip_hash_mutex));
+  ut_ad(mutex_own(&buf_pool->zip_hash_mutex)); // 断言当前线程拥有 zip_hash_mutex
 
   /* create a temporary hash_table with twice larger cells[]  */
+  // 创建一个临时哈希表，其 cells[] 大小是当前的两倍
   new_hash_table = ut::new_<hash_table_t>(2 * buf_pool->curr_size);
   /* Only the current thread will use this temporary hash table, so no need for
   latching */
+  // 只有当前线程会使用这个临时哈希表，所以不需要加锁
   ut_ad(new_hash_table->type == HASH_TABLE_SYNC_NONE);
   ut_ad(0 == new_hash_table->n_sync_obj);
   ut_ad(nullptr == new_hash_table->rw_locks);
   /* move the data to the temporary hash table */
+  // 将数据移动到临时哈希表
   for (ulint i = 0; i < hash_get_n_cells(buf_pool->page_hash); i++) {
     buf_page_t *bpage;
 
-    bpage = static_cast<buf_page_t *>(hash_get_first(buf_pool->page_hash, i));
+    bpage = static_cast<buf_page_t *>(hash_get_first(buf_pool->page_hash, i)); // 获取第一个哈希桶中的页面
 
     while (bpage) {
       buf_page_t *prev_bpage = bpage;
 
-      bpage = static_cast<buf_page_t *>(HASH_GET_NEXT(hash, prev_bpage));
+      bpage = static_cast<buf_page_t *>(HASH_GET_NEXT(hash, prev_bpage)); // 获取下一个页面
 
-      const auto hash_value = prev_bpage->id.hash();
+      const auto hash_value = prev_bpage->id.hash(); // 计算哈希值
 
       HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, hash_value,
-                  prev_bpage);
+                  prev_bpage); // 从旧哈希表中删除页面
 
-      HASH_INSERT(buf_page_t, hash, new_hash_table, hash_value, prev_bpage);
+      HASH_INSERT(buf_page_t, hash, new_hash_table, hash_value, prev_bpage); // 插入页面到新哈希表
     }
   }
   /* Concurrent threads may be accessing buf_pool->page_hash->n_cells,
@@ -2095,42 +2158,46 @@ static void buf_pool_resize_hash(buf_pool_t *buf_pool) {
   old n_cells and cells to the new_hash_table, so they get freed with it. It's
   important that neither new nor old hash table use `heap`, as otherwise hash
   chains would got inconsistent after the swap. */
+  // 并发线程可能会访问 buf_pool->page_hash->n_cells、n_sync_obj 并尝试锁定 rw_locks[i]，因此我们从不释放 page_hash，
+  // 而是用临时 new_hash_table 中的新值覆盖其 n_cells 和 cells。我们还将旧的 n_cells 和 cells 移动到 new_hash_table，
+  // 这样它们就会随之释放。重要的是，新旧哈希表都不使用 `heap`，否则在交换后哈希链会不一致。
   ut_ad(buf_pool->page_hash->adaptive == new_hash_table->adaptive);
   ut_ad(buf_pool->page_hash->heap == nullptr &&
         new_hash_table->heap == nullptr);
-  std::swap(buf_pool->page_hash->cells, new_hash_table->cells);
+  std::swap(buf_pool->page_hash->cells, new_hash_table->cells); // 交换 cells
   /* swap(buf_pool->page_hash->n_cells,  new_hash_table->n_cells): */
   {
     const auto new_n_cells = new_hash_table->get_n_cells();
     new_hash_table->set_n_cells(buf_pool->page_hash->get_n_cells());
     buf_pool->page_hash->set_n_cells(new_n_cells);
   }
-  ut::delete_(new_hash_table);
+  ut::delete_(new_hash_table); // 删除临时哈希表
 
   /* recreate zip_hash */
+  // 重新创建 zip_hash
   new_hash_table = ut::new_<hash_table_t>(2 * buf_pool->curr_size);
 
   for (ulint i = 0; i < hash_get_n_cells(buf_pool->zip_hash); i++) {
     buf_page_t *bpage;
 
-    bpage = static_cast<buf_page_t *>(hash_get_first(buf_pool->zip_hash, i));
+    bpage = static_cast<buf_page_t *>(hash_get_first(buf_pool->zip_hash, i)); // 获取第一个哈希桶中的页面
 
     while (bpage) {
       buf_page_t *prev_bpage = bpage;
 
-      bpage = static_cast<buf_page_t *>(HASH_GET_NEXT(hash, prev_bpage));
+      bpage = static_cast<buf_page_t *>(HASH_GET_NEXT(hash, prev_bpage)); // 获取下一个页面
 
       const auto hash_value =
-          buf_pool_hash_zip(reinterpret_cast<buf_block_t *>(prev_bpage));
+          buf_pool_hash_zip(reinterpret_cast<buf_block_t *>(prev_bpage)); // 计算哈希值
 
-      HASH_DELETE(buf_page_t, hash, buf_pool->zip_hash, hash_value, prev_bpage);
+      HASH_DELETE(buf_page_t, hash, buf_pool->zip_hash, hash_value, prev_bpage); // 从旧哈希表中删除页面
 
-      HASH_INSERT(buf_page_t, hash, new_hash_table, hash_value, prev_bpage);
+      HASH_INSERT(buf_page_t, hash, new_hash_table, hash_value, prev_bpage); // 插入页面到新哈希表
     }
   }
 
-  ut::delete_(buf_pool->zip_hash);
-  buf_pool->zip_hash = new_hash_table;
+  ut::delete_(buf_pool->zip_hash); // 删除旧的 zip_hash
+  buf_pool->zip_hash = new_hash_table; // 更新 zip_hash 指针
 }
 
 #ifdef UNIV_DEBUG
@@ -2310,7 +2377,7 @@ withdraw_retry:
   }
 
   /* abort buffer pool load */
-  // 中止缓冲池加载
+  // 中止加载buffer pool的操作
   buf_load_abort();
 
   // 处理需要重试撤回操作的情况
@@ -2325,40 +2392,45 @@ withdraw_retry:
     }
 
     {
-      /* lock_trx_print_wait_and_mvcc_state() requires exclusive global latch */
-      // 获取全局锁并打印可能持有块的事务信息
-      locksys::Global_exclusive_latch_guard guard{UT_LOCATION_HERE};
-      trx_sys_mutex_enter();
-      bool found = false;
-      for (auto trx : trx_sys->mysql_trx_list) {
-        /* Note that trx->state might be changed from TRX_STATE_NOT_STARTED to
-        TRX_STATE_ACTIVE without usage of trx_sys->mutex when the transaction
-        is read-only (look inside trx_start_low() for details).
-
-        These loads below might be inconsistent for read-only transactions,
-        because state and start_time for such transactions are saved using
-        the std::memory_order_relaxed, not to risk performance regression
-        on ARM (and this code here is the only victim of the issue, so seems
-        it is a minor issue with potentially incorrect warning message).
-
-        TODO: check performance gain from this micro-optimization */
-        const auto trx_state = trx->state.load(std::memory_order_relaxed);
-        const auto trx_start = trx->start_time.load(std::memory_order_relaxed);
-        if (trx_state != TRX_STATE_NOT_STARTED && trx->mysql_thd != nullptr &&
-            trx_start != std::chrono::system_clock::time_point{} &&
-            withdraw_start_time > trx_start) {
-          if (!found) {
-            ib::warn(ER_IB_MSG_61)
-                << "The following trx might hold the blocks in buffer pool to "
-                   "be withdrawn. Buffer pool resizing can complete only after "
-                   "all the transactions below release the blocks.";
-            found = true;
+          /* lock_trx_print_wait_and_mvcc_state() requires exclusive global latch */
+          // 获取全局锁并打印可能持有块的事务信息
+          locksys::Global_exclusive_latch_guard guard{UT_LOCATION_HERE}; // 获取全局独占锁
+          trx_sys_mutex_enter(); // 进入事务系统互斥锁
+          bool found = false; // 定义标志变量，表示是否找到持有块的事务
+          for (auto trx : trx_sys->mysql_trx_list) { // 遍历所有事务
+            /* Note that trx->state might be changed from TRX_STATE_NOT_STARTED to
+            TRX_STATE_ACTIVE without usage of trx_sys->mutex when the transaction
+            is read-only (look inside trx_start_low() for details).
+    
+            These loads below might be inconsistent for read-only transactions,
+            because state and start_time for such transactions are saved using
+            the std::memory_order_relaxed, not to risk performance regression
+            on ARM (and this code here is the only victim of the issue, so seems
+            it is a minor issue with potentially incorrect warning message).
+    
+            TODO: check performance gain from this micro-optimization */
+            // 注意，trx->state 可能会在没有使用 trx_sys->mutex 的情况下从 TRX_STATE_NOT_STARTED 变为 TRX_STATE_ACTIVE，
+            // 当事务是只读时（查看 trx_start_low() 了解详情）。
+            // 下面的加载操作对于只读事务可能是不一致的，因为这些事务的状态和开始时间是使用 std::memory_order_relaxed 保存的，
+            // 这样做是为了避免在 ARM 上的性能回归（而这里的代码是唯一受此问题影响的，所以这似乎是一个小问题，可能会导致警告信息不准确）。
+            // TODO：检查这种微优化带来的性能提升
+            const auto trx_state = trx->state.load(std::memory_order_relaxed); // 加载事务状态
+            const auto trx_start = trx->start_time.load(std::memory_order_relaxed); // 加载事务开始时间
+            if (trx_state != TRX_STATE_NOT_STARTED && trx->mysql_thd != nullptr &&
+                trx_start != std::chrono::system_clock::time_point{} &&
+                withdraw_start_time > trx_start) { // 如果事务状态不是 TRX_STATE_NOT_STARTED 且事务有 MySQL 线程且事务开始时间有效且撤回开始时间晚于事务开始时间
+              if (!found) { // 如果还没有找到持有块的事务
+                ib::warn(ER_IB_MSG_61)
+                    << "The following trx might hold the blocks in buffer pool to "
+                       "be withdrawn. Buffer pool resizing can complete only after "
+                       "all the transactions below release the blocks."; // 输出警告信息，以下事务可能持有缓冲池中的块，缓冲池调整只能在所有这些事务释放块后完成
+                found = true; // 设置标志变量为 true
+              }
+    
+              lock_trx_print_wait_and_mvcc_state(stderr, trx); // 打印事务的等待和 MVCC 状态
+            }
           }
-
-          lock_trx_print_wait_and_mvcc_state(stderr, trx);
-        }
-      }
-      trx_sys_mutex_exit();
+          trx_sys_mutex_exit(); // 退出事务系统互斥锁
     }
 
     withdraw_start_time = std::chrono::system_clock::now();
@@ -2420,7 +2492,7 @@ withdraw_retry:
   buf_resize_status_progress_update(1, 7);
 
   for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
-    mutex_enter(&(buf_pool_from_array(i)->LRU_list_mutex));
+    mutex_enter(&(buf_pool_from_array(i)->LRU_list_mutex)); 
   }
   buf_resize_status_progress_update(2, 7);
 

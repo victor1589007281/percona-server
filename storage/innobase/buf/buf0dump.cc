@@ -431,243 +431,268 @@ static inline void buf_load_throttle_if_needed(
  innodb_buffer_pool_load_status will be set accordingly, see buf_load_status().
  The dump filename can be specified by (relative to srv_data_home):
  SET GLOBAL innodb_buffer_pool_filename='filename'; */
+// 从由 innodb_buffer_pool_filename 指定的文件执行缓冲池加载。
+// 如果发生任何错误，则会相应地设置 innodb_buffer_pool_load_status 的值，参见 buf_load_status()。
+// 转储文件名可以通过以下方式指定（相对于 srv_data_home）：
+// SET GLOBAL innodb_buffer_pool_filename='filename';
 static void buf_load() {
-  char full_filename[OS_FILE_MAX_PATH];
-  char now[32];
-  FILE *f;
-  buf_dump_t *dump;
-  ulint dump_n;
-  ulint total_buffer_pools_pages;
-  ulint i;
-  ulint space_id;
-  ulint page_no;
-  int fscanf_ret;
+  char full_filename[OS_FILE_MAX_PATH]; // 定义完整文件名的字符数组
+  char now[32]; // 定义当前时间的字符数组
+  FILE *f; // 定义文件指针
+  buf_dump_t *dump; // 定义缓冲区转储指针
+  ulint dump_n; // 定义转储条目数
+  ulint total_buffer_pools_pages; // 定义缓冲池总页数
+  ulint i; // 定义循环变量
+  ulint space_id; // 定义空间 ID
+  ulint page_no; // 定义页号
+  int fscanf_ret; // 定义 fscanf 返回值
 
   /* Ignore any leftovers from before */
-  buf_load_abort_flag = false;
+  // 忽略之前的任何残留
+  buf_load_abort_flag = false; // 设置缓冲区加载中止标志为 false
 
-  buf_dump_generate_path(full_filename, sizeof(full_filename));
+  buf_dump_generate_path(full_filename, sizeof(full_filename)); // 生成完整文件路径
 
-  buf_load_status(STATUS_INFO, "Loading buffer pool(s) from %s", full_filename);
+  buf_load_status(STATUS_INFO, "Loading buffer pool(s) from %s", full_filename); // 输出加载缓冲池的信息
 
-  f = fopen(full_filename, "r");
-  if (f == nullptr) {
+  f = fopen(full_filename, "r"); // 打开文件进行读取
+  if (f == nullptr) { // 如果文件打开失败
     buf_load_status(STATUS_ERR, "Cannot open '%s' for reading: %s",
-                    full_filename, strerror(errno));
-    return;
+                    full_filename, strerror(errno)); // 输出错误信息，无法打开文件进行读取
+    return; // 返回
   }
   /* else */
 
   /* First scan the file to estimate how many entries are in it.
   This file is tiny (approx 500KB per 1GB buffer pool), reading it
   two times is fine. */
-  dump_n = 0;
+  // 首先扫描文件以估计其中有多少条目。
+  // 这个文件很小（每 1GB 缓冲池大约 500KB），读取两次是可以的。
+  dump_n = 0; // 初始化转储条目数为 0
   while (fscanf(f, ULINTPF "," ULINTPF, &space_id, &page_no) == 2 &&
-         !SHUTTING_DOWN()) {
-    dump_n++;
+         !SHUTTING_DOWN()) { // 读取文件中的空间 ID 和页号，并检查是否正在关闭
+    dump_n++; // 转储条目数加 1
   }
 
-  if (!SHUTTING_DOWN() && !feof(f)) {
+  if (!SHUTTING_DOWN() && !feof(f)) { // 如果没有关闭且未到达文件末尾
     /* fscanf() returned != 2 */
-    const char *what;
-    if (ferror(f)) {
-      what = "reading";
+    // fscanf() 返回值不等于 2
+    const char *what; // 定义错误类型指针
+    if (ferror(f)) { // 如果文件读取错误
+      what = "reading"; // 错误类型为读取
     } else {
-      what = "parsing";
+      what = "parsing"; // 否则错误类型为解析
     }
-    fclose(f);
+    fclose(f); // 关闭文件
     buf_load_status(STATUS_ERR,
                     "Error %s '%s',"
                     " unable to load buffer pool (stage 1)",
-                    what, full_filename);
-    return;
+                    what, full_filename); // 输出错误信息，无法加载缓冲池（阶段 1）
+    return; // 返回
   }
 
   /* If dump is larger than the buffer pool(s), then we ignore the
   extra trailing. This could happen if a dump is made, then buffer
   pool is shrunk and then load is attempted. */
-  total_buffer_pools_pages = buf_pool_get_n_pages() * srv_buf_pool_instances;
-  if (dump_n > total_buffer_pools_pages) {
-    dump_n = total_buffer_pools_pages;
+  // 如果转储大于缓冲池，则忽略多余的尾部。
+  // 这种情况可能发生在进行转储后，缓冲池缩小，然后尝试加载。
+  total_buffer_pools_pages = buf_pool_get_n_pages() * srv_buf_pool_instances; // 获取缓冲池总页数
+  if (dump_n > total_buffer_pools_pages) { // 如果转储条目数大于缓冲池总页数
+    dump_n = total_buffer_pools_pages; // 将转储条目数设置为缓冲池总页数
   }
 
-  if (dump_n != 0) {
+  if (dump_n != 0) { // 如果转储条目数不为 0
     dump = static_cast<buf_dump_t *>(
-        ut::malloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, dump_n * sizeof(*dump)));
+        ut::malloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, dump_n * sizeof(*dump))); // 分配转储内存
   } else {
-    fclose(f);
-    ut_sprintf_timestamp(now);
+    fclose(f); // 关闭文件
+    ut_sprintf_timestamp(now); // 获取当前时间戳
     buf_load_status(STATUS_INFO,
                     "Buffer pool(s) load completed at %s"
                     " (%s was empty)",
-                    now, full_filename);
-    return;
+                    now, full_filename); // 输出缓冲池加载完成信息（文件为空）
+    return; // 返回
   }
 
-  if (dump == nullptr) {
-    fclose(f);
+  if (dump == nullptr) { // 如果转储内存分配失败
+    fclose(f); // 关闭文件
     buf_load_status(STATUS_ERR, "Cannot allocate " ULINTPF " bytes: %s",
-                    (ulint)(dump_n * sizeof(*dump)), strerror(errno));
-    return;
+                    (ulint)(dump_n * sizeof(*dump)), strerror(errno)); // 输出错误信息，无法分配内存
+    return; // 返回
   }
 
-  rewind(f);
+  rewind(f); // 重置文件指针
 
-  for (i = 0; i < dump_n && !SHUTTING_DOWN(); i++) {
-    fscanf_ret = fscanf(f, ULINTPF "," ULINTPF, &space_id, &page_no);
+  for (i = 0; i < dump_n && !SHUTTING_DOWN(); i++) { // 遍历转储条目并检查是否正在关闭
+    fscanf_ret = fscanf(f, ULINTPF "," ULINTPF, &space_id, &page_no); // 读取文件中的空间 ID 和页号
 
-    if (fscanf_ret != 2) {
-      if (feof(f)) {
-        break;
+    if (fscanf_ret != 2) { // 如果 fscanf 返回值不等于 2
+      if (feof(f)) { // 如果到达文件末尾
+        break; // 跳出循环
       }
       /* else */
 
-      ut::free(dump);
-      fclose(f);
+      ut::free(dump); // 释放转储内存
+      fclose(f); // 关闭文件
       buf_load_status(STATUS_ERR,
                       "Error parsing '%s', unable"
                       " to load buffer pool (stage 2)",
-                      full_filename);
-      return;
+                      full_filename); // 输出错误信息，无法加载缓冲池（阶段 2）
+      return; // 返回
     }
 
-    if (space_id > UINT32_MASK || page_no > UINT32_MASK) {
-      ut::free(dump);
-      fclose(f);
+    if (space_id > UINT32_MASK || page_no > UINT32_MASK) { // 如果空间 ID 或页号超出范围
+      ut::free(dump); // 释放转储内存
+      fclose(f); // 关闭文件
       buf_load_status(STATUS_ERR,
                       "Error parsing '%s': bogus"
                       " space,page " ULINTPF "," ULINTPF " at line " ULINTPF
                       ","
                       " unable to load buffer pool",
-                      full_filename, space_id, page_no, i);
-      return;
+                      full_filename, space_id, page_no, i); // 输出错误信息，无法加载缓冲池
+      return; // 返回
     }
 
-    dump[i] = BUF_DUMP_CREATE(space_id, page_no);
+    dump[i] = BUF_DUMP_CREATE(space_id, page_no); // 创建转储条目
   }
 
   /* Set dump_n to the actual number of initialized elements,
   i could be smaller than dump_n here if the file got truncated after
   we read it the first time. */
-  dump_n = i;
+  // 将 dump_n 设置为实际初始化的元素数，
+  // 如果文件在第一次读取后被截断，i 可能小于 dump_n。
+  dump_n = i; // 更新转储条目数
 
-  fclose(f);
+  fclose(f); // 关闭文件
 
-  if (dump_n == 0) {
-    ut::free(dump);
-    ut_sprintf_timestamp(now);
+  if (dump_n == 0) { // 如果转储条目数为 0
+    ut::free(dump); // 释放转储内存
+    ut_sprintf_timestamp(now); // 获取当前时间戳
     buf_load_status(STATUS_INFO,
                     "Buffer pool(s) load completed at %s"
                     " (%s was empty)",
-                    now, full_filename);
-    return;
+                    now, full_filename); // 输出缓冲池加载完成信息（文件为空）
+    return; // 返回
   }
 
-  if (!SHUTTING_DOWN()) {
-    std::sort(dump, dump + dump_n);
+  if (!SHUTTING_DOWN()) { // 如果没有关闭
+    std::sort(dump, dump + dump_n); // 对转储条目进行排序
   }
 
-  std::chrono::steady_clock::time_point last_check_time;
-  ulint last_activity_cnt = 0;
+  std::chrono::steady_clock::time_point last_check_time; // 定义上次检查时间
+  ulint last_activity_cnt = 0; // 定义上次活动计数
 
   /* Avoid calling the expensive fil_space_acquire_silent() for each
   page within the same tablespace. dump[] is sorted by (space, page),
   so all pages from a given tablespace are consecutive. */
-  space_id_t cur_space_id = BUF_DUMP_SPACE(dump[0]);
-  fil_space_t *space = fil_space_acquire_silent(cur_space_id);
-  page_size_t page_size(space ? space->flags : 0);
+  // 避免为同一表空间内的每个页面调用昂贵的 fil_space_acquire_silent()。
+  // dump[] 按（空间，页面）排序，因此给定表空间的所有页面都是连续的。
+  space_id_t cur_space_id = BUF_DUMP_SPACE(dump[0]); // 获取当前空间 ID
+  fil_space_t *space = fil_space_acquire_silent(cur_space_id); // 获取表空间
+  page_size_t page_size(space ? space->flags : 0); // 获取页面大小
 
 #ifdef HAVE_PSI_STAGE_INTERFACE
   PSI_stage_progress *pfs_stage_progress =
-      mysql_set_stage(srv_stage_buffer_pool_load.m_key);
+      mysql_set_stage(srv_stage_buffer_pool_load.m_key); // 设置阶段进度
 #endif /* HAVE_PSI_STAGE_INTERFACE */
 
-  mysql_stage_set_work_estimated(pfs_stage_progress, dump_n);
-  mysql_stage_set_work_completed(pfs_stage_progress, 0);
+  mysql_stage_set_work_estimated(pfs_stage_progress, dump_n); // 设置预估工作量
+  mysql_stage_set_work_completed(pfs_stage_progress, 0); // 设置已完成工作量
 
-  for (i = 0; i < dump_n && !SHUTTING_DOWN(); i++) {
+  for (i = 0; i < dump_n && !SHUTTING_DOWN(); i++) { // 遍历转储条目并检查是否正在关闭
     /* space_id for this iteration of the loop */
-    const space_id_t this_space_id = BUF_DUMP_SPACE(dump[i]);
+    // 此循环迭代的空间 ID
+    const space_id_t this_space_id = BUF_DUMP_SPACE(dump[i]); // 获取当前空间 ID
 
-    if (this_space_id != cur_space_id) {
-      if (space != nullptr) {
-        fil_space_release(space);
+    if (this_space_id != cur_space_id) { // 如果当前空间 ID 不等于之前的空间 ID
+      if (space != nullptr) { // 如果表空间不为空
+        fil_space_release(space); // 释放表空间
       }
 
-      cur_space_id = this_space_id;
-      space = fil_space_acquire_silent(cur_space_id);
+      cur_space_id = this_space_id; // 更新当前空间 ID
+      space = fil_space_acquire_silent(cur_space_id); // 获取新的表空间
 
-      if (space != nullptr) {
-        const page_size_t cur_page_size(space->flags);
-        page_size.copy_from(cur_page_size);
+      if (space != nullptr) { // 如果表空间不为空
+        const page_size_t cur_page_size(space->flags); // 获取当前页面大小
+        page_size.copy_from(cur_page_size); // 复制页面大小
       }
     }
 
-    if (space == nullptr) {
-      continue;
+    if (space == nullptr) { // 如果表空间为空
+      continue; // 跳过当前迭代
     }
 
     buf_read_page_background(page_id_t(this_space_id, BUF_DUMP_PAGE(dump[i])),
-                             page_size, true);
+                             page_size, true); // 在后台读取页面
 
-    if (i % 64 == 63) {
-      os_aio_simulated_wake_handler_threads();
+    if (i % 64 == 63) { // 每 64 次迭代唤醒一次模拟的 AIO 处理程序线程
+      os_aio_simulated_wake_handler_threads(); // 唤醒模拟的 AIO 处理程序线程
     }
 
     /* Update the progress every 32 MiB, which is every Nth page,
     where N = 32*1024^2 / page_size. */
-    static const ulint update_status_every_n_mb = 32;
+    // 每 32 MiB 更新一次进度，即每 N 页，
+    // 其中 N = 32*1024^2 / 页面大小。
+    static const ulint update_status_every_n_mb = 32; // 定义每 32 MiB 更新一次状态
     static const ulint update_status_every_n_pages =
-        update_status_every_n_mb * 1024 * 1024 / page_size.physical();
+        update_status_every_n_mb * 1024 * 1024 / page_size.physical(); // 计算每 N 页更新一次状态
 
-    if (i % update_status_every_n_pages == 0) {
+    if (i % update_status_every_n_pages == 0) { // 如果当前迭代数是更新状态的倍数
       buf_load_status(STATUS_VERBOSE, "Loaded " ULINTPF "/" ULINTPF " pages",
-                      i + 1, dump_n);
-      mysql_stage_set_work_completed(pfs_stage_progress, i);
+                      i + 1, dump_n); // 输出加载进度
+      mysql_stage_set_work_completed(pfs_stage_progress, i); // 设置已完成工作量
     }
 
-    if (buf_load_abort_flag) {
-      if (space != nullptr) {
-        fil_space_release(space);
+    if (buf_load_abort_flag) { // 如果缓冲区加载中止标志为 true
+      if (space != nullptr) { // 如果表空间不为空
+        fil_space_release(space); // 释放表空间
       }
-      buf_load_abort_flag = false;
-      ut::free(dump);
-      buf_load_status(STATUS_INFO, "Buffer pool(s) load aborted on request");
+      buf_load_abort_flag = false; // 重置缓冲区加载中止标志
+      ut::free(dump); // 释放转储内存
+      buf_load_status(STATUS_INFO, "Buffer pool(s) load aborted on request"); // 输出缓冲池加载中止信息
       /* Premature end, set estimated = completed = i and
       end the current stage event. */
-      mysql_stage_set_work_estimated(pfs_stage_progress, i);
-      mysql_stage_set_work_completed(pfs_stage_progress, i);
+      // 提前结束，设置预估工作量和已完成工作量为 i，并结束当前阶段事件。
+      mysql_stage_set_work_estimated(pfs_stage_progress, i); // 设置预估工作量
+      mysql_stage_set_work_completed(pfs_stage_progress, i); // 设置已完成工作量
 #ifdef HAVE_PSI_STAGE_INTERFACE
-      mysql_end_stage();
+      mysql_end_stage(); // 结束阶段进度事件
 #endif /* HAVE_PSI_STAGE_INTERFACE */
-      return;
+      return; // 返回
     }
 
-    buf_load_throttle_if_needed(&last_check_time, &last_activity_cnt, i);
+    buf_load_throttle_if_needed(&last_check_time, &last_activity_cnt, i); // 如果需要，限制缓冲区加载速度
   }
 
-  if (space != nullptr) {
-    fil_space_release(space);
+  if (space != nullptr) { // 如果表空间不为空
+    fil_space_release(space); // 释放表空间
   }
 
-  ut::free(dump);
+  ut::free(dump); // 释放转储内存
 
-  ut_sprintf_timestamp(now);
+  ut_sprintf_timestamp(now); // 获取当前时间戳
 
-  buf_load_status(STATUS_INFO, "Buffer pool(s) load completed at %s", now);
+  buf_load_status(STATUS_INFO, "Buffer pool(s) load completed at %s", now); // 输出缓冲池加载完成信息
 
   /* Make sure that estimated = completed when we end. */
-  mysql_stage_set_work_completed(pfs_stage_progress, dump_n);
+  // 确保在结束时预估工作量等于已完成工作量。
+  mysql_stage_set_work_completed(pfs_stage_progress, dump_n); // 设置已完成工作量
   /* End the stage progress event. */
+  // 结束阶段进度事件。
 #ifdef HAVE_PSI_STAGE_INTERFACE
-  mysql_end_stage();
+  mysql_end_stage(); // 结束阶段进度事件
 #endif /* HAVE_PSI_STAGE_INTERFACE */
 }
+
 
 /** Aborts a currently running buffer pool load. This function is called by
  MySQL code via buffer_pool_load_abort() and it should return immediately
  because the whole MySQL is frozen during its execution. */
-void buf_load_abort() { buf_load_abort_flag = true; }
+// 中止当前正在运行的缓冲池加载。此函数由 MySQL 代码通过 buffer_pool_load_abort() 调用，
+// 并且应该立即返回，因为在执行期间整个 MySQL 都被冻结。
+void buf_load_abort() { 
+    buf_load_abort_flag = true; // 设置中止标志为 true
+}
 
 /** This is the main thread for buffer pool dump/load. It waits for an
 event and when waked up either performs a dump or load and sleeps

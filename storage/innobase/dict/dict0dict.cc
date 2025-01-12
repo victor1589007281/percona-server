@@ -4621,42 +4621,44 @@ void dict_fs2utf8(const char *db_and_table, char *db_utf8mb3,
 }
 
 /** Resize the hash tables based on the current buffer pool size. */
+// 根据当前缓冲池大小调整哈希表的大小。
 void dict_resize() {
-  dict_sys_mutex_enter();
+  dict_sys_mutex_enter(); // 进入字典系统互斥锁
 
   /* all table entries are in table_LRU and table_non_LRU lists */
-  ut::delete_(dict_sys->table_hash);
-  ut::delete_(dict_sys->table_id_hash);
+  // 所有表条目都在 table_LRU 和 table_non_LRU 列表中
+  ut::delete_(dict_sys->table_hash); // 删除旧的表哈希表
+  ut::delete_(dict_sys->table_id_hash); // 删除旧的表 ID 哈希表
 
   dict_sys->table_hash = ut::new_<hash_table_t>(
-      buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE));
+      buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE)); // 创建新的表哈希表
 
   dict_sys->table_id_hash = ut::new_<hash_table_t>(
-      buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE));
+      buf_pool_get_curr_size() / (DICT_POOL_PER_TABLE_HASH * UNIV_WORD_SIZE)); // 创建新的表 ID 哈希表
 
-  for (auto table : dict_sys->table_LRU) {
-    const auto name_hash_value = ut::hash_string(table->name.m_name);
-    const auto index_id_hash_value = ut::hash_uint64(table->id);
-
-    HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, name_hash_value,
-                table);
-
-    HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
-                index_id_hash_value, table);
-  }
-
-  for (auto table : dict_sys->table_non_LRU) {
-    const auto name_hash_value = ut::hash_string(table->name.m_name);
-    const auto index_id_hash_value = ut::hash_uint64(table->id);
+  for (auto table : dict_sys->table_LRU) { // 遍历 table_LRU 列表中的所有表
+    const auto name_hash_value = ut::hash_string(table->name.m_name); // 计算表名的哈希值
+    const auto index_id_hash_value = ut::hash_uint64(table->id); // 计算表 ID 的哈希值
 
     HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, name_hash_value,
-                table);
+                table); // 将表插入到新的表哈希表中
 
     HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
-                index_id_hash_value, table);
+                index_id_hash_value, table); // 将表插入到新的表 ID 哈希表中
   }
 
-  dict_sys_mutex_exit();
+  for (auto table : dict_sys->table_non_LRU) { // 遍历 table_non_LRU 列表中的所有表
+    const auto name_hash_value = ut::hash_string(table->name.m_name); // 计算表名的哈希值
+    const auto index_id_hash_value = ut::hash_uint64(table->id); // 计算表 ID 的哈希值
+
+    HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, name_hash_value,
+                table); // 将表插入到新的表哈希表中
+
+    HASH_INSERT(dict_table_t, id_hash, dict_sys->table_id_hash,
+                index_id_hash_value, table); // 将表插入到新的表 ID 哈希表中
+  }
+
+  dict_sys_mutex_exit(); // 退出字典系统互斥锁
 }
 #else
 /* Dummy implementation for satisfying compiler for MEB. This can be removed

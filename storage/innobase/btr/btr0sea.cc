@@ -221,36 +221,40 @@ void btr_search_sys_t::search_part_t::initialize(size_t hash_size) {
 
 void btr_search_sys_resize(ulint hash_size) {
   /* Step-1: Lock all search latches in exclusive mode. */
+  // 第一步：以独占模式锁定所有搜索锁存器。
   btr_search_x_lock_all(UT_LOCATION_HERE);
 
   if (btr_search_enabled) {
-    btr_search_x_unlock_all();
+    btr_search_x_unlock_all(); // 解锁所有搜索锁存器
 
     ib::error(ER_IB_MSG_45) << "btr_search_sys_resize failed because"
-                               " hash index hash table is not empty.";
+                               " hash index hash table is not empty."; // 输出错误信息，哈希索引哈希表不为空
     ut_d(ut_error);
     ut_o(return );
   }
 
   /* Step-2: Recreate hash tables with new size. */
+  // 第二步：使用新大小重新创建哈希表。
   for (ulint i = 0; i < btr_ahi_parts; ++i) {
     auto &part = btr_search_sys->parts[i];
-    mem_heap_free(part.hash_table->heap);
-    ut::delete_(part.hash_table);
+    mem_heap_free(part.hash_table->heap); // 释放哈希表的堆内存
+    ut::delete_(part.hash_table); // 删除旧的哈希表
 
     part.hash_table =
         ib_create((hash_size / btr_ahi_parts), LATCH_ID_HASH_TABLE_MUTEX, 0,
-                  MEM_HEAP_FOR_BTR_SEARCH);
-    part.hash_table->heap->free_block_ptr = &part.free_block_for_heap;
+                  MEM_HEAP_FOR_BTR_SEARCH); // 创建新的哈希表
+    part.hash_table->heap->free_block_ptr = &part.free_block_for_heap; // 设置空闲块指针
 
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
-    part.hash_table->adaptive = true;
+    part.hash_table->adaptive = true; // 如果定义了 UNIV_AHI_DEBUG 或 UNIV_DEBUG，则设置哈希表为自适应
 #endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
   }
 
   /* Step-3: Unlock all search latches from exclusive mode. */
+  // 第三步：从独占模式解锁所有搜索锁存器。
   btr_search_x_unlock_all();
 }
+
 
 void btr_search_sys_free() {
   if (btr_search_sys == nullptr) {

@@ -259,13 +259,17 @@ static inline void buf_buddy_add_to_free(buf_pool_t *buf_pool,
 @param[in]      buf_pool        buffer pool instance
 @param[in,out]  buf             block to be freed
 @param[in]      i               index of buf_pool->zip_free[] */
+// 从适当的伙伴空闲列表中移除一个块。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in,out]  buf             要释放的块
+// @param[in]      i               buf_pool->zip_free[] 的索引
 static inline void buf_buddy_remove_from_free(buf_pool_t *buf_pool,
                                               buf_buddy_free_t *buf, ulint i) {
-  ut_ad(mutex_own(&buf_pool->zip_free_mutex));
-  ut_ad(buf_buddy_check_free(buf_pool, buf, i));
+  ut_ad(mutex_own(&buf_pool->zip_free_mutex)); // 断言当前线程拥有 zip_free_mutex
+  ut_ad(buf_buddy_check_free(buf_pool, buf, i)); // 断言 buf 在空闲列表中
 
-  UT_LIST_REMOVE(buf_pool->zip_free[i], buf);
-  buf_buddy_stamp_nonfree(buf, i);
+  UT_LIST_REMOVE(buf_pool->zip_free[i], buf); // 从 zip_free[i] 列表中移除 buf
+  buf_buddy_stamp_nonfree(buf, i); // 标记 buf 为非空闲状态
 }
 
 /** Try to allocate a block from buf_pool->zip_free[].
@@ -466,85 +470,99 @@ function will release and lock it again.
 @param[in]      i               index of buf_pool->zip_free[]
 @param[in]      force           true if we must relocated always
 @return true if relocated */
+// 尝试重新定位一个块。调用者必须持有 zip_free_mutex，本函数会释放并重新锁定它。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      src             要重新定位的块
+// @param[in]      dst             要重新定位到的空闲块
+// @param[in]      i               buf_pool->zip_free[] 的索引
+// @param[in]      force           如果必须总是重新定位，则为 true
+// @return 如果重新定位成功，则为 true
 static bool buf_buddy_relocate(buf_pool_t *buf_pool, void *src, void *dst,
                                ulint i, bool force) {
-  buf_page_t *bpage;
-  const ulint size = BUF_BUDDY_LOW << i;
-  space_id_t space;
-  page_no_t offset;
+  buf_page_t *bpage; // 定义缓冲页面指针
+  const ulint size = BUF_BUDDY_LOW << i; // 计算块大小
+  space_id_t space; // 定义空间 ID
+  page_no_t offset; // 定义页偏移量
 
-  ut_ad(mutex_own(&buf_pool->zip_free_mutex));
-  ut_ad(!mutex_own(&buf_pool->zip_mutex));
-  ut_ad(!ut_align_offset(src, size));
-  ut_ad(!ut_align_offset(dst, size));
-  ut_ad(i >= buf_buddy_get_slot(UNIV_ZIP_SIZE_MIN));
-  UNIV_MEM_ASSERT_W(dst, size);
+  ut_ad(mutex_own(&buf_pool->zip_free_mutex)); // 断言当前线程拥有 zip_free_mutex
+  ut_ad(!mutex_own(&buf_pool->zip_mutex)); // 断言当前线程不拥有 zip_mutex
+  ut_ad(!ut_align_offset(src, size)); // 断言 src 地址对齐
+  ut_ad(!ut_align_offset(dst, size)); // 断言 dst 地址对齐
+  ut_ad(i >= buf_buddy_get_slot(UNIV_ZIP_SIZE_MIN)); // 断言索引大于等于最小压缩大小的插槽索引
+  UNIV_MEM_ASSERT_W(dst, size); // 断言 dst 内存有效
 
   space =
-      mach_read_from_4((const byte *)src + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
-  offset = mach_read_from_4((const byte *)src + FIL_PAGE_OFFSET);
+      mach_read_from_4((const byte *)src + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID); // 从 src 读取空间 ID
+  offset = mach_read_from_4((const byte *)src + FIL_PAGE_OFFSET); // 从 src 读取页偏移量
 
   /* Suppress Valgrind warnings about conditional jump
   on uninitialized value. */
-  UNIV_MEM_VALID(&space, sizeof space);
-  UNIV_MEM_VALID(&offset, sizeof offset);
+  // 抑制 Valgrind 关于条件跳转未初始化值的警告
+  UNIV_MEM_VALID(&space, sizeof space); // 断言 space 内存有效
+  UNIV_MEM_VALID(&offset, sizeof offset); // 断言 offset 内存有效
 
-  ut_ad(space != BUF_BUDDY_STAMP_FREE);
+  ut_ad(space != BUF_BUDDY_STAMP_FREE); // 断言空间 ID 不等于 BUF_BUDDY_STAMP_FREE
 
-  const page_id_t page_id(space, offset);
+  const page_id_t page_id(space, offset); // 创建页面 ID
 
   /* If space,offset is bogus, then we know that the
   buf_page_hash_get_low() call below will return NULL. */
+  // 如果空间 ID 和偏移量无效，则 buf_page_hash_get_low() 调用将返回 NULL
   if (!force && buf_pool != buf_pool_get(page_id)) {
-    return (false);
+    return (false); // 返回 false
   }
 
-  mutex_exit(&buf_pool->zip_free_mutex);
+  mutex_exit(&buf_pool->zip_free_mutex); // 退出 zip_free_mutex
 
-  rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, page_id);
+  rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, page_id); // 获取哈希锁
 
-  rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
+  rw_lock_x_lock(hash_lock, UT_LOCATION_HERE); // 加锁
 
   /* page_hash can be changed. */
-  hash_lock = buf_page_hash_lock_x_confirm(hash_lock, buf_pool, page_id);
+  // page_hash 可能已更改
+  hash_lock = buf_page_hash_lock_x_confirm(hash_lock, buf_pool, page_id); // 确认哈希锁
 
-  bpage = buf_page_hash_get_low(buf_pool, page_id);
+  bpage = buf_page_hash_get_low(buf_pool, page_id); // 获取缓冲页面
 
   if (!bpage || bpage->zip.data != src) {
     /* The block has probably been freshly
     allocated by buf_LRU_get_free_block() but not
     added to buf_pool->page_hash yet.  Obviously,
     it cannot be relocated. */
+    // 该块可能是由 buf_LRU_get_free_block() 新分配的，但尚未添加到 buf_pool->page_hash 中。
+    // 显然，它不能被重新定位。
 
-    rw_lock_x_unlock(hash_lock);
+    rw_lock_x_unlock(hash_lock); // 解锁
 
     if (!force || space != 0 || offset != 0) {
-      mutex_enter(&buf_pool->zip_free_mutex);
-      return (false);
+      mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free_mutex
+      return (false); // 返回 false
     }
 
     /* It might be just uninitialized page.
     We should search from LRU list also. */
+    // 它可能只是未初始化的页面。我们还应该从 LRU 列表中搜索。
 
     /* force is true only when buffer pool resizing,
     in which we hold LRU_list_mutex already, see
     buf_pool_withdraw_blocks(). */
+    // force 仅在缓冲池调整大小时为 true，此时我们已经持有 LRU_list_mutex，参见 buf_pool_withdraw_blocks()。
     ut_ad(force);
-    ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+    ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU_list_mutex
 
-    bpage = UT_LIST_GET_FIRST(buf_pool->LRU);
+    bpage = UT_LIST_GET_FIRST(buf_pool->LRU); // 获取 LRU 列表中的第一个页面
     while (bpage != nullptr) {
       if (bpage->zip.data == src) {
-        hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
-        rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
+        hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id); // 获取哈希锁
+        rw_lock_x_lock(hash_lock, UT_LOCATION_HERE); // 加锁
         break;
       }
-      bpage = UT_LIST_GET_NEXT(LRU, bpage);
+      bpage = UT_LIST_GET_NEXT(LRU, bpage); // 获取下一个页面
     }
 
     if (bpage == nullptr) {
-      mutex_enter(&buf_pool->zip_free_mutex);
-      return (false);
+      mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free_mutex
+      return (false); // 返回 false
     }
   }
 
@@ -552,51 +570,55 @@ static bool buf_buddy_relocate(buf_pool_t *buf_pool, void *src, void *dst,
     /* The block is of different size.  We would
     have to relocate all blocks covered by src.
     For the sake of simplicity, give up. */
+    // 该块大小不同。我们将不得不重新定位 src 覆盖的所有块。为了简单起见，放弃。
     ut_ad(page_zip_get_size(&bpage->zip) < size);
 
-    rw_lock_x_unlock(hash_lock);
+    rw_lock_x_unlock(hash_lock); // 解锁
 
-    mutex_enter(&buf_pool->zip_free_mutex);
-    return (false);
+    mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free_mutex
+    return (false); // 返回 false
   }
 
   /* The block must have been allocated, but it may
   contain uninitialized data. */
-  UNIV_MEM_ASSERT_W(src, size);
+  // 该块必须已分配，但可能包含未初始化的数据。
+  UNIV_MEM_ASSERT_W(src, size); // 断言 src 内存有效
 
-  BPageMutex *block_mutex = buf_page_get_mutex(bpage);
+  BPageMutex *block_mutex = buf_page_get_mutex(bpage); // 获取页面互斥锁
 
-  mutex_enter(block_mutex);
+  mutex_enter(block_mutex); // 进入页面互斥锁
 
-  mutex_enter(&buf_pool->zip_free_mutex);
+  mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free_mutex
 
   if (buf_page_can_relocate(bpage)) {
     /* Relocate the compressed page. */
-    const auto start_time = std::chrono::steady_clock::now();
+    // 重新定位压缩页面
+    const auto start_time = std::chrono::steady_clock::now(); // 获取当前时间
 
-    ut_a(bpage->zip.data == src);
+    ut_a(bpage->zip.data == src); // 断言页面数据等于 src
 
-    memcpy(dst, src, size);
-    bpage->zip.data = reinterpret_cast<page_zip_t *>(dst);
+    memcpy(dst, src, size); // 复制数据到 dst
+    bpage->zip.data = reinterpret_cast<page_zip_t *>(dst); // 更新页面数据指针
 
-    rw_lock_x_unlock(hash_lock);
+    rw_lock_x_unlock(hash_lock); // 解锁
 
-    mutex_exit(block_mutex);
+    mutex_exit(block_mutex); // 退出页面互斥锁
 
-    buf_buddy_mem_invalid(reinterpret_cast<buf_buddy_free_t *>(src), i);
+    buf_buddy_mem_invalid(reinterpret_cast<buf_buddy_free_t *>(src), i); // 标记 src 内存无效
 
-    buf_buddy_stat_t *buddy_stat = &buf_pool->buddy_stat[i];
-    buddy_stat->relocated++;
+    buf_buddy_stat_t *buddy_stat = &buf_pool->buddy_stat[i]; // 获取伙伴统计信息
+    buddy_stat->relocated++; // 增加重新定位计数
     buddy_stat->relocated_duration +=
-        std::chrono::steady_clock::now() - start_time;
-    return (true);
+        std::chrono::steady_clock::now() - start_time; // 增加重新定位持续时间
+    return (true); // 返回 true
   }
 
-  rw_lock_x_unlock(hash_lock);
+  rw_lock_x_unlock(hash_lock); // 解锁
 
-  mutex_exit(block_mutex);
-  return (false);
+  mutex_exit(block_mutex); // 退出页面互斥锁
+  return (false); // 返回 false
 }
+
 
 /** Deallocate a block.
 @param[in]      buf_pool        buffer pool instance
@@ -605,92 +627,105 @@ static bool buf_buddy_relocate(buf_pool_t *buf_pool, void *src, void *dst,
 @param[in]      i               index of buf_pool->zip_free[],
                                 or BUF_BUDDY_SIZES
 @param[in]      has_zip_free    whether has zip_free_mutex */
+// 释放一个块。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      buf             要释放的块，不能被缓冲池指向
+// @param[in]      i               buf_pool->zip_free[] 的索引，或 BUF_BUDDY_SIZES
+// @param[in]      has_zip_free    是否持有 zip_free_mutex
 void buf_buddy_free_low(buf_pool_t *buf_pool, void *buf, ulint i,
                         bool has_zip_free) {
   buf_buddy_free_t *buddy;
 
-  ut_ad(!mutex_own(&buf_pool->zip_mutex));
-  ut_ad(i <= BUF_BUDDY_SIZES);
-  ut_ad(i >= buf_buddy_get_slot(UNIV_ZIP_SIZE_MIN));
+  ut_ad(!mutex_own(&buf_pool->zip_mutex)); // 断言当前线程不拥有 zip_mutex
+  ut_ad(i <= BUF_BUDDY_SIZES); // 断言索引小于等于 BUF_BUDDY_SIZES
+  ut_ad(i >= buf_buddy_get_slot(UNIV_ZIP_SIZE_MIN)); // 断言索引大于等于最小压缩大小的插槽索引
 
   if (!has_zip_free) {
-    mutex_enter(&buf_pool->zip_free_mutex);
+    mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free 互斥锁
   }
 
-  ut_ad(mutex_own(&buf_pool->zip_free_mutex));
-  ut_ad(buf_pool->buddy_stat[i].used > 0);
-  buf_pool->buddy_stat[i].used.fetch_sub(1);
+  ut_ad(mutex_own(&buf_pool->zip_free_mutex)); // 断言当前线程拥有 zip_free_mutex
+  ut_ad(buf_pool->buddy_stat[i].used > 0); // 断言使用计数大于 0
+  buf_pool->buddy_stat[i].used.fetch_sub(1); // 使用计数减一
 recombine:
-  UNIV_MEM_ASSERT_AND_ALLOC(buf, BUF_BUDDY_LOW << i);
+  UNIV_MEM_ASSERT_AND_ALLOC(buf, BUF_BUDDY_LOW << i); // 断言并分配内存
 
   if (i == BUF_BUDDY_SIZES) {
     if (!has_zip_free) {
-      mutex_exit(&buf_pool->zip_free_mutex);
+      mutex_exit(&buf_pool->zip_free_mutex); // 退出 zip_free 互斥锁
     }
-    buf_buddy_block_free(buf_pool, buf);
+    buf_buddy_block_free(buf_pool, buf); // 释放块
     return;
   }
 
-  ut_ad(i < BUF_BUDDY_SIZES);
-  ut_ad(buf == ut_align_down(buf, BUF_BUDDY_LOW << i));
-  ut_ad(!buf_pool_contains_zip(buf_pool, buf));
+  ut_ad(i < BUF_BUDDY_SIZES); // 断言索引小于 BUF_BUDDY_SIZES
+  ut_ad(buf == ut_align_down(buf, BUF_BUDDY_LOW << i)); // 断言 buf 地址对齐
+  ut_ad(!buf_pool_contains_zip(buf_pool, buf)); // 断言缓冲池不包含 buf
 
   /* Do not recombine blocks if there are few free blocks.
   We may waste up to 15360*max_len bytes to free blocks
   (1024 + 2048 + 4096 + 8192 = 15360) */
+  // 如果空闲块很少，不要重新组合块。我们可能会浪费最多 15360*max_len 字节的空闲块（1024 + 2048 + 4096 + 8192 = 15360）
   if (UT_LIST_GET_LEN(buf_pool->zip_free[i]) < 16 &&
       buf_pool->curr_size >= buf_pool->old_size) {
     goto func_exit;
   }
 
   /* Try to combine adjacent blocks. */
+  // 尝试合并相邻的块
   buddy = reinterpret_cast<buf_buddy_free_t *>(
-      buf_buddy_get(reinterpret_cast<byte *>(buf), BUF_BUDDY_LOW << i));
+      buf_buddy_get(reinterpret_cast<byte *>(buf), BUF_BUDDY_LOW << i)); // 获取伙伴块
 
   switch (buf_buddy_is_free(buddy, i)) {
     case BUF_BUDDY_STATE_FREE:
       /* The buddy is free: recombine */
-      buf_buddy_remove_from_free(buf_pool, buddy, i);
+      // 伙伴块是空闲的：重新组合
+      buf_buddy_remove_from_free(buf_pool, buddy, i); // 从空闲列表中移除伙伴块
     buddy_is_free:
-      ut_ad(!buf_pool_contains_zip(buf_pool, buddy));
+      ut_ad(!buf_pool_contains_zip(buf_pool, buddy)); // 断言缓冲池不包含伙伴块
       i++;
-      buf = ut_align_down(buf, BUF_BUDDY_LOW << i);
+      buf = ut_align_down(buf, BUF_BUDDY_LOW << i); // 地址对齐
 
       goto recombine;
 
     case BUF_BUDDY_STATE_USED:
-      ut_d(buf_buddy_list_validate(buf_pool, i));
+      ut_d(buf_buddy_list_validate(buf_pool, i)); // 验证伙伴列表
 
       /* The buddy is not free. Is there a free block of
       this size? */
+      // 伙伴块不是空闲的。是否有这个大小的空闲块？
       if (buf_buddy_free_t *zip_buf =
               UT_LIST_GET_FIRST(buf_pool->zip_free[i])) {
         /* Remove the block from the free list, because
         a successful buf_buddy_relocate() will overwrite
         zip_free->list. */
+        // 从空闲列表中移除块，因为成功的 buf_buddy_relocate() 会覆盖 zip_free->list。
         buf_buddy_remove_from_free(buf_pool, zip_buf, i);
 
         /* Try to relocate the buddy of buf to the free
         block. */
+        // 尝试将 buf 的伙伴重新定位到空闲块。
         if (buf_buddy_relocate(buf_pool, buddy, zip_buf, i, false)) {
           goto buddy_is_free;
         }
 
-        buf_buddy_add_to_free(buf_pool, zip_buf, i);
+        buf_buddy_add_to_free(buf_pool, zip_buf, i); // 将块添加到空闲列表
       }
 
       break;
     case BUF_BUDDY_STATE_PARTIALLY_USED:
       /* Some sub-blocks in the buddy are still in use.
       Relocation will fail. No need to try. */
+      // 伙伴中的一些子块仍在使用中。重新定位将失败。无需尝试。
       break;
   }
 
 func_exit:
   /* Free the block to the buddy list. */
+  // 将块释放到伙伴列表。
   buf_buddy_add_to_free(buf_pool, reinterpret_cast<buf_buddy_free_t *>(buf), i);
   if (!has_zip_free) {
-    mutex_exit(&buf_pool->zip_free_mutex);
+    mutex_exit(&buf_pool->zip_free_mutex); // 退出 zip_free 互斥锁
   }
 }
 
@@ -701,17 +736,24 @@ to by the buffer pool
 @param[in]      size            block size, up to UNIV_PAGE_SIZE
 @retval true    if succeeded or if failed because the block was fixed
 @retval false   if failed because of no free blocks. */
+// 尝试重新分配一个块。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      buf             要重新分配的块，必须由缓冲池指向
+// @param[in]      size            块大小，最大为 UNIV_PAGE_SIZE
+// @retval true    如果成功或因块被固定而失败
+// @retval false   如果因没有空闲块而失败
 bool buf_buddy_realloc(buf_pool_t *buf_pool, void *buf, ulint size) {
-  buf_block_t *block = nullptr;
-  ulint i = buf_buddy_get_slot(size);
+  buf_block_t *block = nullptr; // 定义缓冲块指针并初始化为 nullptr
+  ulint i = buf_buddy_get_slot(size); // 获取块大小对应的插槽索引
 
-  ut_ad(!mutex_own(&buf_pool->zip_mutex));
-  ut_ad(i <= BUF_BUDDY_SIZES);
-  ut_ad(i >= buf_buddy_get_slot(UNIV_ZIP_SIZE_MIN));
+  ut_ad(!mutex_own(&buf_pool->zip_mutex)); // 断言当前线程不拥有 zip_mutex
+  ut_ad(i <= BUF_BUDDY_SIZES); // 断言插槽索引小于等于 BUF_BUDDY_SIZES
+  ut_ad(i >= buf_buddy_get_slot(UNIV_ZIP_SIZE_MIN)); // 断言插槽索引大于等于最小压缩大小的插槽索引
 
   if (i < BUF_BUDDY_SIZES) {
     /* Try to allocate from the buddy system. */
-    block = reinterpret_cast<buf_block_t *>(buf_buddy_alloc_zip(buf_pool, i));
+    // 尝试从伙伴系统分配
+    block = reinterpret_cast<buf_block_t *>(buf_buddy_alloc_zip(buf_pool, i)); // 从伙伴系统分配块
   }
 
   if (block == nullptr) {
@@ -724,85 +766,125 @@ bool buf_buddy_realloc(buf_pool_t *buf_pool, void *buf, ulint size) {
     call and this would cause a need to break the reallocation loop in
     `buf_pool_withdraw_blocks`, which would render withdrawing even more
     inefficient. */
-    block = buf_LRU_get_free_only(buf_pool);
+    // 尝试从 buf_pool->free 列表分配块（如果不为空）。此方法仅在缓冲池调整大小的撤回阶段执行。
+    // 最好尽量不要阻塞其他用户线程。因此，主要策略是被动地保留和使用已经在 free 列表中的块。
+    // 否则，如果我们调用 `buf_LRU_get_free_block` 而不是 `buf_LRU_get_free_only`，我们将不得不在调用前释放 LRU 互斥锁，
+    // 这将导致需要中断 `buf_pool_withdraw_blocks` 中的重新分配循环，从而使撤回效率更低。
+    block = buf_LRU_get_free_only(buf_pool); // 从 LRU 列表中获取空闲块
 
     if (block == nullptr) {
       return (false); /* free_list was not enough */
+      // free_list 不够
     }
 
-    buf_buddy_block_register(block);
+    buf_buddy_block_register(block); // 注册块
 
-    mutex_enter(&buf_pool->zip_free_mutex);
+    mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free 互斥锁
     block = reinterpret_cast<buf_block_t *>(
-        buf_buddy_alloc_from(buf_pool, block->frame, i, BUF_BUDDY_SIZES));
+        buf_buddy_alloc_from(buf_pool, block->frame, i, BUF_BUDDY_SIZES)); // 从伙伴系统分配块
   } else {
-    mutex_enter(&buf_pool->zip_free_mutex);
+    mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free 互斥锁
   }
 
-  buf_pool->buddy_stat[i].used.fetch_add(1);
+  buf_pool->buddy_stat[i].used.fetch_add(1); // 增加使用计数
 
   /* Try to relocate the buddy of buf to the free block. */
+  // 尝试将 buf 的伙伴重新定位到空闲块
   if (buf_buddy_relocate(buf_pool, buf, block, i, true)) {
-    mutex_exit(&buf_pool->zip_free_mutex);
+    mutex_exit(&buf_pool->zip_free_mutex); // 退出 zip_free 互斥锁
     /* succeeded */
-    buf_buddy_free_low(buf_pool, buf, i, false);
+    // 成功
+    buf_buddy_free_low(buf_pool, buf, i, false); // 释放低级伙伴块
     return (true);
   }
 
   /* failed */
-  mutex_exit(&buf_pool->zip_free_mutex);
-  buf_buddy_free_low(buf_pool, block, i, false);
+  // 失败
+  mutex_exit(&buf_pool->zip_free_mutex); // 退出 zip_free 互斥锁
+  buf_buddy_free_low(buf_pool, block, i, false); // 释放低级伙伴块
 
   return (false);
 }
 
+
+/*
+在 InnoDB 的缓冲池管理中，zip_free 是一个数组，用于管理压缩页面的空闲块。每个元素都是一个链表，存储了相同大小的空闲块。
+成对的空闲伙伴块（free buddies）是指两个相邻的、大小相同的空闲块，它们可以合并成一个更大的空闲块。
+
+伙伴系统（Buddy System）
+伙伴系统是一种内存分配算法，用于减少内存碎片。它将内存划分为大小为 2 的幂次方的块，并通过合并相邻的空闲块来形成更大的块。
+这样可以有效地管理内存，减少内存碎片。
+
+zip_free 数组
+zip_free 数组中的每个元素都是一个链表，存储了相同大小的空闲块。数组的索引表示块的大小。
+例如，索引 0 表示大小为 BUF_BUDDY_LOW 的块，索引 1 表示大小为 BUF_BUDDY_LOW * 2 的块，依此类推。
+
+合并空闲伙伴块的原因
+合并空闲伙伴块的主要目的是减少内存碎片，提高内存使用效率。
+通过合并相邻的空闲块，可以形成更大的连续内存块，从而更有效地利用内存资源。
+
+合并相邻的空闲块并不会直接减少内存的总量，但它可以显著提高内存的使用效率，减少内存碎片，从而间接地优化内存的利用。
+
+内存碎片
+内存碎片是指内存中分散的小块空闲区域，这些区域可能无法被有效利用。内存碎片会导致内存的浪费，因为虽然总的空闲内存量可能足够，但由于这些空闲内存是分散的，无法满足较大块内存的分配需求。
+
+合并空闲块的好处
+减少内存碎片: 通过合并相邻的空闲块，可以将分散的小块内存合并成较大的连续内存块，从而减少内存碎片。
+提高内存利用率: 合并后的较大内存块可以更好地满足较大内存分配的需求，提高内存的利用率。
+优化内存分配: 合并空闲块可以使内存分配更加高效，减少内存分配和释放的开销。
+*/
 /** Combine all pairs of free buddies.
 @param[in]      buf_pool        buffer pool instance */
+// 合并所有成对的空闲伙伴块。
+// @param[in]      buf_pool        缓冲池实例
 void buf_buddy_condense_free(buf_pool_t *buf_pool) {
-  mutex_enter(&buf_pool->zip_free_mutex);
-  ut_ad(buf_pool->curr_size < buf_pool->old_size);
+  mutex_enter(&buf_pool->zip_free_mutex); // 进入 zip_free 互斥锁
+  ut_ad(buf_pool->curr_size < buf_pool->old_size); // 断言当前大小小于旧大小
 
-  for (ulint i = 0; i < UT_ARR_SIZE(buf_pool->zip_free); ++i) {
-    buf_buddy_free_t *buf = UT_LIST_GET_FIRST(buf_pool->zip_free[i]);
+  for (ulint i = 0; i < UT_ARR_SIZE(buf_pool->zip_free); ++i) { // 遍历 zip_free 数组
+    buf_buddy_free_t *buf = UT_LIST_GET_FIRST(buf_pool->zip_free[i]); // 获取 zip_free 列表中的第一个元素
 
     /* seek to withdraw target */
+    // 寻找撤回目标
     while (buf != nullptr &&
-           !buf_frame_will_withdrawn(buf_pool, reinterpret_cast<byte *>(buf))) {
-      buf = UT_LIST_GET_NEXT(list, buf);
+           !buf_frame_will_withdrawn(buf_pool, reinterpret_cast<byte *>(buf))) { // 如果 buf 不为空且不会被撤回
+      buf = UT_LIST_GET_NEXT(list, buf); // 获取下一个元素
     }
 
-    while (buf != nullptr) {
-      buf_buddy_free_t *next = UT_LIST_GET_NEXT(list, buf);
+    while (buf != nullptr) { // 如果 buf 不为空
+      buf_buddy_free_t *next = UT_LIST_GET_NEXT(list, buf); // 获取下一个元素
 
       buf_buddy_free_t *buddy = reinterpret_cast<buf_buddy_free_t *>(
-          buf_buddy_get(reinterpret_cast<byte *>(buf), BUF_BUDDY_LOW << i));
+          buf_buddy_get(reinterpret_cast<byte *>(buf), BUF_BUDDY_LOW << i)); // 获取伙伴块
 
       /* seek to the next withdraw target */
+      // 寻找下一个撤回目标
       while (true) {
         while (next != nullptr &&
                !buf_frame_will_withdrawn(buf_pool,
-                                         reinterpret_cast<byte *>(next))) {
-          next = UT_LIST_GET_NEXT(list, next);
+                                         reinterpret_cast<byte *>(next))) { // 如果 next 不为空且不会被撤回
+          next = UT_LIST_GET_NEXT(list, next); // 获取下一个元素
         }
 
-        if (buddy != next) {
-          break;
+        if (buddy != next) { // 如果伙伴块不是下一个元素
+          break; // 跳出循环
         }
 
-        next = UT_LIST_GET_NEXT(list, next);
+        next = UT_LIST_GET_NEXT(list, next); // 获取下一个元素
       }
 
-      if (buf_buddy_is_free(buddy, i) == BUF_BUDDY_STATE_FREE) {
+      if (buf_buddy_is_free(buddy, i) == BUF_BUDDY_STATE_FREE) { // 如果 buf 和 buddy 都是空闲的
         /* Both buf and buddy are free.
         Try to combine them. */
-        buf_buddy_remove_from_free(buf_pool, buf, i);
-        buf_pool->buddy_stat[i].used.fetch_add(1);
+        // 尝试合并它们
+        buf_buddy_remove_from_free(buf_pool, buf, i); // 从空闲列表中移除 buf
+        buf_pool->buddy_stat[i].used.fetch_add(1); // 增加使用计数
 
-        buf_buddy_free_low(buf_pool, buf, i, true);
+        buf_buddy_free_low(buf_pool, buf, i, true); // 释放低级伙伴块
       }
 
-      buf = next;
+      buf = next; // 移动到下一个元素
     }
   }
-  mutex_exit(&buf_pool->zip_free_mutex);
+  mutex_exit(&buf_pool->zip_free_mutex); // 退出 zip_free 互斥锁
 }

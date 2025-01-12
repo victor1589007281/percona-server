@@ -340,43 +340,48 @@ static uint64_t lock_rec_lock_hash_value(const lock_t *lock) {
 
 /** Resize the lock hash tables.
 @param[in]	n_cells	number of slots in lock hash table */
+// 调整锁哈希表的大小。
+// @param[in]	n_cells	锁哈希表中的槽数量
 void lock_sys_resize(ulint n_cells) {
   hash_table_t *old_hash;
 
   /* We will rearrange locks between cells and change the parameters of hash
   function used in sharding of latches, so we have to prevent everyone from
   accessing lock sys queues, or even computing shard id. */
-  locksys::Global_exclusive_latch_guard guard{UT_LOCATION_HERE};
+  // 我们将重新排列单元之间的锁，并更改用于分片锁存器的哈希函数的参数，因此我们必须防止所有人访问锁系统队列，甚至计算分片 ID。
+  locksys::Global_exclusive_latch_guard guard{UT_LOCATION_HERE}; // 全局独占锁保护
 
-  old_hash = lock_sys->rec_hash;
-  lock_sys->rec_hash = ut::new_<hash_table_t>(n_cells);
+  old_hash = lock_sys->rec_hash; // 保存旧的记录锁哈希表
+  lock_sys->rec_hash = ut::new_<hash_table_t>(n_cells); // 创建新的记录锁哈希表
   HASH_MIGRATE(old_hash, lock_sys->rec_hash, lock_t, hash,
-               lock_rec_lock_hash_value);
-  ut::delete_(old_hash);
+               lock_rec_lock_hash_value); // 迁移旧哈希表中的数据到新哈希表
+  ut::delete_(old_hash); // 删除旧哈希表
 
   DBUG_EXECUTE_IF("syncpoint_after_lock_sys_resize_rec_hash", {
     /* A workaround for buf_resize_thread() not using create_thd().
     TBD: if buf_resize_thread() were to use create_thd() then should it be
     instrumented (together or instead of os_thread_create instrumentation)? */
+    // 一个用于 buf_resize_thread() 不使用 create_thd() 的变通方法。
+    // 待办事项：如果 buf_resize_thread() 使用 create_thd()，那么它是否应该被检测（一起或代替 os_thread_create 检测）？
     ut_ad(current_thd == nullptr);
-    THD *thd = create_internal_thd();
+    THD *thd = create_internal_thd(); // 创建内部线程
     ut_ad(current_thd == thd);
-    CONDITIONAL_SYNC_POINT("after_lock_sys_resize_rec_hash");
-    destroy_internal_thd(thd);
+    CONDITIONAL_SYNC_POINT("after_lock_sys_resize_rec_hash"); // 条件同步点
+    destroy_internal_thd(thd); // 销毁内部线程
     ut_ad(current_thd == nullptr);
   });
 
-  old_hash = lock_sys->prdt_hash;
-  lock_sys->prdt_hash = ut::new_<hash_table_t>(n_cells);
+  old_hash = lock_sys->prdt_hash; // 保存旧的预测锁哈希表
+  lock_sys->prdt_hash = ut::new_<hash_table_t>(n_cells); // 创建新的预测锁哈希表
   HASH_MIGRATE(old_hash, lock_sys->prdt_hash, lock_t, hash,
-               lock_rec_lock_hash_value);
-  ut::delete_(old_hash);
+               lock_rec_lock_hash_value); // 迁移旧哈希表中的数据到新哈希表
+  ut::delete_(old_hash); // 删除旧哈希表
 
-  old_hash = lock_sys->prdt_page_hash;
-  lock_sys->prdt_page_hash = ut::new_<hash_table_t>(n_cells);
+  old_hash = lock_sys->prdt_page_hash; // 保存旧的预测页面锁哈希表
+  lock_sys->prdt_page_hash = ut::new_<hash_table_t>(n_cells); // 创建新的预测页面锁哈希表
   HASH_MIGRATE(old_hash, lock_sys->prdt_page_hash, lock_t, hash,
-               lock_rec_lock_hash_value);
-  ut::delete_(old_hash);
+               lock_rec_lock_hash_value); // 迁移旧哈希表中的数据到新哈希表
+  ut::delete_(old_hash); // 删除旧哈希表
 }
 
 /** Closes the lock system at database shutdown. */
@@ -4837,36 +4842,41 @@ class TrxListIterator {
 /** Prints transaction lock wait and MVCC state.
 @param[in,out]  file    file where to print
 @param[in]      trx     transaction */
+// 打印事务锁等待和 MVCC 状态。
+// @param[in,out]  file    要打印到的文件
+// @param[in]      trx     事务
 void lock_trx_print_wait_and_mvcc_state(FILE *file, const trx_t *trx) {
   /* We require exclusive lock_sys access so that trx->lock.wait_lock is
   not being modified, and to access trx->lock.wait_started without trx->mutex.*/
-  ut_ad(locksys::owns_exclusive_global_latch());
-  fprintf(file, "---");
+  // 我们需要独占 lock_sys 访问，以便 trx->lock.wait_lock 不会被修改，
+  // 并且可以在没有 trx->mutex 的情况下访问 trx->lock.wait_started。
+  ut_ad(locksys::owns_exclusive_global_latch()); // 确认拥有全局独占锁
+  fprintf(file, "---"); // 打印分隔符
 
-  trx_print_latched(file, trx, 600);
+  trx_print_latched(file, trx, 600); // 打印事务信息，超时时间为 600 秒
 
-  const ReadView *read_view = trx_get_read_view(trx);
+  const ReadView *read_view = trx_get_read_view(trx); // 获取事务的读视图
 
-  if (read_view != nullptr) {
-    read_view->print_limits(file);
+  if (read_view != nullptr) { // 如果读视图不为空
+    read_view->print_limits(file); // 打印读视图的限制信息
   }
 
-  if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+  if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) { // 如果事务处于锁等待状态
     fprintf(file,
             "------- TRX HAS BEEN WAITING %" PRId64
             " SEC FOR THIS LOCK TO BE GRANTED:\n",
             static_cast<int64_t>(
                 std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now() - trx->lock.wait_started)
-                    .count()));
+                    .count())); // 打印事务等待锁的时间
 
-    if (lock_get_type_low(trx->lock.wait_lock) == LOCK_REC) {
-      lock_rec_print(file, trx->lock.wait_lock);
+    if (lock_get_type_low(trx->lock.wait_lock) == LOCK_REC) { // 如果等待的锁是记录锁
+      lock_rec_print(file, trx->lock.wait_lock); // 打印记录锁信息
     } else {
-      lock_table_print(file, trx->lock.wait_lock);
+      lock_table_print(file, trx->lock.wait_lock); // 打印表锁信息
     }
 
-    fprintf(file, "------------------\n");
+    fprintf(file, "------------------\n"); // 打印分隔符
   }
 }
 
