@@ -1147,13 +1147,16 @@ withdraw target of the currently ongoing buffer pool resize.
 @param[in]      buf_pool        buffer pool instance
 @return page count to be withdrawn or zero if the target is already achieved or
 if the buffer pool is not currently being resized. */
+// 返回在当前进行的缓冲池调整大小过程中，需要添加到撤回列表中的页面数量，以达到撤回目标。
+// @param[in]      buf_pool        缓冲池实例
+// @return 需要撤回的页面数量，如果目标已经达到或缓冲池当前没有调整大小，则返回零。
 static inline ulint buf_get_withdraw_depth(buf_pool_t *buf_pool) {
-  os_rmb;
-  if (buf_pool->curr_size >= buf_pool->old_size) return 0;
-  ulint withdraw_len = UT_LIST_GET_LEN(buf_pool->withdraw);
-  return (buf_pool->withdraw_target > withdraw_len
-              ? buf_pool->withdraw_target - withdraw_len
-              : 0);
+  os_rmb; // 内存屏障，确保读取操作的顺序
+  if (buf_pool->curr_size >= buf_pool->old_size) return 0; // 如果当前大小大于或等于旧大小，则返回 0
+  ulint withdraw_len = UT_LIST_GET_LEN(buf_pool->withdraw); // 获取撤回列表的长度
+  return (buf_pool->withdraw_target > withdraw_len // 如果撤回目标大于撤回列表的长度
+              ? buf_pool->withdraw_target - withdraw_len // 返回需要撤回的页面数量
+              : 0); // 否则返回 0
 }
 
 #endif /* !UNIV_HOTBACKUP */

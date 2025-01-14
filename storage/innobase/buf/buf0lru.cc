@@ -1096,39 +1096,43 @@ static bool buf_LRU_free_from_unzip_LRU_list(buf_pool_t *buf_pool,
 @param[in]      scan_all        scan whole LRU list if true, otherwise scan
                                 only up to BUF_LRU_SEARCH_SCAN_THRESHOLD
 @return true if freed */
+// 尝试从普通 LRU 列表中释放一个干净的页面。
+// @param[in,out]  buf_pool        缓冲池实例
+// @param[in]      scan_all        如果为 true，则扫描整个 LRU 列表，否则仅扫描到 BUF_LRU_SEARCH_SCAN_THRESHOLD
+// @return 如果释放成功则返回 true
 static bool buf_LRU_free_from_common_LRU_list(buf_pool_t *buf_pool,
                                               bool scan_all) {
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
 
-  bool freed{};
-  ulint scanned{};
+  bool freed{}; // 初始化是否释放的标志
+  ulint scanned{}; // 初始化扫描的块数
 
   for (buf_page_t *bpage = buf_pool->lru_scan_itr.start();
        bpage != nullptr && !freed &&
        (scan_all || scanned < BUF_LRU_SEARCH_SCAN_THRESHOLD);
        ++scanned, bpage = buf_pool->lru_scan_itr.get()) {
-    ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-    auto prev = UT_LIST_GET_PREV(LRU, bpage);
-    auto block_mutex = buf_page_get_mutex(bpage);
+    ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
+    auto prev = UT_LIST_GET_PREV(LRU, bpage); // 获取前一个块
+    auto block_mutex = buf_page_get_mutex(bpage); // 获取页面的互斥锁
 
-    buf_pool->lru_scan_itr.set(prev);
+    buf_pool->lru_scan_itr.set(prev); // 设置扫描迭代器为前一个块
 
-    ut_ad(bpage->in_LRU_list);
-    ut_ad(buf_page_in_file(bpage));
+    ut_ad(bpage->in_LRU_list); // 断言块在 LRU 列表中
+    ut_ad(buf_page_in_file(bpage)); // 断言块在文件中
 
-    const auto accessed = buf_page_is_accessed(bpage);
+    const auto accessed = buf_page_is_accessed(bpage); // 检查页面是否被访问过
 
     if (bpage->was_stale()) {
-      freed = buf_page_free_stale(buf_pool, bpage);
+      freed = buf_page_free_stale(buf_pool, bpage); // 如果页面是陈旧的，则释放页面
     } else {
-      mutex_enter(block_mutex);
+      mutex_enter(block_mutex); // 进入页面的互斥锁
 
       if (buf_flush_ready_for_replace(bpage)) {
-        freed = buf_LRU_free_page(bpage, true);
+        freed = buf_LRU_free_page(bpage, true); // 如果页面准备好替换，则释放页面
       }
 
       if (!freed) {
-        mutex_exit(block_mutex);
+        mutex_exit(block_mutex); // 如果没有释放页面，则退出页面的互斥锁
       }
     }
 
@@ -1136,49 +1140,51 @@ static bool buf_LRU_free_from_common_LRU_list(buf_pool_t *buf_pool,
       /* Keep track of pages that are evicted without
       ever being accessed. This gives us a measure of
       the effectiveness of readahead */
-      ++buf_pool->stat.n_ra_pages_evicted;
+      // 记录从未被访问过就被驱逐的页面。这给我们提供了预读效果的衡量标准
+      ++buf_pool->stat.n_ra_pages_evicted; // 增加未被访问过就被驱逐的页面计数
     }
 
-    ut_ad(!mutex_own(block_mutex));
+    ut_ad(!mutex_own(block_mutex)); // 断言当前线程不拥有页面的互斥锁
 
     if (freed) {
-      break;
+      break; // 如果释放成功，则退出循环
     }
   }
 
   if (scanned) {
     MONITOR_INC_VALUE_CUMULATIVE(MONITOR_LRU_SEARCH_SCANNED,
                                  MONITOR_LRU_SEARCH_SCANNED_NUM_CALL,
-                                 MONITOR_LRU_SEARCH_SCANNED_PER_CALL, scanned);
+                                 MONITOR_LRU_SEARCH_SCANNED_PER_CALL, scanned); // 监控扫描的块数
   }
 
   ut_ad(freed ? !mutex_own(&buf_pool->LRU_list_mutex)
-              : mutex_own(&buf_pool->LRU_list_mutex));
+              : mutex_own(&buf_pool->LRU_list_mutex)); // 断言释放成功时当前线程不拥有 LRU 列表互斥锁，否则拥有
 
-  return (freed);
+  return (freed); // 返回是否释放的标志
 }
 
-bool buf_LRU_scan_and_free_block(buf_pool_t *buf_pool, bool scan_all) {
-  bool freed = false;
-  bool use_unzip_list = UT_LIST_GET_LEN(buf_pool->unzip_LRU) > 0;
 
-  mutex_enter(&buf_pool->LRU_list_mutex);
+bool buf_LRU_scan_and_free_block(buf_pool_t *buf_pool, bool scan_all) {
+  bool freed = false; // 初始化是否释放的标志
+  bool use_unzip_list = UT_LIST_GET_LEN(buf_pool->unzip_LRU) > 0; // 判断是否使用 unzip_LRU 列表
+
+  mutex_enter(&buf_pool->LRU_list_mutex); // 进入 LRU 列表互斥锁
 
   if (use_unzip_list) {
-    freed = buf_LRU_free_from_unzip_LRU_list(buf_pool, scan_all);
+    freed = buf_LRU_free_from_unzip_LRU_list(buf_pool, scan_all); // 从 unzip_LRU 列表中释放块
   }
 
   if (!freed) {
-    freed = buf_LRU_free_from_common_LRU_list(buf_pool, scan_all);
+    freed = buf_LRU_free_from_common_LRU_list(buf_pool, scan_all); // 从普通 LRU 列表中释放块
   }
 
   if (!freed) {
-    mutex_exit(&buf_pool->LRU_list_mutex);
+    mutex_exit(&buf_pool->LRU_list_mutex); // 如果没有释放块，退出 LRU 列表互斥锁
   }
 
-  ut_ad(!mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(!mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程不拥有 LRU 列表互斥锁
 
-  return (freed);
+  return (freed); // 返回是否释放的标志
 }
 
 /** Returns true if less than 25 % of the buffer pool in any instance is
@@ -1207,50 +1213,58 @@ bool buf_LRU_buf_pool_running_out(void) {
 The block is taken off the free list.  If it is empty, returns NULL.
 @param[in]      buf_pool        buffer pool instance
 @return a free control block, or NULL if the buf_block->free list is empty */
+// 从 buf_pool 返回一个空闲块。
+// 该块从空闲列表中取出。如果空闲列表为空，则返回 NULL。
+// @param[in]      buf_pool        缓冲池实例
+// @return 一个空闲控制块，如果 buf_block->free 列表为空，则返回 NULL
 buf_block_t *buf_LRU_get_free_only(buf_pool_t *buf_pool) {
-  buf_block_t *block;
+  buf_block_t *block; // 定义一个空闲块指针
 
-  mutex_enter(&buf_pool->free_list_mutex);
+  mutex_enter(&buf_pool->free_list_mutex); // 进入空闲列表互斥锁
 
-  block = reinterpret_cast<buf_block_t *>(UT_LIST_GET_FIRST(buf_pool->free));
+  block = reinterpret_cast<buf_block_t *>(UT_LIST_GET_FIRST(buf_pool->free)); // 获取空闲列表中的第一个块
 
-  while (block != nullptr) {
-    ut_ad(block->page.in_free_list);
-    ut_d(block->page.in_free_list = false);
-    ut_ad(!block->page.in_flush_list);
-    ut_ad(!block->page.in_LRU_list);
-    ut_a(!buf_page_in_file(&block->page));
-    UT_LIST_REMOVE(buf_pool->free, &block->page);
-    mutex_exit(&buf_pool->free_list_mutex);
+  while (block != nullptr) { // 当块不为空时
+    ut_ad(block->page.in_free_list); // 断言块在空闲列表中
+    ut_d(block->page.in_free_list = false); // 设置块不在空闲列表中
+    ut_ad(!block->page.in_flush_list); // 断言块不在刷新列表中
+    ut_ad(!block->page.in_LRU_list); // 断言块不在 LRU 列表中
+    ut_a(!buf_page_in_file(&block->page)); // 断言块不在文件中
+    UT_LIST_REMOVE(buf_pool->free, &block->page); // 从空闲列表中移除块
+    mutex_exit(&buf_pool->free_list_mutex); // 退出空闲列表互斥锁
 
     if (!buf_get_withdraw_depth(buf_pool) ||
         !buf_block_will_withdrawn(buf_pool, block)) {
       /* found valid free block */
+      // 找到有效的空闲块
       /* No adaptive hash index entries may point to
       a free block. */
-      block->ahi.assert_empty();
+      // 没有自适应哈希索引条目可以指向空闲块。
+      block->ahi.assert_empty(); // 断言块的自适应哈希索引为空
 
-      buf_block_set_state(block, BUF_BLOCK_READY_FOR_USE);
+      buf_block_set_state(block, BUF_BLOCK_READY_FOR_USE); // 设置块的状态为 BUF_BLOCK_READY_FOR_USE
 
-      UNIV_MEM_ALLOC(block->frame, UNIV_PAGE_SIZE);
+      UNIV_MEM_ALLOC(block->frame, UNIV_PAGE_SIZE); // 分配块的内存
 
-      ut_ad(buf_pool_from_block(block) == buf_pool);
+      ut_ad(buf_pool_from_block(block) == buf_pool); // 断言块属于当前缓冲池
 
-      return (block);
+      return (block); // 返回空闲块
     }
 
     /* This should be withdrawn */
-    mutex_enter(&buf_pool->free_list_mutex);
-    UT_LIST_ADD_LAST(buf_pool->withdraw, &block->page);
-    ut_d(block->in_withdraw_list = true);
+    // 这个块应该被撤回
+    mutex_enter(&buf_pool->free_list_mutex); // 进入空闲列表互斥锁
+    UT_LIST_ADD_LAST(buf_pool->withdraw, &block->page); // 将块添加到撤回列表的末尾
+    ut_d(block->in_withdraw_list = true); // 设置块在撤回列表中
 
-    block = reinterpret_cast<buf_block_t *>(UT_LIST_GET_FIRST(buf_pool->free));
+    block = reinterpret_cast<buf_block_t *>(UT_LIST_GET_FIRST(buf_pool->free)); // 获取空闲列表中的下一个块
   }
 
-  mutex_exit(&buf_pool->free_list_mutex);
+  mutex_exit(&buf_pool->free_list_mutex); // 退出空闲列表互斥锁
 
-  return (block);
+  return (block); // 返回空闲块（如果没有找到，则返回 NULL）
 }
+
 
 /** Checks how much of buf_pool is occupied by non-data objects like
  AHI, lock heaps etc. Depending on the size of non-data objects this
@@ -1314,19 +1328,25 @@ free page started
 has failed
 @param[in,out]	started_monitor	whether InnoDB monitor print has been requested
 */
+// 诊断获取空闲页面失败的情况，如果已经花费了超过两秒钟的时间，则在错误日志中请求 InnoDB 监视器输出。
+// @param[in]	n_iterations	已经完成的 buf_LRU_get_free_page 迭代次数
+// @param[in]	started_time	开始尝试获取空闲页面的时间戳
+// @param[in]	flush_failures	单页刷新失败的次数（如果允许）
+// @param[in,out]	started_monitor	是否已经请求 InnoDB 监视器输出
 static void buf_LRU_handle_lack_of_free_blocks(
     ulint n_iterations, std::chrono::steady_clock::time_point started_time,
     ulint flush_failures, bool *started_monitor) {
-  static std::chrono::steady_clock::time_point last_printout_time;
+  static std::chrono::steady_clock::time_point last_printout_time; // 上次打印输出的时间
 
   /* Legacy algorithm started warning after at least 2 seconds, we
   emulate this. */
-  const auto current_time = std::chrono::steady_clock::now();
-  const std::chrono::milliseconds limit{2000};
+  // 旧算法在至少 2 秒后开始警告，我们模拟这一点。
+  const auto current_time = std::chrono::steady_clock::now(); // 获取当前时间
+  const std::chrono::milliseconds limit{2000}; // 设置时间限制为 2000 毫秒（2 秒）
 
-  if ((current_time - started_time > limit) &&
-      (current_time - last_printout_time > limit) &&
-      srv_buf_pool_old_size == srv_buf_pool_size) {
+  if ((current_time - started_time > limit) && // 如果当前时间与开始时间的差值超过限制
+      (current_time - last_printout_time > limit) && // 并且当前时间与上次打印输出时间的差值超过限制
+      srv_buf_pool_old_size == srv_buf_pool_size) { // 并且缓冲池的旧大小等于当前大小
     ib::warn(ER_IB_MSG_134)
         << "Difficult to find free blocks in the buffer pool"
            " ("
@@ -1344,13 +1364,13 @@ static void buf_LRU_handle_lack_of_free_blocks(
         << os_n_file_reads << " OS file reads, " << os_n_file_writes
         << " OS file writes, " << os_n_fsyncs
         << " OS fsyncs. Starting InnoDB Monitor to print"
-           " further diagnostics to the standard output.";
+           " further diagnostics to the standard output."; // 输出警告信息，提示缓冲池中难以找到空闲块，并建议增加缓冲池大小或升级操作系统版本
 
-    last_printout_time = current_time;
+    last_printout_time = current_time; // 更新上次打印输出的时间
 
-    if (!*started_monitor) {
-      *started_monitor = true;
-      srv_innodb_needs_monitoring++;
+    if (!*started_monitor) { // 如果尚未请求 InnoDB 监视器输出
+      *started_monitor = true; // 设置监视器输出标志
+      srv_innodb_needs_monitoring++; // 增加需要监控的计数
     }
   }
 }
@@ -1388,70 +1408,93 @@ we put it to free list to be used.
   * same as iteration 1 but sleep 10ms
 @param[in,out]  buf_pool        buffer pool instance
 @return the free control block, in state BUF_BLOCK_READY_FOR_USE */
+// 从 buf_pool 返回一个空闲块。该块从空闲列表中取出。如果空闲列表为空，则从 LRU 列表的末尾移动块到空闲列表。
+// 当用户线程需要一个干净的块来读取页面时调用此函数。注意，我们只从空闲列表中获取块。即使我们刷新一个页面或在 LRU 扫描中找到一个页面，我们也会将其放入空闲列表以供使用。
+// * 迭代 0:
+//   * 从空闲列表中获取一个块，成功：完成
+//   * 如果设置了 buf_pool->try_LRU_scan
+//     * 扫描 LRU 直到 srv_LRU_scan_depth 以找到一个干净的块
+//     * 上述操作会将块放入空闲列表
+//     * 成功：重试空闲列表
+//   * 从 LRU 尾部刷新一个脏页到磁盘
+//     * 上述操作会将块放入空闲列表
+//     * 成功：重试空闲列表
+// * 迭代 1:
+//   * 与迭代 0 相同，除了：
+//     * 扫描整个 LRU 列表
+//     * 即使未设置 buf_pool->try_LRU_scan 也扫描 LRU 列表
+// * 迭代 > 1:
+//   * 与迭代 1 相同，但休眠 10 毫秒
+// @param[in,out]  buf_pool        缓冲池实例
+// @return 空闲控制块，状态为 BUF_BLOCK_READY_FOR_USE
 buf_block_t *buf_LRU_get_free_block(buf_pool_t *buf_pool) {
-  buf_block_t *block = nullptr;
-  bool freed = false;
-  ulint n_iterations = 0;
-  ulint flush_failures = 0;
-  bool started_monitor = false;
-  std::chrono::steady_clock::time_point started_time;
+  buf_block_t *block = nullptr; // 定义一个空闲块指针
+  bool freed = false; // 定义一个标志，表示是否释放了块
+  ulint n_iterations = 0; // 定义迭代次数
+  ulint flush_failures = 0; // 定义刷新失败次数
+  bool started_monitor = false; // 定义一个标志，表示是否启动了监控
+  std::chrono::steady_clock::time_point started_time; // 定义开始时间
 
-  ut_ad(!mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(!mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程不拥有 LRU 列表互斥锁
 
-  MONITOR_INC(MONITOR_LRU_GET_FREE_SEARCH);
+  MONITOR_INC(MONITOR_LRU_GET_FREE_SEARCH); // 增加 LRU 获取空闲块搜索计数
 loop:
-  buf_LRU_check_size_of_non_data_objects(buf_pool);
+  buf_LRU_check_size_of_non_data_objects(buf_pool); // 检查非数据对象的大小
 
   /* If there is a block in the free list, take it */
+  // 如果空闲列表中有块，则取出
   if (DBUG_EVALUATE_IF("simulate_lack_of_pages", true, false)) {
-    block = NULL;
+    block = NULL; // 模拟页面不足
 
     if (srv_debug_monitor_printed) DBUG_SET("-d,simulate_lack_of_pages");
 
   } else if (DBUG_EVALUATE_IF("simulate_recovery_lack_of_pages",
                               recv_recovery_on, false)) {
-    block = NULL;
+    block = NULL; // 模拟恢复时页面不足
 
     if (srv_debug_monitor_printed) {
-      flush_error_log_messages();
-      DBUG_SUICIDE();
+      flush_error_log_messages(); // 刷新错误日志消息
+      DBUG_SUICIDE(); // 触发调试自杀
     }
   } else {
-    block = buf_LRU_get_free_only(buf_pool);
+    block = buf_LRU_get_free_only(buf_pool); // 从空闲列表中获取块
   }
 
   if (block != nullptr) {
-    ut_ad(!block->page.someone_has_io_responsibility());
-    ut_ad(buf_pool_from_block(block) == buf_pool);
-    memset(&block->page.zip, 0, sizeof block->page.zip);
+    ut_ad(!block->page.someone_has_io_responsibility()); // 断言块没有 I/O 责任
+    ut_ad(buf_pool_from_block(block) == buf_pool); // 断言块属于当前缓冲池
+    memset(&block->page.zip, 0, sizeof block->page.zip); // 清空块的压缩页面
 
     if (started_monitor) {
-      srv_innodb_needs_monitoring--;
+      srv_innodb_needs_monitoring--; // 减少需要监控的计数
     }
 
-    block->page.reset_flush_observer();
-    return block;
+    block->page.reset_flush_observer(); // 重置刷新观察者
+    return block; // 返回空闲块
   }
 
   if (started_time == std::chrono::steady_clock::time_point{})
-    started_time = std::chrono::steady_clock::now();
+    started_time = std::chrono::steady_clock::now(); // 设置开始时间
 
-  MONITOR_INC(MONITOR_LRU_GET_FREE_LOOPS);
+  MONITOR_INC(MONITOR_LRU_GET_FREE_LOOPS); // 增加 LRU 获取空闲块循环计数
 
-  freed = false;
+  freed = false; // 重置释放标志
 
+  // 如果当前使用的空闲列表算法是退避算法，并且页面清理器处于活动状态，
+  // 并且系统没有处于关闭状态或正在进行清理关闭，
   if (srv_empty_free_list_algorithm == SRV_EMPTY_FREE_LIST_BACKOFF &&
       buf_flush_page_cleaner_is_active() &&
       (srv_shutdown_state.load() == SRV_SHUTDOWN_NONE ||
        srv_shutdown_state.load() == SRV_SHUTDOWN_CLEANUP)) {
     /* Backoff to minimize the free list mutex contention while the free list
     is empty */
-    const auto priority = srv_current_thread_priority;
+    // 退避以最小化空闲列表互斥锁争用，同时空闲列表为空
+    const auto priority = srv_current_thread_priority; // 获取当前线程优先级
 
     if (n_iterations < 3) {
-      std::this_thread::yield();
+      std::this_thread::yield(); // 让出线程
       if (!priority) {
-        std::this_thread::yield();
+        std::this_thread::yield(); // 再次让出线程
       }
     } else {
       ulint i, b;
@@ -1471,22 +1514,24 @@ loop:
       }
       std::this_thread::sleep_for(std::chrono::microseconds(
           b / (priority ? FREE_LIST_BACKOFF_HIGH_PRIO_DIVIDER
-                        : FREE_LIST_BACKOFF_LOW_PRIO_DIVIDER)));
+                        : FREE_LIST_BACKOFF_LOW_PRIO_DIVIDER))); // 休眠一段时间
     }
 
     buf_LRU_handle_lack_of_free_blocks(n_iterations, started_time,
-                                       flush_failures, &started_monitor);
+                                       flush_failures, &started_monitor); // 处理空闲块不足的情况
 
-    n_iterations++;
+    n_iterations++; // 增加迭代次数
 
-    srv_stats.buf_pool_wait_free.add(n_iterations, 1);
+    srv_stats.buf_pool_wait_free.add(n_iterations, 1); // 增加缓冲池等待空闲块计数
 
     /* In case of backoff, do not ever attempt single page flushes and
     wait for the cleaner to free some pages instead.  */
-    goto loop;
+    // 在退避的情况下，不要尝试单页刷新，而是等待清理器释放一些页面。
+    goto loop; // 重新进入循环
   } else {
     /* The LRU manager is not running or Oracle MySQL 5.6 algorithm
     was requested, will perform a single page flush  */
+    // LRU 管理器未运行或请求了 Oracle MySQL 5.6 算法，将执行单页刷新
     ut_ad((srv_empty_free_list_algorithm == SRV_EMPTY_FREE_LIST_LEGACY) ||
           !buf_flush_page_cleaner_is_active() ||
           (srv_shutdown_state.load() != SRV_SHUTDOWN_NONE &&
@@ -1498,15 +1543,16 @@ loop:
     however, we are not using doublewrite buffer then it is better to
     do our own single page flush instead of waiting for LRU flush to
     end. */
-    buf_flush_wait_batch_end(buf_pool, BUF_FLUSH_LRU);
-    goto loop;
+    // 如果后台正在进行 LRU 刷新，则等待其结束，而不是尝试单页刷新。然而，如果我们不使用双写缓冲区，那么最好自己进行单页刷新，而不是等待 LRU 刷新结束。
+    buf_flush_wait_batch_end(buf_pool, BUF_FLUSH_LRU); // 等待 LRU 刷新批处理结束
+    goto loop; // 重新进入循环
   }
 
-  os_rmb;
+  os_rmb; // 内存屏障
 
   if (DBUG_EVALUATE_IF("simulate_recovery_lack_of_pages", true, false) ||
       DBUG_EVALUATE_IF("simulate_lack_of_pages", true, false))
-    buf_pool->try_LRU_scan = false;
+    buf_pool->try_LRU_scan = false; // 模拟页面不足
 
   if (buf_pool->try_LRU_scan || n_iterations > 0) {
     /* If no block was in the free list, search from the
@@ -1514,20 +1560,22 @@ loop:
     If we are doing for the first time we'll scan only
     tail of the LRU list otherwise we scan the whole LRU
     list. */
-    freed = buf_LRU_scan_and_free_block(buf_pool, n_iterations > 0);
+    // 如果空闲列表中没有块，则从 LRU 列表的末尾开始搜索并尝试释放一个块。如果我们是第一次执行此操作，我们将仅扫描 LRU 列表的尾部，否则我们将扫描整个 LRU 列表。
+    freed = buf_LRU_scan_and_free_block(buf_pool, n_iterations > 0); // 扫描并释放块
 
     if (!freed && n_iterations == 0) {
       /* Tell other threads that there is no point
       in scanning the LRU list. This flag is set to
       true again when we flush a batch from this
       buffer pool. */
-      buf_pool->try_LRU_scan = false;
-      os_wmb;
+      // 告诉其他线程扫描 LRU 列表没有意义。当我们从此缓冲池刷新一批时，此标志将再次设置为 true。
+      buf_pool->try_LRU_scan = false; // 设置标志
+      os_wmb; // 内存屏障
     }
   }
 
   if (freed) {
-    goto loop;
+    goto loop; // 如果释放了块，重新进入循环
   }
 
   if (n_iterations > 20 && srv_buf_pool_old_size == srv_buf_pool_size) {
@@ -1548,24 +1596,25 @@ loop:
         << os_n_file_reads << " OS file reads, " << os_n_file_writes
         << " OS file writes, " << os_n_fsyncs
         << " OS fsyncs. Starting InnoDB Monitor to print"
-           " further diagnostics to the standard output.";
+           " further diagnostics to the standard output."; // 输出警告信息，提示缓冲池中难以找到空闲块
     if (!started_monitor) {
-      started_monitor = true;
-      srv_innodb_needs_monitoring++;
+      started_monitor = true; // 设置监控标志
+      srv_innodb_needs_monitoring++; // 增加需要监控的计数
     }
   }
 
   /* If we have scanned the whole LRU and still are unable to
   find a free block then we should sleep here to let the
   page_cleaner do an LRU batch for us. */
+  // 如果我们已经扫描了整个 LRU 并且仍然无法找到一个空闲块，那么我们应该在这里休眠以让页面清理器为我们执行一个 LRU 批处理。
 
   if (!srv_read_only_mode) {
-    os_event_set(buf_flush_event);
+    os_event_set(buf_flush_event); // 设置刷新事件
   }
 
   if (n_iterations > 1) {
-    MONITOR_INC(MONITOR_LRU_GET_FREE_WAITS);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    MONITOR_INC(MONITOR_LRU_GET_FREE_WAITS); // 增加 LRU 获取空闲块等待计数
+    std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 休眠 10 毫秒
   }
 
   /* No free block was found: try to flush the LRU list.
@@ -1578,18 +1627,21 @@ loop:
   removing the block from page_hash and LRU_list is fairly
   involved (particularly in case of compressed pages). We
   can do that in a separate patch sometime in future. */
+  // 未找到空闲块：尝试刷新 LRU 列表。此调用将从 LRU 刷新一个页面并将其放入空闲列表。这意味着空闲块可以供所有用户线程使用。
+  // TODO：更优雅的方法是将释放的块返回给调用者，但处理从 page_hash 和 LRU_list 中移除块的代码相当复杂（特别是在压缩页面的情况下）。我们可以在将来的单独补丁中进行处理。
 
   if (!buf_flush_single_page_from_LRU(buf_pool)) {
-    MONITOR_INC(MONITOR_LRU_SINGLE_FLUSH_FAILURE_COUNT);
-    ++flush_failures;
+    MONITOR_INC(MONITOR_LRU_SINGLE_FLUSH_FAILURE_COUNT); // 增加 LRU 单页刷新失败计数
+    ++flush_failures; // 增加刷新失败次数
   }
 
-  srv_stats.buf_pool_wait_free.add(n_iterations, 1);
+  srv_stats.buf_pool_wait_free.add(n_iterations, 1); // 增加缓冲池等待空闲块计数
 
-  n_iterations++;
+  n_iterations++; // 增加迭代次数
 
-  goto loop;
+  goto loop; // 重新进入循环
 }
+
 
 /** Calculates the desired number for the old blocks list.
 @param[in]      buf_pool        buffer pool instance */
@@ -1906,102 +1958,105 @@ void buf_LRU_make_block_old(buf_page_t *bpage) {
 }
 
 bool buf_LRU_free_page(buf_page_t *bpage, bool zip) {
-  auto buf_pool = buf_pool_from_bpage(bpage);
-  auto block_mutex = buf_page_get_mutex(bpage);
-  auto hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
+  auto buf_pool = buf_pool_from_bpage(bpage); // 获取缓冲池实例
+  auto block_mutex = buf_page_get_mutex(bpage); // 获取页面的互斥锁
+  auto hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id); // 获取页面的哈希锁
 
-  ut_ad(bpage->in_LRU_list);
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-  ut_ad(mutex_own(block_mutex));
-  ut_ad(buf_page_in_file(bpage));
+  ut_ad(bpage->in_LRU_list); // 断言页面在 LRU 列表中
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
+  ut_ad(mutex_own(block_mutex)); // 断言当前线程拥有页面的互斥锁
+  ut_ad(buf_page_in_file(bpage)); // 断言页面在文件中
 
   if (!buf_page_can_relocate(bpage)) {
     /* Do not free buffer fixed and I/O-fixed blocks. */
+    // 不释放固定和 I/O 固定的块
     return (false);
   }
 
 #ifdef UNIV_IBUF_COUNT_DEBUG
-  ut_a(ibuf_count_get(bpage->id) == 0);
+  ut_a(ibuf_count_get(bpage->id) == 0); // 断言插入缓冲区计数为 0
 #endif /* UNIV_IBUF_COUNT_DEBUG */
 
   buf_page_t *b{};
-  auto is_dirty = bpage->is_dirty();
+  auto is_dirty = bpage->is_dirty(); // 检查页面是否脏
 
   if (zip || bpage->zip.data == nullptr) {
     /* This would completely free the block. */
     /* Do not completely free dirty blocks. */
+    // 这将完全释放块。不要完全释放脏块。
 
     if (is_dirty) {
       return (false);
     }
   } else if (is_dirty && buf_page_get_state(bpage) != BUF_BLOCK_FILE_PAGE) {
-    ut_ad(buf_page_get_state(bpage) == BUF_BLOCK_ZIP_DIRTY);
+    ut_ad(buf_page_get_state(bpage) == BUF_BLOCK_ZIP_DIRTY); // 断言页面状态为 ZIP 脏
 
     return (false);
 
   } else if (buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE) {
-    b = buf_page_alloc_descriptor();
+    b = buf_page_alloc_descriptor(); // 分配页面描述符
     ut_a(b);
   }
 
-  ut_ad(buf_page_in_file(bpage));
-  ut_ad(bpage->in_LRU_list);
-  ut_ad(bpage->in_flush_list == is_dirty);
+  ut_ad(buf_page_in_file(bpage)); // 断言页面在文件中
+  ut_ad(bpage->in_LRU_list); // 断言页面在 LRU 列表中
+  ut_ad(bpage->in_flush_list == is_dirty); // 断言页面在刷新列表中的状态与脏状态一致
 
   DBUG_PRINT("ib_buf", ("free page " UINT32PF ":" UINT32PF, bpage->id.space(),
-                        bpage->id.page_no()));
+                        bpage->id.page_no())); // 调试打印释放页面的信息
 
-  mutex_exit(block_mutex);
+  mutex_exit(block_mutex); // 退出页面的互斥锁
   DBUG_EXECUTE_IF("buf_lru_free_page_delay_block_mutex_reacquisition",
-                  std::this_thread::sleep_for(std::chrono::microseconds(100)););
+                  std::this_thread::sleep_for(std::chrono::microseconds(100));); // 调试延迟重新获取页面的互斥锁
 
-  rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
-  mutex_enter(block_mutex);
-  is_dirty = bpage->is_dirty();
+  rw_lock_x_lock(hash_lock, UT_LOCATION_HERE); // 获取哈希锁
+  mutex_enter(block_mutex); // 进入页面的互斥锁
+  is_dirty = bpage->is_dirty(); // 检查页面是否脏
 
   if (!buf_page_can_relocate(bpage) ||
       ((zip || bpage->zip.data == nullptr) && is_dirty)) {
-    rw_lock_x_unlock(hash_lock);
+    rw_lock_x_unlock(hash_lock); // 释放哈希锁
 
     if (b != nullptr) {
-      buf_page_free_descriptor(b);
+      buf_page_free_descriptor(b); // 释放页面描述符
     }
 
     return (false);
   }
 
   if (is_dirty && buf_page_get_state(bpage) != BUF_BLOCK_FILE_PAGE) {
-    ut_ad(buf_page_get_state(bpage) == BUF_BLOCK_ZIP_DIRTY);
+    ut_ad(buf_page_get_state(bpage) == BUF_BLOCK_ZIP_DIRTY); // 断言页面状态为 ZIP 脏
 
-    rw_lock_x_unlock(hash_lock);
+    rw_lock_x_unlock(hash_lock); // 释放哈希锁
 
     if (b != nullptr) {
-      buf_page_free_descriptor(b);
+      buf_page_free_descriptor(b); // 释放页面描述符
     }
 
     return (false);
   }
 
   if (b != nullptr) {
-    new (b) buf_page_t(*bpage);
+    new (b) buf_page_t(*bpage); // 复制页面描述符
   }
 
-  ut_ad(rw_lock_own(hash_lock, RW_LOCK_X));
-  ut_ad(buf_page_can_relocate(bpage));
+  ut_ad(rw_lock_own(hash_lock, RW_LOCK_X)); // 断言当前线程拥有哈希锁
+  ut_ad(buf_page_can_relocate(bpage)); // 断言页面可以重新定位
 
   if (!buf_LRU_block_remove_hashed(bpage, zip, false)) {
-    mutex_exit(&buf_pool->LRU_list_mutex);
+    mutex_exit(&buf_pool->LRU_list_mutex); // 退出 LRU 列表互斥锁
 
     if (b != nullptr) {
-      buf_page_free_descriptor(b);
+      buf_page_free_descriptor(b); // 释放页面描述符
     }
     return true;
   }
-  ut_ad(!mutex_own(block_mutex));
+  ut_ad(!mutex_own(block_mutex)); // 断言当前线程不拥有页面的互斥锁
 
   /* buf_LRU_block_remove_hashed() releases the hash_lock */
+  // buf_LRU_block_remove_hashed() 释放哈希锁
   ut_ad(!rw_lock_own(hash_lock, RW_LOCK_X) &&
-        !rw_lock_own(hash_lock, RW_LOCK_S));
+        !rw_lock_own(hash_lock, RW_LOCK_S)); // 断言当前线程不拥有哈希锁
 
   /* We have just freed a BUF_BLOCK_FILE_PAGE. If b != nullptr
   then it was a compressed page with an uncompressed frame and
@@ -2009,118 +2064,129 @@ bool buf_LRU_free_page(buf_page_t *bpage, bool zip) {
   Therefore we have to reinsert the compressed page descriptor
   into the LRU and page_hash (and possibly flush_list).
   if b == nullptr then it was a regular page that has been freed */
+  // 我们刚刚释放了一个 BUF_BLOCK_FILE_PAGE。如果 b != nullptr，则它是一个带有未压缩帧的压缩页面，我们只对释放未压缩帧感兴趣。因此，我们必须将压缩页面描述符重新插入到 LRU 和 page_hash（可能还有 flush_list）中。如果 b == nullptr，则它是一个已释放的常规页面。
 
   if (b != nullptr) {
-    auto prev_b = UT_LIST_GET_PREV(LRU, b);
+    auto prev_b = UT_LIST_GET_PREV(LRU, b); // 获取前一个块
 
-    rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
+    rw_lock_x_lock(hash_lock, UT_LOCATION_HERE); // 获取哈希锁
 
-    mutex_enter(block_mutex);
+    mutex_enter(block_mutex); // 进入页面的互斥锁
 
-    ut_a(!buf_page_hash_get_low(buf_pool, b->id));
+    ut_a(!buf_page_hash_get_low(buf_pool, b->id)); // 断言页面不在哈希表中
 
-    b->state = b->is_dirty() ? BUF_BLOCK_ZIP_DIRTY : BUF_BLOCK_ZIP_PAGE;
+    b->state = b->is_dirty() ? BUF_BLOCK_ZIP_DIRTY : BUF_BLOCK_ZIP_PAGE; // 设置页面状态
 
-    ut_ad(b->size.is_compressed());
+    ut_ad(b->size.is_compressed()); // 断言页面大小为压缩大小
 
-    UNIV_MEM_DESC(b->zip.data, b->size.physical());
+    UNIV_MEM_DESC(b->zip.data, b->size.physical()); // 设置内存描述
 
     /* The fields in_page_hash and in_LRU_list of
     the to-be-freed block descriptor should have
     been cleared in
     buf_LRU_block_remove_hashed(), which
     invokes buf_LRU_remove_block(). */
-    ut_ad(!bpage->in_page_hash);
-    ut_ad(!bpage->in_LRU_list);
+    // 将要释放的块描述符的 in_page_hash 和 in_LRU_list 字段应该在 buf_LRU_block_remove_hashed() 中被清除，该函数调用 buf_LRU_remove_block()。
+    ut_ad(!bpage->in_page_hash); // 断言页面不在哈希表中
+    ut_ad(!bpage->in_LRU_list); // 断言页面不在 LRU 列表中
 
     /* bpage->state was BUF_BLOCK_FILE_PAGE because
     b != NULL. The type cast below is thus valid. */
-    ut_ad(!((buf_block_t *)bpage)->in_unzip_LRU_list);
+    // bpage->state 是 BUF_BLOCK_FILE_PAGE，因为 b != NULL。因此，下面的类型转换是有效的。
+    ut_ad(!((buf_block_t *)bpage)->in_unzip_LRU_list); // 断言页面不在 unzip_LRU 列表中
 
     /* The fields of bpage were copied to b before
     buf_LRU_block_remove_hashed() was invoked. */
-    ut_ad(!b->in_zip_hash);
-    ut_ad(b->in_page_hash);
-    ut_ad(b->in_LRU_list);
+    // 在调用 buf_LRU_block_remove_hashed() 之前，bpage 的字段已复制到 b。
+    ut_ad(!b->in_zip_hash); // 断言页面不在 zip 哈希表中
+    ut_ad(b->in_page_hash); // 断言页面在哈希表中
+    ut_ad(b->in_LRU_list); // 断言页面在 LRU 列表中
 
-    HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, b->id.hash(), b);
+    HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, b->id.hash(), b); // 将页面插入哈希表
 
     /* Insert b where bpage was in the LRU list. */
+    // 将 b 插入到 bpage 在 LRU 列表中的位置。
     if (prev_b != nullptr) {
-      ut_ad(prev_b->in_LRU_list);
-      ut_ad(buf_page_in_file(prev_b));
+      ut_ad(prev_b->in_LRU_list); // 断言前一个块在 LRU 列表中
+      ut_ad(buf_page_in_file(prev_b)); // 断言前一个块在文件中
 
-      UT_LIST_INSERT_AFTER(buf_pool->LRU, prev_b, b);
+      UT_LIST_INSERT_AFTER(buf_pool->LRU, prev_b, b); // 将 b 插入到前一个块之后
 
-      incr_LRU_size_in_bytes(b, buf_pool);
+      incr_LRU_size_in_bytes(b, buf_pool); // 增加 LRU 大小
 
       if (buf_page_is_old(b)) {
-        buf_pool->LRU_old_len++;
+        buf_pool->LRU_old_len++; // 增加 LRU_old 长度
         if (buf_pool->LRU_old == UT_LIST_GET_NEXT(LRU, b)) {
-          buf_pool->LRU_old = b;
+          buf_pool->LRU_old = b; // 设置 LRU_old
         }
       }
 
-      auto lru_len = UT_LIST_GET_LEN(buf_pool->LRU);
+      auto lru_len = UT_LIST_GET_LEN(buf_pool->LRU); // 获取 LRU 长度
 
       if (lru_len > BUF_LRU_OLD_MIN_LEN) {
-        ut_ad(buf_pool->LRU_old);
+        ut_ad(buf_pool->LRU_old); // 断言 LRU_old 存在
         /* Adjust the length of the
         old block list if necessary */
+        // 如有必要，调整旧块列表的长度
         buf_LRU_old_adjust_len(buf_pool);
       } else if (lru_len == BUF_LRU_OLD_MIN_LEN) {
         /* The LRU list is now long
         enough for LRU_old to become
         defined: init it */
+        // 现在 LRU 列表足够长，可以定义 LRU_old：初始化它
         buf_LRU_old_init(buf_pool);
       }
 #ifdef UNIV_LRU_DEBUG
       /* Check that the "old" flag is consistent
       in the block and its neighbours. */
+      // 检查块及其邻居中的“旧”标志是否一致。
       buf_page_set_old(b, buf_page_is_old(b));
 #endif /* UNIV_LRU_DEBUG */
     } else {
-      ut_d(b->in_LRU_list = false);
-      buf_LRU_add_block_low(b, buf_page_is_old(b));
+      ut_d(b->in_LRU_list = false); // 设置页面不在 LRU 列表中
+      buf_LRU_add_block_low(b, buf_page_is_old(b)); // 将页面添加到 LRU 列表中
     }
 
-    mutex_enter(&buf_pool->zip_mutex);
-    rw_lock_x_unlock(hash_lock);
+    mutex_enter(&buf_pool->zip_mutex); // 进入 zip 互斥锁
+    rw_lock_x_unlock(hash_lock); // 释放哈希锁
     if (b->state == BUF_BLOCK_ZIP_PAGE) {
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
-      buf_LRU_insert_zip_clean(b);
+      buf_LRU_insert_zip_clean(b); // 插入 zip 干净页面
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
     } else {
       /* Relocate on buf_pool->flush_list. */
+      // 在 buf_pool->flush_list 上重新定位。
       buf_flush_relocate_on_flush_list(bpage, b);
     }
 
-    bpage->zip.data = nullptr;
+    bpage->zip.data = nullptr; // 清空页面的 zip 数据
 
-    page_zip_set_size(&bpage->zip, 0);
+    page_zip_set_size(&bpage->zip, 0); // 设置页面 zip 大小为 0
 
     bpage->size.copy_from(
-        page_size_t(bpage->size.logical(), bpage->size.logical(), false));
+        page_size_t(bpage->size.logical(), bpage->size.logical(), false)); // 复制页面大小
 
     /* Prevent buf_page_get_gen() from
     decompressing the block while we release block_mutex. */
+    // 防止在释放 block_mutex 时 buf_page_get_gen() 解压块。
 
-    buf_page_set_sticky(b);
+    buf_page_set_sticky(b); // 设置页面为粘性
 
-    mutex_exit(&buf_pool->zip_mutex);
+    mutex_exit(&buf_pool->zip_mutex); // 退出 zip 互斥锁
 
-    mutex_exit(block_mutex);
+    mutex_exit(block_mutex); // 退出页面的互斥锁
   }
 
-  mutex_exit(&buf_pool->LRU_list_mutex);
+  mutex_exit(&buf_pool->LRU_list_mutex); // 退出 LRU 列表互斥锁
 
   /* Remove possible adaptive hash index on the page.
   The page was declared uninitialized by
   buf_LRU_block_remove_hashed().  We need to flag
   the contents of the page valid (which it still is) in
   order to avoid bogus Valgrind warnings.*/
+  // 删除页面上可能的自适应哈希索引。页面已被 buf_LRU_block_remove_hashed() 声明为未初始化。我们需要标记页面内容有效（它仍然是有效的），以避免虚假的 Valgrind 警告。
   UNIV_MEM_VALID(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE);
-  btr_search_drop_page_hash_index((buf_block_t *)bpage, true);
+  btr_search_drop_page_hash_index((buf_block_t *)bpage, true); // 删除页面的哈希索引
   UNIV_MEM_INVALID(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE);
 
   if (b != nullptr) {
@@ -2130,95 +2196,103 @@ bool buf_LRU_free_page(buf_page_t *bpage, bool zip) {
     (BUF_BLOCK_REMOVE_HASH) and removed from
     buf_pool->page_hash, thus inaccessible by any
     other thread. */
+    // 在不持有任何互斥锁的情况下计算并标记压缩页面校验和。该块已被半释放（BUF_BLOCK_REMOVE_HASH）并从 buf_pool->page_hash 中移除，因此其他线程无法访问。
 
-    ut_ad(b->size.is_compressed());
+    ut_ad(b->size.is_compressed()); // 断言页面大小为压缩大小
 
     BlockReporter reporter = BlockReporter(false, b->zip.data, b->size, false);
 
     const uint32_t checksum = reporter.calc_zip_checksum(
-        static_cast<srv_checksum_algorithm_t>(srv_checksum_algorithm));
+        static_cast<srv_checksum_algorithm_t>(srv_checksum_algorithm)); // 计算压缩页面校验和
 
-    mach_write_to_4(b->zip.data + FIL_PAGE_SPACE_OR_CHKSUM, checksum);
+    mach_write_to_4(b->zip.data + FIL_PAGE_SPACE_OR_CHKSUM, checksum); // 写入校验和
   }
 
   if (b != nullptr) {
-    mutex_enter(&buf_pool->zip_mutex);
+    mutex_enter(&buf_pool->zip_mutex); // 进入 zip 互斥锁
 
-    buf_page_unset_sticky(b);
+    buf_page_unset_sticky(b); // 取消页面的粘性
 
-    mutex_exit(&buf_pool->zip_mutex);
+    mutex_exit(&buf_pool->zip_mutex); // 退出 zip 互斥锁
   }
 
-  buf_LRU_block_free_hashed_page((buf_block_t *)bpage);
+  buf_LRU_block_free_hashed_page((buf_block_t *)bpage); // 将块放回空闲列表。
 
   return (true);
 }
 
+
 /** Puts a block back to the free list.
 @param[in]  block  block must not contain a file page */
+// 将块放回空闲列表。
+// @param[in]  block  块不应包含文件页面
 void buf_LRU_block_free_non_file_page(buf_block_t *block) {
   void *data;
-  buf_pool_t *buf_pool = buf_pool_from_block(block);
+  buf_pool_t *buf_pool = buf_pool_from_block(block); // 从块获取缓冲池实例
 
   switch (buf_block_get_state(block)) {
     case BUF_BLOCK_MEMORY:
     case BUF_BLOCK_READY_FOR_USE:
       break;
     default:
-      ut_error;
+      ut_error; // 如果块状态不是 BUF_BLOCK_MEMORY 或 BUF_BLOCK_READY_FOR_USE，则触发错误
   }
 
-  block->ahi.assert_empty();
-  ut_ad(!block->page.in_free_list);
-  ut_ad(!block->page.in_flush_list);
-  ut_ad(!block->page.in_LRU_list);
+  block->ahi.assert_empty(); // 断言自适应哈希索引为空
+  ut_ad(!block->page.in_free_list); // 断言页面不在空闲列表中
+  ut_ad(!block->page.in_flush_list); // 断言页面不在刷新列表中
+  ut_ad(!block->page.in_LRU_list); // 断言页面不在 LRU 列表中
 
 #ifdef UNIV_DEBUG
   /* Wipe contents of page to reveal possible stale pointers to it */
+  // 擦除页面内容以显示可能的陈旧指针
   memset(block->frame, '\0', UNIV_PAGE_SIZE);
 #else
   /* Wipe page_no and space_id */
+  // 擦除 page_no 和 space_id
   memset(block->frame + FIL_PAGE_OFFSET, 0xfe, 4);
   memset(block->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, 0xfe, 4);
 #endif /* UNIV_DEBUG */
-  UNIV_MEM_ASSERT_AND_FREE(block->frame, UNIV_PAGE_SIZE);
-  data = block->page.zip.data;
+  UNIV_MEM_ASSERT_AND_FREE(block->frame, UNIV_PAGE_SIZE); // 断言并释放页面内存
+  data = block->page.zip.data; // 获取页面的压缩数据
 
   if (data != nullptr) {
-    block->page.zip.data = nullptr;
+    block->page.zip.data = nullptr; // 清空页面的压缩数据
 
-    ut_ad(block->page.size.is_compressed());
+    ut_ad(block->page.size.is_compressed()); // 断言页面大小为压缩大小
 
-    buf_buddy_free(buf_pool, data, block->page.size.physical());
+    buf_buddy_free(buf_pool, data, block->page.size.physical()); // 释放压缩数据
 
-    page_zip_set_size(&block->page.zip, 0);
+    page_zip_set_size(&block->page.zip, 0); // 设置页面压缩大小为 0
 
     block->page.size.copy_from(page_size_t(block->page.size.logical(),
-                                           block->page.size.logical(), false));
+                                           block->page.size.logical(), false)); // 复制页面大小
   }
 
 #ifndef UNIV_HOTBACKUP
-  buf_page_prepare_for_free(&block->page);
-  ut_ad(block->page.get_space() == nullptr);
+  buf_page_prepare_for_free(&block->page); // 准备释放页面
+  ut_ad(block->page.get_space() == nullptr); // 断言页面空间为空
 #endif /* !UNIV_HOTBACKUP */
 
   if (buf_get_withdraw_depth(buf_pool) &&
       buf_block_will_withdrawn(buf_pool, block)) {
     /* This should be withdrawn */
-    buf_block_set_state(block, BUF_BLOCK_NOT_USED);
-    mutex_enter(&buf_pool->free_list_mutex);
-    UT_LIST_ADD_LAST(buf_pool->withdraw, &block->page);
-    ut_d(block->in_withdraw_list = true);
-    mutex_exit(&buf_pool->free_list_mutex);
+    // 该块应被撤回
+    buf_block_set_state(block, BUF_BLOCK_NOT_USED); // 设置块状态为 BUF_BLOCK_NOT_USED
+    mutex_enter(&buf_pool->free_list_mutex); // 进入空闲列表互斥锁
+    UT_LIST_ADD_LAST(buf_pool->withdraw, &block->page); // 将块添加到撤回列表的末尾
+    ut_d(block->in_withdraw_list = true); // 设置块在撤回列表中
+    mutex_exit(&buf_pool->free_list_mutex); // 退出空闲列表互斥锁
   } else {
-    buf_block_set_state(block, BUF_BLOCK_NOT_USED);
-    mutex_enter(&buf_pool->free_list_mutex);
-    UT_LIST_ADD_FIRST(buf_pool->free, &block->page);
-    ut_d(block->page.in_free_list = true);
-    ut_ad(!block->page.someone_has_io_responsibility());
-    mutex_exit(&buf_pool->free_list_mutex);
+    buf_block_set_state(block, BUF_BLOCK_NOT_USED); // 设置块状态为 BUF_BLOCK_NOT_USED
+    mutex_enter(&buf_pool->free_list_mutex); // 进入空闲列表互斥锁
+    UT_LIST_ADD_FIRST(buf_pool->free, &block->page); // 将块添加到空闲列表的开头
+    ut_d(block->page.in_free_list = true); // 设置块在空闲列表中
+    ut_ad(!block->page.someone_has_io_responsibility()); // 断言没有线程对该页面有 I/O 责任
+    mutex_exit(&buf_pool->free_list_mutex); // 退出空闲列表互斥锁
   }
 }
+
 
 /** Takes a block out of the LRU list and page hash table.
 If the block is compressed-only (BUF_BLOCK_ZIP_PAGE),
@@ -2469,9 +2543,9 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
 }
 
 static void buf_LRU_block_free_hashed_page(buf_block_t *block) noexcept {
-  buf_block_set_state(block, BUF_BLOCK_MEMORY);
+  buf_block_set_state(block, BUF_BLOCK_MEMORY); // 将块的状态设置为 BUF_BLOCK_MEMORY
 
-  buf_LRU_block_free_non_file_page(block);
+  buf_LRU_block_free_non_file_page(block); // 释放非文件页面的块
 }
 
 void buf_LRU_free_one_page(buf_page_t *bpage, bool ignore_content) {

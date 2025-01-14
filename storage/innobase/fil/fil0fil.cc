@@ -8255,27 +8255,28 @@ void fil_flush(space_id_t space_id) {
 }
 
 void Fil_shard::flush_file_spaces() {
-  Space_ids space_ids;
+  Space_ids space_ids; // 定义一个空间 ID 列表
 
-  mutex_acquire();
+  mutex_acquire(); // 获取互斥锁
 
-  for (auto space : m_unflushed_spaces) {
-    if ((to_int(space->purpose) & FIL_TYPE_TABLESPACE) &&
-        !space->stop_new_ops) {
-      space_ids.push_back(space->id);
+  for (auto space : m_unflushed_spaces) { // 遍历所有未刷新的空间
+    if ((to_int(space->purpose) & FIL_TYPE_TABLESPACE) && // 如果空间的用途是表空间
+        !space->stop_new_ops) { // 并且空间没有停止新操作
+      space_ids.push_back(space->id); // 将空间 ID 添加到列表中
     }
   }
 
-  mutex_release();
+  mutex_release(); // 释放互斥锁
 
   /* Flush the spaces.  It will not hurt to call fil_flush() on
   a non-existing space id. */
-  for (auto space_id : space_ids) {
-    mutex_acquire();
+  // 刷新空间。调用 fil_flush() 在不存在的空间 ID 上不会有影响。
+  for (auto space_id : space_ids) { // 遍历所有空间 ID
+    mutex_acquire(); // 获取互斥锁
 
-    space_flush(space_id);
+    space_flush(space_id); // 刷新空间
 
-    mutex_release();
+    mutex_release(); // 释放互斥锁
   }
 }
 
@@ -8285,7 +8286,11 @@ void Fil_system::flush_file_spaces() {
   }
 }
 
-void fil_flush_file_spaces() { fil_system->flush_file_spaces(); }
+/** Flush all file spaces to disk. */
+// 将所有文件空间刷新到磁盘。
+void fil_flush_file_spaces() {
+  fil_system->flush_file_spaces(); // 调用 fil_system 对象的 flush_file_spaces 方法
+}
 
 /** Returns true if file address is undefined.
 @param[in]      addr            File address to check

@@ -6840,8 +6840,9 @@ void os_aio_wake_all_threads_at_shutdown() {
 
 /** Waits until there are no pending writes in AIO::s_writes. There can
 be other, synchronous, pending writes. */
+// 等待直到 AIO::s_writes 中没有未完成的写操作。可能还有其他同步的未完成写操作。
 void os_aio_wait_until_no_pending_writes() {
-  AIO::wait_until_no_pending_writes();
+  AIO::wait_until_no_pending_writes(); // 调用 AIO 类的静态方法，等待没有未完成的写操作
 }
 
 /** Calculates segment number for a slot.
@@ -7178,17 +7179,18 @@ void AIO::wake_simulated_handler_thread(ulint global_segment, ulint segment) {
 }
 
 /** Wakes up simulated aio i/o-handler threads if they have something to do. */
+// 如果有任务要处理，唤醒模拟的 AIO I/O 处理线程。
 void os_aio_simulated_wake_handler_threads() {
   if (srv_use_native_aio) {
     /* We do not use simulated aio: do nothing */
-
+    // 如果使用原生 AIO，则不执行任何操作
     return;
   }
 
-  os_aio_recommend_sleep_for_read_threads = false;
+  os_aio_recommend_sleep_for_read_threads = false; // 设置推荐的读线程休眠标志为 false
 
-  for (ulint i = 0; i < os_aio_n_segments; ++i) {
-    AIO::wake_simulated_handler_thread(i);
+  for (ulint i = 0; i < os_aio_n_segments; ++i) { // 遍历所有 AIO 段
+    AIO::wake_simulated_handler_thread(i); // 唤醒第 i 个模拟的 AIO 处理线程
   }
 }
 

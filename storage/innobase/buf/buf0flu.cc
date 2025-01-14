@@ -203,16 +203,20 @@ bool innodb_page_cleaner_disabled_debug;
 
 /** Flush a batch of writes to the datafiles that have already been
 written to the dblwr buffer on disk. */
+// 将已经写入磁盘上的双写缓冲区（dblwr buffer）的一批写操作刷新到数据文件中。
 static void buf_flush_sync_datafiles() {
   /* Wake possible simulated AIO thread to actually post the
   writes to the operating system */
+  // 唤醒可能的模拟 AIO 线程，实际将写操作提交到操作系统
   os_aio_simulated_wake_handler_threads();
 
   /* Wait that all async writes to tablespaces have been posted to
   the OS */
+  // 等待所有异步写操作提交到操作系统
   os_aio_wait_until_no_pending_writes();
 
   /* Now we flush the data to disk (for example, with fsync) */
+  // 现在将数据刷新到磁盘（例如，使用 fsync）
   fil_flush_file_spaces();
 }
 
@@ -1944,26 +1948,32 @@ Whether LRU or unzip_LRU is used depends on the state of the system.
 @return number of blocks for which either the write request was queued
 or in case of unzip_LRU the number of blocks actually moved to the
 free list */
+// 从 LRU 或 unzip_LRU 列表中刷新并移动页面到空闲列表。
+// 使用 LRU 还是 unzip_LRU 取决于系统的状态。
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      max             空闲列表中所需的块数
+// @return 已排队写入请求的块数或在 unzip_LRU 情况下实际移动到空闲列表的块数
 static std::pair<ulint, ulint> buf_do_LRU_batch(buf_pool_t *buf_pool,
                                                 ulint max) {
-  ulint count = 0;
-  std::pair<ulint, ulint> res;
+  ulint count = 0; // 初始化计数器
+  std::pair<ulint, ulint> res; // 定义一个用于存储结果的对
 
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
 
-  if (buf_LRU_evict_from_unzip_LRU(buf_pool)) {
-    count = buf_free_from_unzip_LRU_list_batch(buf_pool, max);
+  if (buf_LRU_evict_from_unzip_LRU(buf_pool)) { // 如果需要从 unzip_LRU 列表中驱逐页面
+    count = buf_free_from_unzip_LRU_list_batch(buf_pool, max); // 从 unzip_LRU 列表中批量释放页面
   }
 
-  if (max > count) {
-    res = buf_flush_LRU_list_batch(buf_pool, max - count);
+  if (max > count) { // 如果需要释放的页面数大于已释放的页面数
+    res = buf_flush_LRU_list_batch(buf_pool, max - count); // 从 LRU 列表中批量刷新页面
   }
 
   /* Add evicted pages from unzip_LRU to the evicted pages from the simple
   LRU. */
-  res.second += count;
+  // 将从 unzip_LRU 列表中驱逐的页面数添加到从简单 LRU 列表中驱逐的页面数中。
+  res.second += count; // 累加从 unzip_LRU 列表中驱逐的页面数
 
-  return (res);
+  return (res); // 返回结果
 }
 
 /** This utility flushes dirty blocks from the end of the flush_list.
@@ -2060,68 +2070,80 @@ not guaranteed that the actual number is that big, though)
 oldest_modification is smaller than this should be flushed (if their number
 does not exceed min_n), otherwise ignored
 @return pair of numbers of flushed and evicted blocks */
+// 该工具从 LRU 列表或刷新列表的末尾刷新脏块。
+// 注意 1：在 LRU 刷新的情况下，调用线程可能拥有页面的闩锁：为了避免死锁，必须编写此函数，以便它不能最终等待这些闩锁！注意 2：在刷新列表刷新的情况下，调用线程不允许拥有任何页面的闩锁！
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      flush_type      BUF_FLUSH_LRU 或 BUF_FLUSH_LIST；如果是 BUF_FLUSH_LIST，则调用者不得拥有任何页面的闩锁
+// @param[in]      min_n           希望刷新的最小块数（尽管不能保证实际数量会那么大）
+// @param[in]      lsn_limit       在 BUF_FLUSH_LIST 的情况下，所有 oldest_modification 小于此值的块都应被刷新（如果它们的数量不超过 min_n），否则忽略
+// @return 刷新和驱逐块的数量对
 static std::pair<ulint, ulint> buf_flush_batch(buf_pool_t *buf_pool,
                                                buf_flush_t flush_type,
                                                ulint min_n, lsn_t lsn_limit) {
-  ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_LIST);
+  ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_LIST); // 断言刷新类型是 LRU 或 LIST
 
 #ifdef UNIV_DEBUG
   {
     dict_sync_check check(true);
 
-    ut_ad(flush_type != BUF_FLUSH_LIST || !sync_check_iterate(check));
+    ut_ad(flush_type != BUF_FLUSH_LIST || !sync_check_iterate(check)); // 断言在 BUF_FLUSH_LIST 的情况下没有同步检查迭代
   }
 #endif /* UNIV_DEBUG */
 
-  std::pair<ulint, ulint> res;
+  std::pair<ulint, ulint> res; // 定义一个用于存储结果的对
 
   /* Note: The buffer pool mutexes is released and reacquired within
   the flush functions. */
+  // 注意：在刷新函数中，缓冲池互斥锁被释放并重新获取。
   switch (flush_type) {
     case BUF_FLUSH_LRU:
-      mutex_enter(&buf_pool->LRU_list_mutex);
-      res = buf_do_LRU_batch(buf_pool, min_n);
-      mutex_exit(&buf_pool->LRU_list_mutex);
+      mutex_enter(&buf_pool->LRU_list_mutex); // 进入 LRU 列表互斥锁
+      res = buf_do_LRU_batch(buf_pool, min_n); // 执行 LRU 批量刷新
+      mutex_exit(&buf_pool->LRU_list_mutex); // 退出 LRU 列表互斥锁
       break;
     case BUF_FLUSH_LIST:
-      res.first = buf_do_flush_list_batch(buf_pool, min_n, lsn_limit);
-      res.second = 0;
+      res.first = buf_do_flush_list_batch(buf_pool, min_n, lsn_limit); // 执行刷新列表批量刷新
+      res.second = 0; // 设置驱逐块的数量为 0
       break;
     default:
-      ut_error;
+      ut_error; // 处理未知的刷新类型
   }
 
   DBUG_PRINT("ib_buf",
              ("flush %u completed, flushed %u pages, evicted %u pages",
-              unsigned(flush_type), unsigned(res.first), unsigned(res.second)));
+              unsigned(flush_type), unsigned(res.first), unsigned(res.second))); // 调试打印刷新完成的信息
 
-  return (res);
+  return (res); // 返回刷新和驱逐块的数量对
 }
 
 /** Start a buffer flush batch for LRU or flush list
 @param[in]      buf_pool        buffer pool instance
 @param[in]      flush_type      BUF_FLUSH_LRU or BUF_FLUSH_LIST */
+// 开始一个 LRU 或刷新列表的缓冲区刷新批处理
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      flush_type      BUF_FLUSH_LRU 或 BUF_FLUSH_LIST
 static bool buf_flush_start(buf_pool_t *buf_pool, buf_flush_t flush_type) {
-  ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_LIST);
+  ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_LIST); // 断言刷新类型是 LRU 或 LIST
 
-  mutex_enter(&buf_pool->flush_state_mutex);
+  mutex_enter(&buf_pool->flush_state_mutex); // 进入缓冲池的刷新状态互斥锁
 
   if (buf_pool->n_flush[flush_type] > 0 ||
       buf_pool->init_flush[flush_type] == true) {
     /* There is already a flush batch of the same type running */
+    // 已经有一个相同类型的刷新批处理在运行
 
-    mutex_exit(&buf_pool->flush_state_mutex);
+    mutex_exit(&buf_pool->flush_state_mutex); // 退出缓冲池的刷新状态互斥锁
 
-    return false;
+    return false; // 返回 false 表示刷新开始失败
   }
 
-  buf_pool->init_flush[flush_type] = true;
+  buf_pool->init_flush[flush_type] = true; // 设置刷新类型的初始化刷新标志为 true
 
-  os_event_reset(buf_pool->no_flush[flush_type]);
+  os_event_reset(buf_pool->no_flush[flush_type]); // 重置刷新类型的无刷新事件
 
-  mutex_exit(&buf_pool->flush_state_mutex);
+  mutex_exit(&buf_pool->flush_state_mutex); // 退出缓冲池的刷新状态互斥锁
 
-  return true;
+  return true; // 返回 true 表示刷新开始成功
 }
 
 /** End a buffer flush batch for LRU or flush list
@@ -2129,75 +2151,80 @@ static bool buf_flush_start(buf_pool_t *buf_pool, buf_flush_t flush_type) {
 @param[in]      flush_type      BUF_FLUSH_LRU or BUF_FLUSH_LIST
 @param[in]     flushed_page_count      number of dirty pages whose writes have
 been queued by this flush. */
+// 结束一个 LRU 或刷新列表的缓冲区刷新批处理
+// @param[in]      buf_pool        缓冲池实例
+// @param[in]      flush_type      BUF_FLUSH_LRU 或 BUF_FLUSH_LIST
+// @param[in]     flushed_page_count      此次刷新已排队写入的脏页数量
 static void buf_flush_end(buf_pool_t *buf_pool, buf_flush_t flush_type,
                           ulint flushed_page_count) {
-  mutex_enter(&buf_pool->flush_state_mutex);
+  mutex_enter(&buf_pool->flush_state_mutex); // 进入缓冲池的刷新状态互斥锁
 
-  buf_pool->init_flush[flush_type] = false;
+  buf_pool->init_flush[flush_type] = false; // 设置刷新类型的初始化刷新标志为 false
 
-  buf_pool->try_LRU_scan = true;
+  buf_pool->try_LRU_scan = true; // 设置尝试 LRU 扫描标志为 true
 
   if (buf_pool->n_flush[flush_type] == 0) {
     /* The running flush batch has ended */
+    // 正在运行的刷新批处理已结束
 
-    os_event_set(buf_pool->no_flush[flush_type]);
+    os_event_set(buf_pool->no_flush[flush_type]); // 设置刷新类型的无刷新事件
   }
 
-  mutex_exit(&buf_pool->flush_state_mutex);
+  mutex_exit(&buf_pool->flush_state_mutex); // 退出缓冲池的刷新状态互斥锁
 
-  if (!srv_read_only_mode) {
-    if (dblwr::is_enabled()) {
+  if (!srv_read_only_mode) { // 如果不是只读模式
+    if (dblwr::is_enabled()) { // 如果启用了双写缓冲区
       if (flushed_page_count != 0)
-        dblwr::force_flush(flush_type, buf_pool_index(buf_pool));
+        dblwr::force_flush(flush_type, buf_pool_index(buf_pool)); // 强制刷新双写缓冲区
     } else {
-      buf_flush_sync_datafiles();
+      buf_flush_sync_datafiles(); // 同步数据文件
     }
   } else {
-    os_aio_simulated_wake_handler_threads();
+    os_aio_simulated_wake_handler_threads(); // 唤醒模拟的 AIO 处理线程
   }
 }
 
 void buf_flush_wait_batch_end(buf_pool_t *buf_pool, buf_flush_t flush_type) {
-  ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_LIST);
+  ut_ad(flush_type == BUF_FLUSH_LRU || flush_type == BUF_FLUSH_LIST); // 断言刷新类型是 LRU 或 LIST
 
-  if (buf_pool == nullptr) {
+  if (buf_pool == nullptr) { // 如果缓冲池为空
     ulint i;
 
-    for (i = 0; i < srv_buf_pool_instances; ++i) {
-      auto buf_pool = buf_pool_from_array(i);
+    for (i = 0; i < srv_buf_pool_instances; ++i) { // 遍历所有缓冲池实例
+      auto buf_pool = buf_pool_from_array(i); // 从数组中获取缓冲池
 
-      thd_wait_begin(nullptr, THD_WAIT_DISKIO);
-      os_event_wait(buf_pool->no_flush[flush_type]);
-      thd_wait_end(nullptr);
+      thd_wait_begin(nullptr, THD_WAIT_DISKIO); // 开始等待磁盘 I/O
+      os_event_wait(buf_pool->no_flush[flush_type]); // 等待无刷新事件
+      thd_wait_end(nullptr); // 结束等待磁盘 I/O
     }
   } else {
-    thd_wait_begin(nullptr, THD_WAIT_DISKIO);
-    os_event_wait(buf_pool->no_flush[flush_type]);
-    thd_wait_end(nullptr);
+    thd_wait_begin(nullptr, THD_WAIT_DISKIO); // 开始等待磁盘 I/O
+    os_event_wait(buf_pool->no_flush[flush_type]); // 等待无刷新事件
+    thd_wait_end(nullptr); // 结束等待磁盘 I/O
   }
 }
 
 bool buf_flush_do_batch(buf_pool_t *buf_pool, buf_flush_t type, ulint min_n,
                         lsn_t lsn_limit, ulint *n_processed) {
-  ut_ad(type == BUF_FLUSH_LRU || type == BUF_FLUSH_LIST);
+  ut_ad(type == BUF_FLUSH_LRU || type == BUF_FLUSH_LIST); // 断言刷新类型是 LRU 或 LIST
 
   if (n_processed != nullptr) {
-    *n_processed = 0;
+    *n_processed = 0; // 初始化已处理的页面数量
   }
 
-  if (!buf_flush_start(buf_pool, type)) {
-    return (false);
+  if (!buf_flush_start(buf_pool, type)) { // 开始刷新
+    return (false); // 如果刷新开始失败，返回 false
   }
 
-  const auto res = buf_flush_batch(buf_pool, type, min_n, lsn_limit);
+  const auto res = buf_flush_batch(buf_pool, type, min_n, lsn_limit); // 批量刷新页面
 
-  buf_flush_end(buf_pool, type, res.first);
+  buf_flush_end(buf_pool, type, res.first); // 结束刷新
 
   if (n_processed != nullptr) {
-    *n_processed = res.first + res.second;
+    *n_processed = res.first + res.second; // 更新已处理的页面数量
   }
 
-  return (true);
+  return (true); // 返回 true 表示刷新成功
 }
 
 bool buf_flush_lists(ulint min_n, lsn_t lsn_limit, ulint *n_processed) {
@@ -3081,80 +3108,85 @@ static void pc_request(ulint min_n, lsn_t lsn_limit) {
 /**
 Do flush for one slot.
 @return the number of the slots which has not been treated yet. */
+// 对一个槽进行刷新。
+// @return 尚未处理的槽的数量。
 static ulint pc_flush_slot(void) {
-  std::chrono::steady_clock::duration flush_list_time{};
-  int list_pass = 0;
+  std::chrono::steady_clock::duration flush_list_time{}; // 刷新列表所用的时间
+  int list_pass = 0; // 刷新列表的次数
 
-  mutex_enter(&page_cleaner->mutex);
+  mutex_enter(&page_cleaner->mutex); // 进入 page_cleaner 的互斥锁
 
-  if (page_cleaner->n_slots_requested > 0) {
-    page_cleaner_slot_t *slot = nullptr;
+  if (page_cleaner->n_slots_requested > 0) { // 如果有请求的槽
+    page_cleaner_slot_t *slot = nullptr; // 定义一个槽指针
     ulint i;
 
-    for (i = 0; i < page_cleaner->n_slots; i++) {
-      slot = &page_cleaner->slots[i];
+    for (i = 0; i < page_cleaner->n_slots; i++) { // 遍历所有槽
+      slot = &page_cleaner->slots[i]; // 获取当前槽
 
-      if (slot->state == PAGE_CLEANER_STATE_REQUESTED) {
-        break;
+      if (slot->state == PAGE_CLEANER_STATE_REQUESTED) { // 如果槽的状态是请求状态
+        break; // 退出循环
       }
     }
 
     /* slot should be found because
     page_cleaner->n_slots_requested > 0 */
-    ut_a(i < page_cleaner->n_slots);
+    // 槽应该被找到，因为 page_cleaner->n_slots_requested > 0
+    ut_a(i < page_cleaner->n_slots); // 断言找到的槽索引小于槽的总数
 
-    buf_pool_t *buf_pool = buf_pool_from_array(i);
+    buf_pool_t *buf_pool = buf_pool_from_array(i); // 从数组中获取缓冲池
 
-    page_cleaner->n_slots_requested--;
-    page_cleaner->n_slots_flushing++;
-    slot->state = PAGE_CLEANER_STATE_FLUSHING;
+    page_cleaner->n_slots_requested--; // 减少请求的槽数量
+    page_cleaner->n_slots_flushing++; // 增加正在刷新的槽数量
+    slot->state = PAGE_CLEANER_STATE_FLUSHING; // 设置槽的状态为刷新状态
 
-    if (page_cleaner->n_slots_requested == 0) {
-      os_event_reset(page_cleaner->is_requested);
+    if (page_cleaner->n_slots_requested == 0) { // 如果没有请求的槽
+      os_event_reset(page_cleaner->is_requested); // 重置请求事件
     }
 
-    if (!page_cleaner->is_running) {
-      slot->n_flushed_list = 0;
+    if (!page_cleaner->is_running) { // 如果 page_cleaner 没有运行
+      slot->n_flushed_list = 0; // 设置刷新列表的数量为 0
     } else {
-      mutex_exit(&page_cleaner->mutex);
+      mutex_exit(&page_cleaner->mutex); // 退出 page_cleaner 的互斥锁
       {
         /* Flush pages from flush_list if required */
-        if (page_cleaner->requested) {
-          const auto flush_list_start = std::chrono::steady_clock::now();
+        // 如果需要，从刷新列表中刷新页面
+        if (page_cleaner->requested) { // 如果有请求
+          const auto flush_list_start = std::chrono::steady_clock::now(); // 获取当前时间作为刷新列表的开始时间
 
           slot->succeeded_list = buf_flush_do_batch(
               buf_pool, BUF_FLUSH_LIST, slot->n_pages_requested,
-              page_cleaner->lsn_limit, &slot->n_flushed_list);
+              page_cleaner->lsn_limit, &slot->n_flushed_list); // 批量刷新页面
 
-          flush_list_time = std::chrono::steady_clock::now() - flush_list_start;
-          list_pass = 1;
+          flush_list_time = std::chrono::steady_clock::now() - flush_list_start; // 计算刷新列表所用的时间
+          list_pass = 1; // 设置刷新列表的次数为 1
         } else {
-          slot->n_flushed_list = 0;
-          slot->succeeded_list = true;
+          slot->n_flushed_list = 0; // 设置刷新列表的数量为 0
+          slot->succeeded_list = true; // 设置刷新列表成功
         }
       }
-      mutex_enter(&page_cleaner->mutex);
+      mutex_enter(&page_cleaner->mutex); // 进入 page_cleaner 的互斥锁
     }
-    page_cleaner->n_slots_flushing--;
-    page_cleaner->n_slots_finished++;
-    slot->state = PAGE_CLEANER_STATE_FINISHED;
+    page_cleaner->n_slots_flushing--; // 减少正在刷新的槽数量
+    page_cleaner->n_slots_finished++; // 增加已完成的槽数量
+    slot->state = PAGE_CLEANER_STATE_FINISHED; // 设置槽的状态为完成状态
 
     slot->flush_list_time +=
-        std::chrono::duration_cast<std::chrono::milliseconds>(flush_list_time);
-    slot->flush_list_pass += list_pass;
+        std::chrono::duration_cast<std::chrono::milliseconds>(flush_list_time); // 累加刷新列表所用的时间
+    slot->flush_list_pass += list_pass; // 累加刷新列表的次数
 
     if (page_cleaner->n_slots_requested == 0 &&
-        page_cleaner->n_slots_flushing == 0) {
-      os_event_set(page_cleaner->is_finished);
+        page_cleaner->n_slots_flushing == 0) { // 如果没有请求的槽并且没有正在刷新的槽
+      os_event_set(page_cleaner->is_finished); // 设置完成事件
     }
   }
 
-  ulint ret = page_cleaner->n_slots_requested;
+  ulint ret = page_cleaner->n_slots_requested; // 获取请求的槽数量
 
-  mutex_exit(&page_cleaner->mutex);
+  mutex_exit(&page_cleaner->mutex); // 退出 page_cleaner 的互斥锁
 
-  return (ret);
+  return (ret); // 返回请求的槽数量
 }
+
 
 /**
 Wait until all flush requests are finished.
@@ -3713,26 +3745,29 @@ thread_exit:
 }
 
 /** Worker thread of page_cleaner. */
+// page_cleaner 的工作线程。
 static void buf_flush_page_cleaner_thread() {
 #ifdef UNIV_LINUX
   /* linux might be able to set different setting for each thread
   worth to try to set high priority for page cleaner threads */
+  // Linux 可能能够为每个线程设置不同的设置，值得尝试为 page cleaner 线程设置高优先级
   if (buf_flush_page_cleaner_set_priority(buf_flush_page_cleaner_priority)) {
     ib::info(ER_IB_MSG_129)
         << "page_cleaner worker priority: " << buf_flush_page_cleaner_priority;
+    // 输出 page_cleaner 工作线程的优先级
   }
 #endif /* UNIV_LINUX */
 
-  for (;;) {
-    os_event_wait(page_cleaner->is_requested);
+  for (;;) { // 无限循环
+    os_event_wait(page_cleaner->is_requested); // 等待 page_cleaner 的请求事件
 
-    ut_d(buf_flush_page_cleaner_disabled_loop());
+    ut_d(buf_flush_page_cleaner_disabled_loop()); // 调试代码，检查 page_cleaner 是否被禁用
 
-    if (!page_cleaner->is_running) {
-      break;
+    if (!page_cleaner->is_running) { // 如果 page_cleaner 没有运行
+      break; // 退出循环
     }
 
-    pc_flush_slot();
+    pc_flush_slot(); // 刷新页面槽
   }
 }
 
