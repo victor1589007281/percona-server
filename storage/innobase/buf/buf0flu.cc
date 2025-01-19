@@ -702,26 +702,30 @@ void buf_flush_insert_sorted_into_flush_list(
 }
 
 bool buf_flush_ready_for_replace(buf_page_t *bpage) {
-  ut_d(auto buf_pool = buf_pool_from_bpage(bpage));
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-  ut_ad(mutex_own(buf_page_get_mutex(bpage)));
-  ut_ad(bpage->in_LRU_list);
+  ut_d(auto buf_pool = buf_pool_from_bpage(bpage));  // 调试模式下，获取页面所属的缓冲池
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程必须持有LRU列表的互斥锁
+  ut_ad(mutex_own(buf_page_get_mutex(bpage)));  // 断言：当前线程必须持有页面的互斥锁
+  ut_ad(bpage->in_LRU_list);  // 断言：页面必须在LRU列表中
 
-  if (!buf_page_in_file(bpage)) {
+  if (!buf_page_in_file(bpage)) {  // 如果页面不在文件中（即不是文件页）
     ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_123)
         << "Buffer block " << bpage << " state "
-        << static_cast<unsigned>(bpage->state) << " in the LRU list!";
+        << static_cast<unsigned>(bpage->state) << " in the LRU list!";  // 输出致命错误信息
   }
 
   /* We can't replace a page that is fixed in any way.*/
-  if (!buf_page_can_relocate(bpage)) {
-    return false;
+  // 我们不能替换任何被固定的页面
+  if (!buf_page_can_relocate(bpage)) {  // 如果页面不能被重定位（即被固定）
+    return false;  // 返回false，表示页面不能被替换
   }
+
   /* We can replace it if it is stale, but only if the page is not fixed. */
-  if (bpage->was_stale()) {
-    return true;
+  // 如果页面是过时的（stale），并且没有被固定，则可以替换
+  if (bpage->was_stale()) {  // 如果页面是过时的
+    return true;  // 返回true，表示页面可以被替换
   }
-  return !bpage->is_dirty();
+
+  return !bpage->is_dirty();  // 如果页面不是脏页，则可以替换
 }
 
 /** Check if the block was modified and was ready for flushing.
@@ -733,17 +737,26 @@ buf_flush_ready_for_flush() which differ by the tolerance for stale result.
                                 true if the caller needs accurate answer, which
                                 requires the caller to hold buf_page_get_mutex.
 @return true if page seems ready for flush */
+/*
+该函数用于检查一个页面是否被修改并且准备好被刷新。它是buf_flush_was_ready_for_flush()和buf_flush_ready_for_flush()逻辑的通用部分，区别在于对过时结果的容忍度。
+函数根据刷新类型和页面状态来判断页面是否准备好被刷新。
+
+函数参数说明：
+buf_page_t *bpage: 需要检查的页面。
+buf_flush_t flush_type: 刷新类型，可以是BUF_FLUSH_LIST、BUF_FLUSH_LRU或BUF_FLUSH_SINGLE_PAGE。
+bool atomic: 如果为false，则调用者可以容忍过时数据；如果为true，则调用者需要准确的结果，并且必须持有页面的互斥锁。
+*/
 static bool buf_flush_ready_for_flush_gen(buf_page_t *bpage,
                                           buf_flush_t flush_type, bool atomic) {
 #ifdef UNIV_DEBUG
-  auto buf_pool = buf_pool_from_bpage(bpage);
+  auto buf_pool = buf_pool_from_bpage(bpage);  // 获取页面所属的缓冲池实例
 
   ut_a(buf_page_in_file(bpage) ||
        (buf_page_get_state(bpage) == BUF_BLOCK_REMOVE_HASH &&
-        !mutex_own(&buf_pool->LRU_list_mutex)));
+        !mutex_own(&buf_pool->LRU_list_mutex)));  // 断言：页面必须在文件中，或者页面状态为BUF_BLOCK_REMOVE_HASH且当前线程不持有LRU列表的互斥锁
 #else
   ut_a(buf_page_in_file(bpage) ||
-       buf_page_get_state(bpage) == BUF_BLOCK_REMOVE_HASH);
+       buf_page_get_state(bpage) == BUF_BLOCK_REMOVE_HASH);  // 断言：页面必须在文件中，或者页面状态为BUF_BLOCK_REMOVE_HASH
 #endif /* UNIV_DEBUG */
 
   /*As buf_flush_insert_into_flush_list() acquires SYNC_BUF_BLOCK after
@@ -757,32 +770,40 @@ static bool buf_flush_ready_for_flush_gen(buf_page_t *bpage,
   have the block mutex which will allow us to provide exact answer, even if we
   don't require it to be so (because atomic==false), and this is not required to
   have flush_list mutex in such situation.*/
+  // 由于buf_flush_insert_into_flush_list()在获取SYNC_BUF_FLUSH_LIST之后获取SYNC_BUF_BLOCK，
+  // 锁的顺序防止了buf_do_flush_list_batch()在获取SYNC_BUF_FLUSH_LIST之后获取SYNC_BUF_BLOCK。
+  // 因此，对于BUF_FLUSH_LIST，我们首先使用atomic==false进行启发式检查，如果看起来可以刷新，
+  // 则重新获取锁并在适当的互斥锁保护下重新检查。在其他情况下，我们已经持有block_mutex。
+  // 然而，对于BUF_LRU_LIST，如果我们以atomic==false调用，则我们将持有block_mutex，
+  // 这允许我们提供准确的答案，即使我们不需要这样做（因为atomic==false），
+  // 并且在这种情况下不需要持有flush_list的互斥锁。
   ut_ad(mutex_own(buf_page_get_mutex(bpage)) ||
         (!atomic && flush_type == BUF_FLUSH_LIST &&
-         buf_flush_list_mutex_own(buf_pool)));
+         buf_flush_list_mutex_own(buf_pool)));  // 断言：当前线程必须持有页面的互斥锁，或者atomic为false且刷新类型为BUF_FLUSH_LIST且当前线程持有flush_list的互斥锁
 
-  ut_ad(flush_type < BUF_FLUSH_N_TYPES);
+  ut_ad(flush_type < BUF_FLUSH_N_TYPES);  // 断言：刷新类型必须有效
 
   if (!bpage->is_dirty() ||
       (atomic ? bpage->get_io_fix() != BUF_IO_NONE : bpage->was_io_fixed())) {
-    return false;
+    return false;  // 如果页面不是脏页，或者页面处于I/O固定状态，则返回false
   }
 
-  ut_ad(bpage->in_flush_list);
+  ut_ad(bpage->in_flush_list);  // 断言：页面必须在flush_list中
 
-  switch (flush_type) {
+  switch (flush_type) {  // 根据刷新类型进行处理
     case BUF_FLUSH_LIST:
-      return (buf_page_get_state(bpage) != BUF_BLOCK_REMOVE_HASH);
+      return (buf_page_get_state(bpage) != BUF_BLOCK_REMOVE_HASH);  // 如果页面状态不是BUF_BLOCK_REMOVE_HASH，则返回true
     case BUF_FLUSH_LRU:
     case BUF_FLUSH_SINGLE_PAGE:
-      return true;
+      return true;  // 对于BUF_FLUSH_LRU和BUF_FLUSH_SINGLE_PAGE，返回true
 
     case BUF_FLUSH_N_TYPES:
-      break;
+      break;  // 无效的刷新类型
   }
 
-  ut_error;
+  ut_error;  // 触发错误
 }
+
 
 /** Check if the block was modified and was ready for flushing at some point in
 time during the call. Result might be obsolete.
@@ -935,36 +956,38 @@ void buf_flush_relocate_on_flush_list(
 /** Updates the flush system data structures when a write is completed.
 @param[in]      bpage   pointer to the block in question */
 void buf_flush_write_complete(buf_page_t *bpage) {
-  auto buf_pool = buf_pool_from_bpage(bpage);
+  auto buf_pool = buf_pool_from_bpage(bpage);  // 获取页面所属的缓冲池实例
 
-  ut_ad(mutex_own(buf_page_get_mutex(bpage)));
+  ut_ad(mutex_own(buf_page_get_mutex(bpage)));  // 断言：当前线程必须持有页面的互斥锁
 
   ut_ad(buf_page_get_state(bpage) != BUF_BLOCK_ZIP_DIRTY ||
-        mutex_own(&buf_pool->LRU_list_mutex));
+        mutex_own(&buf_pool->LRU_list_mutex));  // 断言：如果页面状态是BUF_BLOCK_ZIP_DIRTY，则必须持有LRU列表的互斥锁
 
-  const buf_flush_t flush_type = buf_page_get_flush_type(bpage);
+  const buf_flush_t flush_type = buf_page_get_flush_type(bpage);  // 获取页面的刷新类型
 
-  mutex_enter(&buf_pool->flush_state_mutex);
+  mutex_enter(&buf_pool->flush_state_mutex);  // 获取刷新状态互斥锁
 
-  buf_flush_remove(bpage);
+  buf_flush_remove(bpage);  // 从刷新队列中移除该页面
 
-  buf_page_set_io_fix(bpage, BUF_IO_NONE);
+  buf_page_set_io_fix(bpage, BUF_IO_NONE);  // 将页面的I/O状态重置为无I/O操作
 
-  buf_pool->n_flush[flush_type]--;
+  buf_pool->n_flush[flush_type]--;  // 减少对应刷新类型的未完成写请求数量
 
   if (buf_pool->n_flush[flush_type] == 0 &&
-      buf_pool->init_flush[flush_type] == false) {
+      buf_pool->init_flush[flush_type] == false) {  // 如果没有未完成的写请求且刷新未初始化
     /* The running flush batch has ended */
-
-    os_event_set(buf_pool->no_flush[flush_type]);
+    // 当前刷新批次已结束
+    os_event_set(buf_pool->no_flush[flush_type]);  // 设置刷新事件
   }
 
-  mutex_exit(&buf_pool->flush_state_mutex);
+  mutex_exit(&buf_pool->flush_state_mutex);  // 释放刷新状态互斥锁
 
-  if (!fsp_is_system_temporary(bpage->id.space()) && dblwr::is_enabled()) {
-    dblwr::write_complete(bpage, flush_type);
+  if (!fsp_is_system_temporary(bpage->id.space()) && dblwr::is_enabled()) {  // 如果页面不属于临时表空间且双写缓冲区启用
+    dblwr::write_complete(bpage, flush_type);  // 调用双写缓冲区的写完成处理
   }
 }
+
+
 #endif /* !UNIV_HOTBACKUP */
 
 /** Calculate the checksum of a page from compressed table and update
@@ -1559,9 +1582,13 @@ static ulint buf_flush_try_neighbors(const page_id_t &page_id,
 
     buf_flush_area = std::min(buf_pool->read_ahead_area,
                               static_cast<page_no_t>(buf_pool->curr_size / 16)); // 计算刷新区域大小
+    // 刷新区域大小取预读区域大小和缓冲池当前大小的1/16中的较小值，确保刷新区域不会过大
 
     low = (page_id.page_no() / buf_flush_area) * buf_flush_area; // 计算下限
+    // 根据页面ID和刷新区域大小计算刷新区域的下限，确保刷新区域从刷新区域大小的整数倍开始
+
     high = (page_id.page_no() / buf_flush_area + 1) * buf_flush_area; // 计算上限
+    // 根据页面ID和刷新区域大小计算刷新区域的上限，确保刷新区域在刷新区域大小的整数倍结束
 
     if (srv_flush_neighbors == 1) { // 如果邻居刷新设置为 1
       /* adjust 'low' and 'high' to limit
@@ -1782,54 +1809,56 @@ list. The caller must hold the LRU list mutex.
 @return number of blocks moved to the free list. */
 static ulint buf_free_from_unzip_LRU_list_batch(buf_pool_t *buf_pool,
                                                 ulint max) {
-  ulint scanned = 0;
-  ulint count = 0;
-  ulint free_len = UT_LIST_GET_LEN(buf_pool->free);
-  ulint lru_len = UT_LIST_GET_LEN(buf_pool->unzip_LRU);
+  ulint scanned = 0;  // 初始化扫描计数器
+  ulint count = 0;  // 初始化成功释放的块计数器
+  ulint free_len = UT_LIST_GET_LEN(buf_pool->free);  // 获取当前free列表的长度
+  ulint lru_len = UT_LIST_GET_LEN(buf_pool->unzip_LRU);  // 获取当前unzip_LRU列表的长度
 
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程必须持有LRU列表的互斥锁
 
-  buf_block_t *block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);
+  buf_block_t *block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);  // 从unzip_LRU列表的末尾开始
 
+  // 遍历unzip_LRU列表，尝试释放未压缩页
   while (block != nullptr && count < max && free_len < srv_LRU_scan_depth &&
          lru_len > UT_LIST_GET_LEN(buf_pool->LRU) / 10) {
-    BPageMutex *block_mutex = buf_page_get_mutex(&block->page);
+    BPageMutex *block_mutex = buf_page_get_mutex(&block->page);  // 获取当前块的互斥锁
 
-    ++scanned;
+    ++scanned;  // 增加扫描计数器
 
-    mutex_enter(block_mutex);
+    mutex_enter(block_mutex);  // 获取当前块的互斥锁
 
-    if (buf_LRU_free_page(&block->page, false)) {
+    if (buf_LRU_free_page(&block->page, false)) {  // 尝试释放未压缩页
       /* Block was freed, all mutexes released */
-      ++count;
-      mutex_enter(&buf_pool->LRU_list_mutex);
-      block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);
+      ++count;  // 增加成功释放的块计数器
+      mutex_enter(&buf_pool->LRU_list_mutex);  // 重新获取LRU列表的互斥锁
+      block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);  // 重新从unzip_LRU列表的末尾开始
 
     } else {
-      mutex_exit(block_mutex);
-      block = UT_LIST_GET_PREV(unzip_LRU, block);
+      mutex_exit(block_mutex);  // 释放当前块的互斥锁
+      block = UT_LIST_GET_PREV(unzip_LRU, block);  // 移动到前一个块
     }
 
-    free_len = UT_LIST_GET_LEN(buf_pool->free);
-    lru_len = UT_LIST_GET_LEN(buf_pool->unzip_LRU);
+    free_len = UT_LIST_GET_LEN(buf_pool->free);  // 更新free列表的长度
+    lru_len = UT_LIST_GET_LEN(buf_pool->unzip_LRU);  // 更新unzip_LRU列表的长度
   }
 
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程仍然持有LRU列表的互斥锁
 
-  if (count) {
+  if (count) {  // 如果有成功释放的块
     MONITOR_INC_VALUE_CUMULATIVE(MONITOR_LRU_BATCH_EVICT_TOTAL_PAGE,
                                  MONITOR_LRU_BATCH_EVICT_COUNT,
-                                 MONITOR_LRU_BATCH_EVICT_PAGES, count);
+                                 MONITOR_LRU_BATCH_EVICT_PAGES, count);  // 更新监控计数器
   }
 
-  if (scanned) {
+  if (scanned) {  // 如果扫描了块
     MONITOR_INC_VALUE_CUMULATIVE(MONITOR_LRU_BATCH_SCANNED,
                                  MONITOR_LRU_BATCH_SCANNED_NUM_CALL,
-                                 MONITOR_LRU_BATCH_SCANNED_PER_CALL, scanned);
+                                 MONITOR_LRU_BATCH_SCANNED_PER_CALL, scanned);  // 更新监控计数器
   }
 
-  return (count);
+  return (count);  // 返回成功释放的块数量
 }
+
 
 /** This utility flushes dirty blocks from the end of the LRU list.
 The calling thread is not allowed to own any latches on pages!
@@ -2228,30 +2257,33 @@ bool buf_flush_do_batch(buf_pool_t *buf_pool, buf_flush_t type, ulint min_n,
 }
 
 bool buf_flush_lists(ulint min_n, lsn_t lsn_limit, ulint *n_processed) {
-  ulint n_flushed = 0;
-  bool success = true;
+  ulint n_flushed = 0;  // 初始化已刷新的页面计数
+  bool success = true;  // 初始化成功标志为true
 
   if (n_processed) {
-    *n_processed = 0;
+    *n_processed = 0;  // 如果提供了n_processed指针，则初始化为0
   }
 
-  if (min_n != ULINT_MAX) {
+  if (min_n != ULINT_MAX) {  // 如果min_n不是最大值
     /* Ensure that flushing is spread evenly amongst the
     buffer pool instances. When min_n is ULINT_MAX
     we need to flush everything up to the lsn limit
     so no limit here. */
-    min_n = (min_n + srv_buf_pool_instances - 1) / srv_buf_pool_instances;
+    // 确保刷新操作均匀分布在所有缓冲池实例中。当min_n为ULINT_MAX时，
+    // 我们需要刷新所有页面直到lsn_limit，因此这里没有限制。
+    min_n = (min_n + srv_buf_pool_instances - 1) / srv_buf_pool_instances;  // 计算每个缓冲池实例需要刷新的页面数
   }
 
   /* Flush to lsn_limit in all buffer pool instances */
-  for (ulint i = 0; i < srv_buf_pool_instances; i++) {
-    buf_pool_t *buf_pool;
-    ulint page_count = 0;
+  // 在所有缓冲池实例中刷新到lsn_limit
+  for (ulint i = 0; i < srv_buf_pool_instances; i++) {  // 遍历所有缓冲池实例
+    buf_pool_t *buf_pool;  // 定义缓冲池实例指针
+    ulint page_count = 0;  // 初始化当前缓冲池实例的页面计数
 
-    buf_pool = buf_pool_from_array(i);
+    buf_pool = buf_pool_from_array(i);  // 获取当前缓冲池实例
 
     if (!buf_flush_do_batch(buf_pool, BUF_FLUSH_LIST, min_n, lsn_limit,
-                            &page_count)) {
+                            &page_count)) {  // 如果刷新批次失败
       /* We have two choices here. If lsn_limit was
       specified then skipping an instance of buffer
       pool means we cannot guarantee that all pages
@@ -2262,23 +2294,26 @@ bool buf_flush_lists(ulint min_n, lsn_t lsn_limit, ulint *n_processed) {
       pools based on the assumption that it will
       help in the retry which will follow the
       failure. */
-      success = false;
+      // 我们有两个选择。如果指定了lsn_limit，那么跳过一个缓冲池实例意味着我们无法保证所有页面都已刷新到lsn_limit。
+      // 我们可以立即返回失败，或者尝试刷新剩余的缓冲池实例到lsn_limit。
+      // 我们尝试刷新其他缓冲池实例，基于这样的假设：这将有助于在失败后重试。
+      success = false;  // 设置成功标志为false
 
-      continue;
+      continue;  // 继续处理下一个缓冲池实例
     }
 
-    n_flushed += page_count;
+    n_flushed += page_count;  // 累加已刷新的页面数
   }
 
-  if (n_flushed) {
-    srv_stats.buf_pool_flushed.add(n_flushed);
+  if (n_flushed) {  // 如果有页面被刷新
+    srv_stats.buf_pool_flushed.add(n_flushed);  // 更新统计信息，记录刷新的页面数
   }
 
-  if (n_processed) {
-    *n_processed = n_flushed;
+  if (n_processed) {  // 如果提供了n_processed指针
+    *n_processed = n_flushed;  // 设置实际刷新的页面数
   }
 
-  return (success);
+  return (success);  // 返回刷新操作是否成功
 }
 
 /** This function picks up a single page from the tail of the LRU
@@ -2384,29 +2419,32 @@ config parameter innodb_LRU_scan_depth.
 @param buf_pool buffer pool instance
 @return total pages flushed and evicted */
 static ulint buf_flush_LRU_list(buf_pool_t *buf_pool) {
-  ulint scan_depth, withdraw_depth;
-  ulint n_flushed = 0;
+  ulint scan_depth, withdraw_depth;  // 定义扫描深度和回收深度
+  ulint n_flushed = 0;  // 初始化已刷新和驱逐的页面计数
 
-  ut_ad(buf_pool);
+  ut_ad(buf_pool);  // 断言：缓冲池实例必须存在
 
   /* srv_LRU_scan_depth can be arbitrarily large value.
   We cap it with current LRU size. */
-  scan_depth = UT_LIST_GET_LEN(buf_pool->LRU);
-  withdraw_depth = buf_get_withdraw_depth(buf_pool);
+  // srv_LRU_scan_depth 可以是一个任意大的值，我们将其限制为当前LRU列表的大小。
+  scan_depth = UT_LIST_GET_LEN(buf_pool->LRU);  // 获取当前LRU列表的长度
+  withdraw_depth = buf_get_withdraw_depth(buf_pool);  // 获取缓冲池的回收深度
 
-  if (withdraw_depth > srv_LRU_scan_depth) {
-    scan_depth = std::min(withdraw_depth, scan_depth);
+  if (withdraw_depth > srv_LRU_scan_depth) {  // 如果回收深度大于srv_LRU_scan_depth
+    scan_depth = std::min(withdraw_depth, scan_depth);  // 扫描深度取回收深度和LRU列表长度的较小值
   } else {
-    scan_depth = std::min(static_cast<ulint>(srv_LRU_scan_depth), scan_depth);
+    scan_depth = std::min(static_cast<ulint>(srv_LRU_scan_depth), scan_depth);  // 扫描深度取srv_LRU_scan_depth和LRU列表长度的较小值
   }
 
   /* Currently one of page_cleaners is the only thread
   that can trigger an LRU flush at the same time.
   So, it is not possible that a batch triggered during
   last iteration is still running, */
-  buf_flush_do_batch(buf_pool, BUF_FLUSH_LRU, scan_depth, 0, &n_flushed);
+  // 目前，只有一个page_cleaner线程可以同时触发LRU刷新。
+  // 因此，不可能有在上一次迭代中触发的批次仍在运行。
+  buf_flush_do_batch(buf_pool, BUF_FLUSH_LRU, scan_depth, 0, &n_flushed);  // 执行LRU刷新批次
 
-  return (n_flushed);
+  return (n_flushed);  // 返回已刷新和驱逐的页面总数
 }
 
 /** Wait for any possible LRU flushes that are in progress to end. */
@@ -2995,42 +3033,44 @@ size_t buf_flush_active_lru_managers() noexcept {
 }
 
 void buf_flush_page_cleaner_init() {
-  ut_ad(page_cleaner == nullptr);
+  ut_ad(page_cleaner == nullptr);  // 断言：page_cleaner 必须为空
 
-  page_cleaner = ut::make_unique<page_cleaner_t>(UT_NEW_THIS_FILE_PSI_KEY);
+  page_cleaner = ut::make_unique<page_cleaner_t>(UT_NEW_THIS_FILE_PSI_KEY);  // 创建 page_cleaner 对象
 
-  mutex_create(LATCH_ID_PAGE_CLEANER, &page_cleaner->mutex);
+  mutex_create(LATCH_ID_PAGE_CLEANER, &page_cleaner->mutex);  // 创建 page_cleaner 的互斥锁
 
-  page_cleaner->is_requested = os_event_create();
-  page_cleaner->is_finished = os_event_create();
+  page_cleaner->is_requested = os_event_create();  // 创建 page_cleaner 的请求事件
+  page_cleaner->is_finished = os_event_create();  // 创建 page_cleaner 的完成事件
 
-  page_cleaner->n_slots = static_cast<ulint>(srv_buf_pool_instances);
+  page_cleaner->n_slots = static_cast<ulint>(srv_buf_pool_instances);  // 设置 page_cleaner 的槽数为缓冲池实例数
 
   page_cleaner->slots = ut::make_unique<page_cleaner_slot_t[]>(
-      UT_NEW_THIS_FILE_PSI_KEY, page_cleaner->n_slots);
+      UT_NEW_THIS_FILE_PSI_KEY, page_cleaner->n_slots);  // 为每个缓冲池实例创建 page_cleaner 槽
 
-  ut_d(page_cleaner->n_disabled_debug = 0);
+  ut_d(page_cleaner->n_disabled_debug = 0);  // 调试模式下，初始化禁用计数为0
 
-  page_cleaner->is_running = true;
+  page_cleaner->is_running = true;  // 设置 page_cleaner 为运行状态
 
   srv_threads.m_page_cleaner_coordinator = os_thread_create(
-      page_flush_coordinator_thread_key, 0, buf_flush_page_coordinator_thread);
+      page_flush_coordinator_thread_key, 0, buf_flush_page_coordinator_thread);  // 创建页面刷新协调线程
 
   srv_threads.m_page_cleaner_workers[0] =
-      srv_threads.m_page_cleaner_coordinator;
+      srv_threads.m_page_cleaner_coordinator;  // 将协调线程设置为第一个工作线程
 
-  srv_threads.m_page_cleaner_coordinator.start();
+  srv_threads.m_page_cleaner_coordinator.start();  // 启动页面刷新协调线程
 
   /* Make sure page cleaner is active. */
+  // 确保页面清理线程处于活动状态
   ut_a(buf_flush_page_cleaner_is_active());
 
   for (size_t i = 0; i < srv_threads.m_lru_managers_n; ++i) {
     srv_threads.m_lru_managers[i] = os_thread_create(
-        buf_lru_manager_thread_key, i, buf_lru_manager_thread, i);
-    srv_threads.m_lru_managers[i].start();
+        buf_lru_manager_thread_key, i, buf_lru_manager_thread, i);  // 创建 LRU 管理线程
+    srv_threads.m_lru_managers[i].start();  // 启动 LRU 管理线程
   }
 
   /* Make sure page cleaner and LRU managers are active. */
+  // 确保页面清理线程和 LRU 管理线程都处于活动状态
   ut_a(buf_flush_page_cleaner_is_active());
   ut_a(buf_flush_active_lru_managers() == srv_buf_pool_instances);
 }
@@ -3375,28 +3415,33 @@ static void buf_flush_page_coordinator_thread() {
     srv_threads.m_page_cleaner_workers[i].start();
   }
 
-  while (!srv_read_only_mode &&
-         srv_shutdown_state.load() < SRV_SHUTDOWN_CLEANUP &&
-         recv_sys->spaces != nullptr) {
+/*
+用于在数据库恢复期间处理页面刷新请求。它会等待恢复系统的刷新开始事件，然后刷新所有页面，直到所有槽的刷新完成。最后，重置刷新开始事件并设置刷新结束事件。
+*/
+  while (!srv_read_only_mode &&  // 当服务器不是只读模式时
+         srv_shutdown_state.load() < SRV_SHUTDOWN_CLEANUP &&  // 并且服务器关闭状态小于 CLEANUP 阶段
+         recv_sys->spaces != nullptr) {  // 并且恢复系统的空间不为空
     /* treat flushing requests during recovery. */
-    ulint n_flushed_list = 0;
+    // 处理恢复期间的刷新请求
+    ulint n_flushed_list = 0;  // 初始化已刷新的页面数
 
-    os_event_wait(recv_sys->flush_start);
+    os_event_wait(recv_sys->flush_start);  // 等待恢复系统的刷新开始事件
 
-    if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP ||
-        recv_sys->spaces == nullptr) {
-      break;
+    if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP ||  // 如果服务器关闭状态大于等于 CLEANUP
+        recv_sys->spaces == nullptr) {  // 或者恢复系统的空间为空
+      break;  // 退出循环
     }
 
     /* Flush all pages */
+    // 刷新所有页面
     do {
-      pc_request(ULINT_MAX, LSN_MAX);
-      while (pc_flush_slot() > 0) {
+      pc_request(ULINT_MAX, LSN_MAX);  // 请求刷新所有页面
+      while (pc_flush_slot() > 0) {  // 刷新槽中的页面
       }
-    } while (!pc_wait_finished(&n_flushed_list));
+    } while (!pc_wait_finished(&n_flushed_list));  // 等待所有槽刷新完成
 
-    os_event_reset(recv_sys->flush_start);
-    os_event_set(recv_sys->flush_end);
+    os_event_reset(recv_sys->flush_start);  // 重置恢复系统的刷新开始事件
+    os_event_set(recv_sys->flush_end);  // 设置恢复系统的刷新结束事件
   }
 
   os_event_wait(buf_flush_event);
@@ -3409,7 +3454,18 @@ static void buf_flush_page_coordinator_thread() {
   bool was_server_active = true;
   int64_t sig_count = os_event_reset(buf_flush_event);
 
-  while (srv_shutdown_state.load() < SRV_SHUTDOWN_CLEANUP) {
+/*
+页面清理协调线程的主循环，负责根据服务器的活动状态、缓冲池的 I/O 操作情况以及同步刷新需求，动态调整页面刷新的频率和数量。它会根据服务器的活动情况决定是否跳过睡眠，并在必要时刷新页面。同时，它还会根据刷新结果更新统计信息和监控计数器。
+
+关键逻辑说明：
+服务器活动状态判断：根据缓冲池的块回收状态、服务器活动计数以及上一次的活动状态，判断服务器是否处于活动状态。
+睡眠逻辑：如果服务器处于活动状态、有挂起的 I/O 操作或没有刷新页面，并且不是同步刷新，则根据需要睡眠。如果睡眠超时，则更新警告信息。
+同步刷新处理：如果启用了同步刷新且服务器不是只读模式，则根据 LSN 限制计算需要刷新的页面数，并请求刷新页面。
+刷新页面：刷新槽中的页面，并等待所有槽刷新完成。更新刷新时间、刷新次数和统计信息。
+空闲刷新处理：如果睡眠超时且启用了空闲刷新，则刷新页面并更新统计信息。
+调试模式检查：在调试模式下，检查页面清理线程是否被禁用。
+*/
+  while (srv_shutdown_state.load() < SRV_SHUTDOWN_CLEANUP) {  // 当服务器关闭状态小于 CLEANUP 阶段时
     /* We consider server active if either we have just discovered a first
     activity after a period of inactive server, or we are after the period
     of active server in which case, it could be just the beginning of the
@@ -3417,133 +3473,135 @@ static void buf_flush_page_coordinator_thread() {
     The withdrawing blocks process when shrinking the buffer pool always
     needs the page_cleaner activity. So, we consider server is active
     during the withdrawing blocks process also. */
-
+    // 如果服务器在一段不活动期后首次发现活动，或者处于活动期之后，我们认为服务器是活动的。
+    // 在缓冲池缩小时的块回收过程中，页面清理线程也需要活动。因此，在块回收过程中我们也认为服务器是活动的。
     bool is_withdrawing = false;
-    for (ulint i = 0; i < srv_buf_pool_instances; i++) {
-      buf_pool_t *buf_pool = buf_pool_from_array(i);
-      if (buf_get_withdraw_depth(buf_pool) > 0) {
-        is_withdrawing = true;
+    for (ulint i = 0; i < srv_buf_pool_instances; i++) {  // 遍历所有缓冲池实例
+      buf_pool_t *buf_pool = buf_pool_from_array(i);  // 获取当前缓冲池实例
+      if (buf_get_withdraw_depth(buf_pool) > 0) {  // 如果缓冲池有块正在回收
+        is_withdrawing = true;  // 设置块回收标志为 true
         break;
       }
     }
 
     const bool is_server_active = is_withdrawing || was_server_active ||
-                                  srv_check_activity(last_activity);
+                                  srv_check_activity(last_activity);  // 判断服务器是否处于活动状态
 
     /* The page_cleaner skips sleep if the server is
     idle and there are no pending IOs in the buffer pool
     and there is work to do. */
+    // 如果服务器空闲且缓冲池中没有挂起的 I/O 操作，并且有工作要做，页面清理线程将跳过睡眠。
     if ((is_server_active || buf_get_n_pending_read_ios() || n_flushed == 0) &&
-        !is_sync_flush) {
+        !is_sync_flush) {  // 如果服务器活动、有挂起的 I/O 操作或没有刷新页面，并且不是同步刷新
       ret_sleep = pc_sleep_if_needed(loop_start_time + std::chrono::seconds{1},
-                                     sig_count);
+                                     sig_count);  // 根据需要睡眠
 
-      if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP) {
-        break;
+      if (srv_shutdown_state.load() >= SRV_SHUTDOWN_CLEANUP) {  // 如果服务器关闭状态大于等于 CLEANUP
+        break;  // 退出循环
       }
     } else if (std::chrono::steady_clock::now() >
-               loop_start_time + std::chrono::seconds{1}) {
-      ret_sleep = OS_SYNC_TIME_EXCEEDED;
+               loop_start_time + std::chrono::seconds{1}) {  // 如果当前时间超过循环开始时间 1 秒
+      ret_sleep = OS_SYNC_TIME_EXCEEDED;  // 设置睡眠返回值为超时
     } else {
-      ret_sleep = 0;
+      ret_sleep = 0;  // 否则设置睡眠返回值为 0
     }
 
-    sig_count = os_event_reset(buf_flush_event);
+    sig_count = os_event_reset(buf_flush_event);  // 重置页面刷新事件并获取信号计数
 
-    if (ret_sleep == OS_SYNC_TIME_EXCEEDED) {
-      const auto curr_time = std::chrono::steady_clock::now();
+    if (ret_sleep == OS_SYNC_TIME_EXCEEDED) {  // 如果睡眠返回值为超时
+      const auto curr_time = std::chrono::steady_clock::now();  // 获取当前时间
 
-      if (curr_time > loop_start_time + std::chrono::seconds{4}) {
-        if (warn_count == 0) {
+      if (curr_time > loop_start_time + std::chrono::seconds{4}) {  // 如果当前时间超过循环开始时间 4 秒
+        if (warn_count == 0) {  // 如果警告计数为 0
           auto diff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-              curr_time - loop_start_time);
+              curr_time - loop_start_time);  // 计算时间差
 
           ib::info(ER_IB_MSG_128)
               << "Page cleaner took " << diff_ms.count() << "ms to flush "
-              << n_flushed_last << " pages";
+              << n_flushed_last << " pages";  // 输出警告信息
 
-          if (warn_interval > 300) {
-            warn_interval = 600;
+          if (warn_interval > 300) {  // 如果警告间隔大于 300
+            warn_interval = 600;  // 设置警告间隔为 600
           } else {
-            warn_interval *= 2;
+            warn_interval *= 2;  // 否则警告间隔翻倍
           }
 
-          warn_count = warn_interval;
+          warn_count = warn_interval;  // 设置警告计数为警告间隔
         } else {
-          --warn_count;
+          --warn_count;  // 否则减少警告计数
         }
       } else {
         /* reset counter */
-        warn_interval = 1;
-        warn_count = 0;
+        warn_interval = 1;  // 重置警告间隔为 1
+        warn_count = 0;  // 重置警告计数为 0
       }
 
-      loop_start_time = curr_time;
-      n_flushed_last = 0;
+      loop_start_time = curr_time;  // 更新循环开始时间为当前时间
+      n_flushed_last = 0;  // 重置上一次刷新的页面数为 0
 
-      was_server_active = srv_check_activity(last_activity);
-      last_activity = srv_get_activity_count();
+      was_server_active = srv_check_activity(last_activity);  // 更新服务器活动状态
+      last_activity = srv_get_activity_count();  // 更新服务器活动计数
     }
 
     lsn_t lsn_limit;
-    if (srv_flush_sync && !srv_read_only_mode) {
+    if (srv_flush_sync && !srv_read_only_mode) {  // 如果启用了同步刷新且服务器不是只读模式
       /* lsn_limit!=0 means there are requests. needs to check the lsn. */
-      lsn_limit = log_sync_flush_lsn(*log_sys);
-      if (lsn_limit != 0) {
+      lsn_limit = log_sync_flush_lsn(*log_sys);  // 获取同步刷新的 LSN 限制
+      if (lsn_limit != 0) {  // 如果 LSN 限制不为 0
         /* Avoid aggressive sync flush beyond limit when redo is disabled. */
-        if (mtr_t::s_logging.is_enabled()) {
-          lsn_limit += Adaptive_flush::lsn_avg_rate * buf_flush_lsn_scan_factor;
+        if (mtr_t::s_logging.is_enabled()) {  // 如果日志记录启用
+          lsn_limit += Adaptive_flush::lsn_avg_rate * buf_flush_lsn_scan_factor;  // 调整 LSN 限制
         }
-        is_sync_flush = true;
+        is_sync_flush = true;  // 设置同步刷新标志为 true
       } else {
         /* Stop the sync flush. */
-        is_sync_flush = false;
+        is_sync_flush = false;  // 否则设置同步刷新标志为 false
       }
     } else {
-      is_sync_flush = false;
-      lsn_limit = LSN_MAX;
+      is_sync_flush = false;  // 否则设置同步刷新标志为 false
+      lsn_limit = LSN_MAX;  // 设置 LSN 限制为最大值
     }
 
     if (!srv_read_only_mode && mtr_t::s_logging.is_enabled() &&
-        ret_sleep == OS_SYNC_TIME_EXCEEDED) {
+        ret_sleep == OS_SYNC_TIME_EXCEEDED) {  // 如果服务器不是只读模式且日志记录启用且睡眠返回值为超时
       /* For smooth page flushing along with WAL,
       flushes log as much as possible. */
-      log_sys->recent_written.advance_tail();
+      log_sys->recent_written.advance_tail();  // 推进日志的尾部
       auto wait_stats = log_write_up_to(
-          *log_sys, log_buffer_ready_for_write_lsn(*log_sys), true);
-      MONITOR_INC_WAIT_STATS_EX(MONITOR_ON_LOG_, _PAGE_WRITTEN, wait_stats);
+          *log_sys, log_buffer_ready_for_write_lsn(*log_sys), true);  // 刷新日志
+      MONITOR_INC_WAIT_STATS_EX(MONITOR_ON_LOG_, _PAGE_WRITTEN, wait_stats);  // 更新监控计数器
     }
 
-    if (is_sync_flush || is_server_active) {
+    if (is_sync_flush || is_server_active) {  // 如果是同步刷新或服务器处于活动状态
       ulint n_to_flush;
 
       /* Estimate pages from flush_list to be flushed */
-      if (is_sync_flush) {
-        ut_a(lsn_limit > 0);
-        ut_a(lsn_limit < LSN_MAX);
+      if (is_sync_flush) {  // 如果是同步刷新
+        ut_a(lsn_limit > 0);  // 断言 LSN 限制大于 0
+        ut_a(lsn_limit < LSN_MAX);  // 断言 LSN 限制小于最大值
         n_to_flush =
-            Adaptive_flush::page_recommendation(last_pages, true, lsn_limit);
-        last_pages = 0;
+            Adaptive_flush::page_recommendation(last_pages, true, lsn_limit);  // 计算需要刷新的页面数
+        last_pages = 0;  // 重置上一次刷新的页面数为 0
         /* Flush n_to_flush pages or stop if you reach lsn_limit earlier.
         This is because in sync-flush mode we want finer granularity of
         flushes through all BP instances. */
-      } else if (ret_sleep == OS_SYNC_TIME_EXCEEDED) {
+      } else if (ret_sleep == OS_SYNC_TIME_EXCEEDED) {  // 如果睡眠返回值为超时
         n_to_flush =
-            Adaptive_flush::page_recommendation(last_pages, false, LSN_MAX);
-        lsn_limit = LSN_MAX;
-        last_pages = 0;
+            Adaptive_flush::page_recommendation(last_pages, false, LSN_MAX);  // 计算需要刷新的页面数
+        lsn_limit = LSN_MAX;  // 设置 LSN 限制为最大值
+        last_pages = 0;  // 重置上一次刷新的页面数为 0
       } else {
-        n_to_flush = 0;
-        lsn_limit = 0;
+        n_to_flush = 0;  // 否则设置需要刷新的页面数为 0
+        lsn_limit = 0;  // 设置 LSN 限制为 0
       }
 
       /* Request flushing for threads */
-      pc_request(n_to_flush, lsn_limit);
+      pc_request(n_to_flush, lsn_limit);  // 请求刷新页面
 
-      const auto flush_start = std::chrono::steady_clock::now();
+      const auto flush_start = std::chrono::steady_clock::now();  // 记录刷新开始时间
 
       /* Coordinator also treats requests */
-      while (pc_flush_slot() > 0) {
+      while (pc_flush_slot() > 0) {  // 刷新槽中的页面
         /* No op */
       }
 
@@ -3551,55 +3609,55 @@ static void buf_flush_page_coordinator_thread() {
       so no need to protect by lock. */
       page_cleaner->flush_time +=
           std::chrono::duration_cast<std::chrono::milliseconds>(
-              std::chrono::steady_clock::now() - flush_start);
-      page_cleaner->flush_pass++;
+              std::chrono::steady_clock::now() - flush_start);  // 累加刷新时间
+      page_cleaner->flush_pass++;  // 增加刷新次数
 
       /* Wait for all slots to be finished */
       ulint n_flushed_list = 0;
 
-      pc_wait_finished(&n_flushed_list);
+      pc_wait_finished(&n_flushed_list);  // 等待所有槽刷新完成
 
-      if (n_flushed_list > 0) {
-        srv_stats.buf_pool_flushed.add(n_flushed_list);
+      if (n_flushed_list > 0) {  // 如果有页面被刷新
+        srv_stats.buf_pool_flushed.add(n_flushed_list);  // 更新统计信息
       }
 
-      if (n_to_flush != 0) {
-        last_pages = n_flushed_list;
+      if (n_to_flush != 0) {  // 如果需要刷新的页面数不为 0
+        last_pages = n_flushed_list;  // 更新上一次刷新的页面数
       }
 
-      n_flushed_last += n_flushed_list;
+      n_flushed_last += n_flushed_list;  // 累加上一次刷新的页面数
 
-      n_flushed = n_flushed_list;
+      n_flushed = n_flushed_list;  // 更新已刷新的页面数
 
-      if (is_sync_flush) {
+      if (is_sync_flush) {  // 如果是同步刷新
         MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_SYNC_TOTAL_PAGE,
                                      MONITOR_FLUSH_SYNC_COUNT,
-                                     MONITOR_FLUSH_SYNC_PAGES, n_flushed_list);
+                                     MONITOR_FLUSH_SYNC_PAGES, n_flushed_list);  // 更新同步刷新监控计数器
       } else {
-        if (n_flushed_list) {
+        if (n_flushed_list) {  // 如果有页面被刷新
           MONITOR_INC_VALUE_CUMULATIVE(
               MONITOR_FLUSH_ADAPTIVE_TOTAL_PAGE, MONITOR_FLUSH_ADAPTIVE_COUNT,
-              MONITOR_FLUSH_ADAPTIVE_PAGES, n_flushed_list);
+              MONITOR_FLUSH_ADAPTIVE_PAGES, n_flushed_list);  // 更新自适应刷新监控计数器
         }
       }
 
-    } else if (ret_sleep == OS_SYNC_TIME_EXCEEDED && srv_idle_flush_pct) {
+    } else if (ret_sleep == OS_SYNC_TIME_EXCEEDED && srv_idle_flush_pct) {  // 如果睡眠返回值为超时且启用了空闲刷新
       /* no activity, slept enough */
-      buf_flush_lists(PCT_IO(srv_idle_flush_pct), LSN_MAX, &n_flushed);
+      buf_flush_lists(PCT_IO(srv_idle_flush_pct), LSN_MAX, &n_flushed);  // 刷新页面
 
-      n_flushed_last += n_flushed;
+      n_flushed_last += n_flushed;  // 累加上一次刷新的页面数
 
-      if (n_flushed) {
+      if (n_flushed) {  // 如果有页面被刷新
         MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_BACKGROUND_TOTAL_PAGE,
                                      MONITOR_FLUSH_BACKGROUND_COUNT,
-                                     MONITOR_FLUSH_BACKGROUND_PAGES, n_flushed);
+                                     MONITOR_FLUSH_BACKGROUND_PAGES, n_flushed);  // 更新后台刷新监控计数器
       }
 
     } else {
       /* no activity, but woken up by event */
     }
 
-    ut_d(buf_flush_page_cleaner_disabled_loop());
+    ut_d(buf_flush_page_cleaner_disabled_loop());  // 调试模式下，检查页面清理线程是否被禁用
   }
 
   /* This is just for test scenarios. */
@@ -3636,31 +3694,60 @@ static void buf_flush_page_coordinator_thread() {
   below, but still some new dirty pages could be arriving...
   In such case we just want to stop and don't care about the new pages.
   However we need to be careful not to crash (e.g. in assertions). */
+  // 在正常和慢速关闭的情况下，页面清理线程必须等待服务器中的所有其他活动结束。
+  // 注意，我们可以在服务器进入关闭阶段时立即开始刷新缓冲池，但我们必须保持足够长的时间，
+  // 以确保主线程或清理线程所做的任何工作也被刷新。
+  // 在关闭期间，我们经历三个阶段。在第一阶段，当 SRV_SHUTDOWN_CLEANUP 被设置时，
+  // 其他线程（如主线程和清理线程）可能仍在工作。我们开始刷新缓冲池，但不能确定没有新的页面被弄脏，
+  // 直到我们进入 SRV_SHUTDOWN_FLUSH_PHASE 阶段，这是最后一个阶段（在此期间我们会经过 SRV_SHUTDOWN_MASTER_STOP）。
+  // 因为 LRU 管理线程也在 SRV_SHUTDOWN_CLEANUP 阶段刷新，但不在 SRV_SHUTDOWN_FLUSH_PHASE 阶段刷新，
+  // 所以我们只有在 LRU 管理线程退出时才会离开 SRV_SHUTDOWN_CLEANUP 循环。
+  // 注意，如果我们在处理致命错误，我们会直接将状态设置为 EXIT_THREADS，在这种情况下，我们可能会退出下面的循环，
+  // 但仍然可能会有一些新的脏页到达... 在这种情况下，我们只想停止，并不关心新页面。
+  // 然而，我们需要小心不要崩溃（例如在断言中）。
 
+/*
+页面清理线程在服务器关闭期间的刷新逻辑。它确保在服务器关闭时，所有脏页都被刷新到磁盘。页面清理线程会持续刷新页面，直到服务器进入 SRV_SHUTDOWN_FLUSH_PHASE 阶段，并且所有 LRU 管理线程都退出。
+
+关键逻辑说明：
+请求刷新所有页面：调用 pc_request(ULINT_MAX, LSN_MAX) 请求刷新所有页面。
+刷新槽中的页面：调用 pc_flush_slot() 刷新槽中的页面，直到所有槽刷新完成。
+等待刷新完成：调用 pc_wait_finished(&n_flushed_list) 等待所有槽刷新完成，并获取刷新的页面数。
+更新已刷新的页面数：将刷新的页面数更新到 n_flushed。
+睡眠逻辑：如果没有页面被刷新，则睡眠 100 毫秒。
+循环条件：当服务器关闭状态小于 SRV_SHUTDOWN_FLUSH_PHASE 或者有活动的 LRU 管理线程时，继续循环。
+*/
   do {
-    pc_request(ULINT_MAX, LSN_MAX);
+    pc_request(ULINT_MAX, LSN_MAX);  // 请求刷新所有页面
 
-    while (pc_flush_slot() > 0) {
+    while (pc_flush_slot() > 0) {  // 刷新槽中的页面
     }
 
     ulint n_flushed_list = 0;
-    pc_wait_finished(&n_flushed_list);
+    pc_wait_finished(&n_flushed_list);  // 等待所有槽刷新完成
 
-    n_flushed = n_flushed_list;
+    n_flushed = n_flushed_list;  // 更新已刷新的页面数
 
     /* We sleep only if there are no pages to flush */
-    if (n_flushed == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 只有在没有页面需要刷新时才睡眠
+    if (n_flushed == 0) {  // 如果没有页面被刷新
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 睡眠 100 毫秒
     }
-  } while (srv_shutdown_state.load() < SRV_SHUTDOWN_FLUSH_PHASE ||
-           buf_flush_active_lru_managers() > 0);
+  } while (srv_shutdown_state.load() < SRV_SHUTDOWN_FLUSH_PHASE ||  // 当服务器关闭状态小于 FLUSH_PHASE 时
+           buf_flush_active_lru_managers() > 0);  // 或者有活动的 LRU 管理线程时
 
+/*
+页面清理线程在服务器关闭期间的最终刷新逻辑。它确保在服务器关闭时，所有脏页都被刷新到磁盘，并且所有相关的线程都已经关闭。
+页面清理线程会等待所有批次刷新完成，并确保没有活动的 LRU 管理线程。
+*/
   /* At this point all threads including the master and the purge
   thread must have been closed, unless we are handling some error
   during initialization of InnoDB (srv_init_abort). In such case
   we could have SRV_SHUTDOWN_EXIT_THREADS set directly from the
   srv_shutdown_exit_threads(). */
-  if (srv_shutdown_state.load() != SRV_SHUTDOWN_EXIT_THREADS) {
+  // 此时，所有线程（包括主线程和清理线程）都必须已经关闭，除非我们在 InnoDB 初始化期间处理某些错误（srv_init_abort）。
+  // 在这种情况下，我们可能会直接从 srv_shutdown_exit_threads() 设置 SRV_SHUTDOWN_EXIT_THREADS。
+  if (srv_shutdown_state.load() != SRV_SHUTDOWN_EXIT_THREADS) {  // 如果服务器关闭状态不是 EXIT_THREADS
     /* We could have srv_shutdown_state.load() >= FLUSH_PHASE only
     when either: shutdown started or init is being aborted. In the
     first case we would have FLUSH_PHASE and keep waiting until
@@ -3668,14 +3755,18 @@ static void buf_flush_page_coordinator_thread() {
 
     In the second case, we would jump to EXIT_THREADS from NONE,
     so we would not enter here. */
-    ut_a(!srv_is_being_started);
-    ut_a(srv_shutdown_state.load() == SRV_SHUTDOWN_FLUSH_PHASE);
+    // 我们只有在以下情况下才会有 srv_shutdown_state.load() >= FLUSH_PHASE：
+    // 1. 关闭已启动，或者 2. 初始化正在中止。
+    // 在第一种情况下，我们会处于 FLUSH_PHASE，并继续等待，直到此线程存活，然后我们切换到 LAST_PHASE。
+    // 在第二种情况下，我们会从 NONE 直接跳到 EXIT_THREADS，因此不会进入这里。
+    ut_a(!srv_is_being_started);  // 断言：服务器不在启动过程中
+    ut_a(srv_shutdown_state.load() == SRV_SHUTDOWN_FLUSH_PHASE);  // 断言：服务器关闭状态为 FLUSH_PHASE
 
-    ut_a(!srv_master_thread_is_active());
-    if (!srv_read_only_mode) {
-      ut_a(!srv_purge_threads_active());
-      ut_a(!srv_thread_is_active(srv_threads.m_dict_stats));
-      ut_a(!srv_thread_is_active(srv_threads.m_ts_alter_encrypt));
+    ut_a(!srv_master_thread_is_active());  // 断言：主线程不活动
+    if (!srv_read_only_mode) {  // 如果服务器不是只读模式
+      ut_a(!srv_purge_threads_active());  // 断言：清理线程不活动
+      ut_a(!srv_thread_is_active(srv_threads.m_dict_stats));  // 断言：字典统计线程不活动
+      ut_a(!srv_thread_is_active(srv_threads.m_ts_alter_encrypt));  // 断言：表空间加密线程不活动
     }
   }
 
@@ -3686,12 +3777,31 @@ static void buf_flush_page_coordinator_thread() {
   considering end of that batch as a finish of our final
   sweep and we'll come out of the loop leaving behind dirty pages
   in the flush_list */
-  buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);
-  ut_ad(buf_flush_active_lru_managers() == 0);
+  // 我们现在可以对缓冲池进行最后一次刷新，并在清理完整个缓冲池后退出。
+  // 重要的是，我们要等待任何由我们触发的正在运行的批次完成。否则，我们可能会将该批次的结束视为我们最后一次刷新的结束，
+  // 从而退出循环，留下 flush_list 中的脏页。
+  buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);  // 等待所有批次刷新完成
+  ut_ad(buf_flush_active_lru_managers() == 0);  // 断言：没有活动的 LRU 管理线程
 
   bool success;
   bool are_any_read_ios_still_underway;
 
+/*
+页面清理线程在服务器关闭期间的最终清理逻辑。它确保所有脏页都被刷新到磁盘，并且所有相关的线程都已经关闭。
+页面清理线程会等待所有批次刷新完成，并确保没有挂起的读操作和 flush_list 中的脏页。最后，它会标记日志为崩溃安全，并关闭页面清理线程。
+
+关键逻辑说明：
+检查挂起的读操作：检查是否有挂起的读操作，这些操作可能会导致页面变脏。
+请求刷新所有页面：调用 pc_request(ULINT_MAX, LSN_MAX) 请求刷新所有页面。
+刷新槽中的页面：调用 pc_flush_slot() 刷新槽中的页面，直到所有槽刷新完成。
+等待刷新完成：调用 pc_wait_finished(&n_flushed_list) 等待所有槽刷新完成，并获取刷新的页面数。
+更新已刷新的页面数：将刷新的页面数更新到 n_flushed。
+等待批次刷新完成：调用 buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST) 等待所有批次刷新完成。
+循环条件：当刷新未成功、仍有页面刷新、仍有挂起的读操作或 flush_list 不为空时，继续循环。
+断言 flush_list 为空：遍历所有缓冲池实例，断言 flush_list 为空。
+标记日志为崩溃安全：如果日志记录被禁用且服务器不是只读模式，则持久化日志以确保崩溃安全。
+关闭页面清理线程：设置 page_cleaner 为不运行状态，并唤醒工作线程以退出。
+*/
   do {
     /* If there are any read operations pending, they can result in the ibuf
     merges and a dirtying page after the read is completed. If there are any
@@ -3702,47 +3812,57 @@ static void buf_flush_page_coordinator_thread() {
     have guarantees if it was seen with value of 0. These reads could be issued
     in the previous stage(s), the srv_master thread on shutdown tasks clear the
     ibuf unless it's the fast shutdown. */
-    are_any_read_ios_still_underway = buf_get_n_pending_read_ios() > 0;
-    pc_request(ULINT_MAX, LSN_MAX);
+    // 如果有任何挂起的读操作，它们可能会导致在读取完成后进行 ibuf 合并并弄脏页面。
+    // 如果在我们运行刷新循环之前有任何 IO 读取操作正在进行，我们可能会在刷新报告 n_flushed == 0 后仍然有一些脏页。
+    // 页面上的 ibuf 更改合并会导致页面变脏，并随后减少 n_pend_reads 计数器，因此在刷新循环之前检查它是安全的，
+    // 并且如果它的值为 0，则可以保证没有挂起的读操作。这些读取操作可能是在前一阶段发出的，
+    // 除非是快速关闭，否则 srv_master 线程在关闭任务中会清除 ibuf。
+    are_any_read_ios_still_underway = buf_get_n_pending_read_ios() > 0;  // 检查是否有挂起的读操作
+    pc_request(ULINT_MAX, LSN_MAX);  // 请求刷新所有页面
 
-    while (pc_flush_slot() > 0) {
+    while (pc_flush_slot() > 0) {  // 刷新槽中的页面
     }
 
     ulint n_flushed_list = 0;
-    success = pc_wait_finished(&n_flushed_list);
+    success = pc_wait_finished(&n_flushed_list);  // 等待所有槽刷新完成
 
-    n_flushed = n_flushed_list;
+    n_flushed = n_flushed_list;  // 更新已刷新的页面数
 
-    buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);
+    buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);  // 等待所有批次刷新完成
 
   } while (!success || n_flushed > 0 || are_any_read_ios_still_underway ||
-           buf_get_flush_list_len(nullptr) > 0);
+           buf_get_flush_list_len(nullptr) > 0);  // 当刷新未成功、仍有页面刷新、仍有挂起的读操作或 flush_list 不为空时继续循环
 
-  for (ulint i = 0; i < srv_buf_pool_instances; i++) {
-    buf_pool_t *buf_pool = buf_pool_from_array(i);
-    ut_a(UT_LIST_GET_LEN(buf_pool->flush_list) == 0);
+  for (ulint i = 0; i < srv_buf_pool_instances; i++) {  // 遍历所有缓冲池实例
+    buf_pool_t *buf_pool = buf_pool_from_array(i);  // 获取当前缓冲池实例
+    ut_a(UT_LIST_GET_LEN(buf_pool->flush_list) == 0);  // 断言：flush_list 为空
   }
 
   /* Mark that it is safe to recover as we have already flushed all dirty
   pages in buffer pools. */
-  if (mtr_t::s_logging.is_disabled() && !srv_read_only_mode) {
-    log_persist_crash_safe(*log_sys);
+  // 标记可以安全恢复，因为我们已经刷新了缓冲池中的所有脏页。
+  if (mtr_t::s_logging.is_disabled() && !srv_read_only_mode) {  // 如果日志记录被禁用且服务器不是只读模式
+    log_persist_crash_safe(*log_sys);  // 持久化日志以确保崩溃安全
   }
-  log_crash_safe_validate(*log_sys);
+  log_crash_safe_validate(*log_sys);  // 验证日志的崩溃安全性
 
   /* We have lived our life. Time to die. */
+  // 我们已经完成了我们的使命。是时候退出了。
 
 thread_exit:
   /* All worker threads are waiting for the event here,
   and no more access to page_cleaner structure by them.
   Wakes worker threads up just to make them exit. */
-  page_cleaner->is_running = false;
-  os_event_set(page_cleaner->is_requested);
+  // 所有工作线程都在这里等待事件，并且它们不再访问 page_cleaner 结构。
+  // 唤醒工作线程只是为了让它们退出。
+  page_cleaner->is_running = false;  // 设置 page_cleaner 为不运行状态
+  os_event_set(page_cleaner->is_requested);  // 设置 page_cleaner 的请求事件
 
-  buf_flush_page_cleaner_close();
+  buf_flush_page_cleaner_close();  // 关闭页面清理线程
 
-  destroy_internal_thd(thd);
+  destroy_internal_thd(thd);  // 销毁内部线程描述符
 }
+
 
 /** Worker thread of page_cleaner. */
 // page_cleaner 的工作线程。
@@ -3796,50 +3916,64 @@ void buf_flush_fsync() {
 #endif /* _WIN32 */
 }
 
+/*
+用于同步刷新所有缓冲池实例的 flush_list 末尾的脏块。它会不断尝试刷新，直到所有脏块都被成功刷新到磁盘。
+最后，它会执行 fsync 操作，确保所有写入的文件都已持久化到磁盘。
+*/
 /** Synchronously flush dirty blocks from the end of the flush list of all
  buffer pool instances. NOTE: The calling thread is not allowed to own any
  latches on pages! */
+// 同步刷新所有缓冲池实例的 flush_list 末尾的脏块。注意：调用线程不允许持有任何页面的锁！
 void buf_flush_sync_all_buf_pools() {
-  bool success;
-  ulint n_pages;
-  do {
-    n_pages = 0;
-    success = buf_flush_lists(ULINT_MAX, LSN_MAX, &n_pages);
-    buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);
+  bool success;  // 初始化刷新是否成功的标志
+  ulint n_pages;  // 初始化刷新页面的数量
 
-    if (!success) {
-      MONITOR_INC(MONITOR_FLUSH_SYNC_WAITS);
+  do {
+    n_pages = 0;  // 每次循环开始时重置刷新页面数为 0
+    success = buf_flush_lists(ULINT_MAX, LSN_MAX, &n_pages);  // 刷新所有缓冲池的 flush_list
+    buf_flush_wait_batch_end(nullptr, BUF_FLUSH_LIST);  // 等待所有批次刷新完成
+
+    if (!success) {  // 如果刷新未成功
+      MONITOR_INC(MONITOR_FLUSH_SYNC_WAITS);  // 增加同步刷新等待的监控计数器
     }
 
     MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_SYNC_TOTAL_PAGE,
                                  MONITOR_FLUSH_SYNC_COUNT,
-                                 MONITOR_FLUSH_SYNC_PAGES, n_pages);
-  } while (!success);
+                                 MONITOR_FLUSH_SYNC_PAGES, n_pages);  // 更新同步刷新的监控计数器
+  } while (!success);  // 当刷新未成功时继续循环
 
-  ut_a(success);
+  ut_a(success);  // 断言：刷新必须成功
 
   /* All pages have been written to disk, but we need to make fsync for files
   to which the writes have been made. */
-  buf_flush_fsync();
+  // 所有页面都已写入磁盘，但我们需要对写入的文件执行 fsync 操作。
+  buf_flush_fsync();  // 执行 fsync 操作
 }
 
 /** Make a LRU manager thread sleep until the passed target time, if it's not
 already in the past.
-@param[in]	next_loop_timm	desired wake up time */
+@param[in]	next_loop_time	desired wake up time */
+/*
+该函数用于让LRU管理线程在指定的目标时间之前进入睡眠状态。如果当前时间已经超过目标时间，则不会进行睡眠。在服务器关闭的缓冲池刷新阶段，函数会跳过睡眠以更快地退出线程。
+
+函数参数说明：
+std::chrono::steady_clock::time_point next_loop_time: 目标时间，表示LRU管理线程应该在该时间点醒来。
+*/
 static void buf_lru_manager_sleep_if_needed(
     std::chrono::steady_clock::time_point next_loop_time) {
   /* If this is the server shutdown buffer pool flushing phase, skip the
   sleep to quit this thread faster */
+  // 如果当前处于服务器关闭的缓冲池刷新阶段，跳过睡眠以更快地退出线程
   if (srv_shutdown_state.load() == SRV_SHUTDOWN_FLUSH_PHASE) return;
 
-  const auto cur_time = std::chrono::steady_clock::now();
+  const auto cur_time = std::chrono::steady_clock::now();  // 获取当前时间
 
-  if (next_loop_time > cur_time) {
+  if (next_loop_time > cur_time) {  // 如果目标时间还未到达
     const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(
-        next_loop_time - cur_time);
+        next_loop_time - cur_time);  // 计算需要睡眠的时间
 
     std::this_thread::sleep_for(
-        std::min(std::chrono::milliseconds{1000L}, period));
+        std::min(std::chrono::milliseconds{1000L}, period));  // 睡眠，最多睡眠1000毫秒
   }
 }
 
@@ -3848,81 +3982,104 @@ the last flush result
 @param[in]	buf_pool	buffer pool whom we are flushing
 @param[in]	lru_n_flushed	last LRU flush page count
 @param[in,out]	lru_sleep_time	LRU manager thread sleep time */
+/*
+该函数用于根据空闲列表的长度和上一次刷新的结果，动态调整LRU管理线程的睡眠时间。如果空闲列表较短且上一次刷新成功，则减少或取消睡眠时间；如果空闲列表较长或上一次刷新失败，则增加睡眠时间。
+
+函数参数说明：
+const buf_pool_t *buf_pool: 缓冲池实例。
+ulint lru_n_flushed: 上一次LRU刷新的页面数。
+std::chrono::milliseconds &lru_sleep_time: LRU管理线程的睡眠时间。
+*/
 static void buf_lru_manager_adapt_sleep_time(
     const buf_pool_t *buf_pool, ulint lru_n_flushed,
     std::chrono::milliseconds &lru_sleep_time) {
-  const auto free_len = UT_LIST_GET_LEN(buf_pool->free);
+  const auto free_len = UT_LIST_GET_LEN(buf_pool->free);  // 获取空闲列表的长度
   const auto max_free_len =
-      std::min(UT_LIST_GET_LEN(buf_pool->LRU), srv_LRU_scan_depth);
+      std::min(UT_LIST_GET_LEN(buf_pool->LRU), srv_LRU_scan_depth);  // 计算最大空闲列表长度
 
   if (free_len < max_free_len / 100 && lru_n_flushed) {
     /* Free list filled less than 1% and the last iteration was
     able to flush, no sleep */
+    // 如果空闲列表长度小于最大长度的1%，并且上一次刷新成功，则不睡眠
     lru_sleep_time = std::chrono::milliseconds::zero();
   } else if (free_len > max_free_len / 5 ||
              (free_len < max_free_len / 100 && lru_n_flushed == 0)) {
     /* Free list filled more than 20% or no pages flushed in the
     previous batch, sleep a bit more */
+    // 如果空闲列表长度大于最大长度的20%，或者上一次没有刷新任何页面，则增加睡眠时间
     lru_sleep_time += std::chrono::milliseconds{1};
     if (lru_sleep_time > std::chrono::milliseconds{1000})
-      lru_sleep_time = std::chrono::milliseconds{1000};
+      lru_sleep_time = std::chrono::milliseconds{1000};  // 睡眠时间最多为1000毫秒
   } else if (free_len < max_free_len / 20 &&
              lru_sleep_time >= std::chrono::milliseconds{50}) {
     /* Free list filled less than 5%, sleep a bit less */
+    // 如果空闲列表长度小于最大长度的5%，并且当前睡眠时间大于等于50毫秒，则减少睡眠时间
     lru_sleep_time -= std::chrono::milliseconds{50};
   } else {
     /* Free lists filled between 5% and 20%, no change */
+    // 如果空闲列表长度在5%到20%之间，则保持睡眠时间不变
   }
 }
+
 /** LRU manager thread for performing LRU flushed and evictions for buffer pool
 free list refill. One thread is created for each buffer pool instace.
 @param[in]	arg	buffer pool instance number for this thread
 @return a dummy value */
+/*
+该函数是LRU管理线程的入口函数，负责执行LRU刷新和页面驱逐操作，以补充缓冲池的空闲列表。
+每个缓冲池实例都有一个独立的LRU管理线程。线程会根据刷新页面的数量动态调整睡眠时间，并在服务器关闭时继续运行以提供空闲页面。
+
+函数参数说明：
+size_t buf_pool_instance: 缓冲池实例号，表示当前线程负责的缓冲池实例。
+*/
 static void buf_lru_manager_thread(size_t buf_pool_instance) {
 #ifdef UNIV_LINUX
   /* linux might be able to set different setting for each thread
   worth to try to set high priority for page cleaner threads */
+  // Linux 可能能够为每个线程设置不同的优先级，尝试为页面清理线程设置高优先级
   if (buf_flush_page_cleaner_set_priority(buf_flush_page_cleaner_priority)) {
     ib::info() << "lru_manager worker priority: "
                << buf_flush_page_cleaner_priority;
   }
 #endif /* UNIV_LINUX */
 
-  ut_ad(buf_pool_instance < srv_buf_pool_instances);
+  ut_ad(buf_pool_instance < srv_buf_pool_instances);  // 断言：缓冲池实例号必须小于缓冲池实例总数
 
-  buf_pool_t *const buf_pool = buf_pool_from_array(buf_pool_instance);
+  buf_pool_t *const buf_pool = buf_pool_from_array(buf_pool_instance);  // 获取当前缓冲池实例
 
-  std::chrono::milliseconds lru_sleep_time{1000};
-  auto next_loop_time = std::chrono::steady_clock::now() + lru_sleep_time;
-  ulint lru_n_flushed = 1;
+  std::chrono::milliseconds lru_sleep_time{1000};  // 初始化LRU管理线程的睡眠时间为1000毫秒
+  auto next_loop_time = std::chrono::steady_clock::now() + lru_sleep_time;  // 计算下一次循环的时间
+  ulint lru_n_flushed = 1;  // 初始化已刷新的页面数为1
 
   /* On server shutdown, the LRU manager thread runs through cleanup
   phase to provide free pages for the master and purge threads.  */
+  // 在服务器关闭时，LRU管理线程会进入清理阶段，为主线程和清理线程提供空闲页面。
   while (srv_shutdown_state.load() == SRV_SHUTDOWN_NONE ||
-         srv_shutdown_state.load() == SRV_SHUTDOWN_CLEANUP) {
-    ut_d(buf_flush_page_cleaner_disabled_loop());
+         srv_shutdown_state.load() == SRV_SHUTDOWN_CLEANUP) {  // 当服务器未关闭或处于清理阶段时
+    ut_d(buf_flush_page_cleaner_disabled_loop());  // 调试模式下，检查页面清理线程是否被禁用
 
-    os_event_wait(buf_pool->run_lru);
+    os_event_wait(buf_pool->run_lru);  // 等待LRU管理线程的事件信号
 
-    buf_lru_manager_sleep_if_needed(next_loop_time);
+    buf_lru_manager_sleep_if_needed(next_loop_time);  // 如果需要，LRU管理线程进入睡眠状态
 
-    buf_lru_manager_adapt_sleep_time(buf_pool, lru_n_flushed, lru_sleep_time);
+    buf_lru_manager_adapt_sleep_time(buf_pool, lru_n_flushed, lru_sleep_time);  // 根据刷新页面数调整睡眠时间
 
-    next_loop_time = std::chrono::steady_clock::now() + lru_sleep_time;
+    next_loop_time = std::chrono::steady_clock::now() + lru_sleep_time;  // 更新下一次循环的时间
 
-    lru_n_flushed = buf_flush_LRU_list(buf_pool);
+    lru_n_flushed = buf_flush_LRU_list(buf_pool);  // 刷新LRU列表，并返回刷新的页面数
 
-    buf_flush_wait_batch_end(buf_pool, BUF_FLUSH_LRU);
+    buf_flush_wait_batch_end(buf_pool, BUF_FLUSH_LRU);  // 等待LRU刷新批次结束
 
-    if (lru_n_flushed) {
-      srv_stats.buf_pool_flushed.add(lru_n_flushed);
+    if (lru_n_flushed) {  // 如果有页面被刷新
+      srv_stats.buf_pool_flushed.add(lru_n_flushed);  // 更新统计信息，记录刷新的页面数
 
       MONITOR_INC_VALUE_CUMULATIVE(
           MONITOR_LRU_BATCH_FLUSH_TOTAL_PAGE, MONITOR_LRU_BATCH_FLUSH_COUNT,
-          MONITOR_LRU_BATCH_FLUSH_PAGES, lru_n_flushed);
+          MONITOR_LRU_BATCH_FLUSH_PAGES, lru_n_flushed);  // 更新监控计数器
     }
   }
 }
+
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
 

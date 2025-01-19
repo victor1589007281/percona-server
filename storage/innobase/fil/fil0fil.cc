@@ -7477,22 +7477,25 @@ void Fil_shard::add_to_unflushed_list(fil_space_t *space) {
 /** Note that a write IO has completed.
 @param[in,out]  file            File on which a write was completed */
 void Fil_shard::write_completed(fil_node_t *file) {
-  ut_ad(mutex_owned());
+  ut_ad(mutex_owned());  // 断言：当前线程必须持有Fil_shard的互斥锁
 
-  ++m_modification_counter;
+  ++m_modification_counter;  // 增加修改计数器
 
-  file->modification_counter = m_modification_counter;
+  file->modification_counter = m_modification_counter;  // 更新文件的修改计数器
 
-  if (fil_disable_space_flushing(file->space)) {
+  if (fil_disable_space_flushing(file->space)) {  // 如果禁用了表空间的刷新
     /* We don't need to keep track of not flushed changes as either:
     - user has explicitly disabled buffering,
     - or it is FIL_TYPE_TEMPORARY space and we don't ever flush these. */
-    ut_ad(!file->space->is_in_unflushed_spaces);
+    // 我们不需要跟踪未刷新的更改，因为：
+    // - 用户显式禁用了缓冲，
+    // - 或者它是FIL_TYPE_TEMPORARY表空间，我们从不刷新这些表空间。
+    ut_ad(!file->space->is_in_unflushed_spaces);  // 断言：表空间不应在未刷新列表中
 
-    file->set_flushed();
+    file->set_flushed();  // 标记文件为已刷新
 
-  } else {
-    add_to_unflushed_list(file->space);
+  } else {  // 如果未禁用表空间的刷新
+    add_to_unflushed_list(file->space);  // 将表空间添加到未刷新列表
   }
 }
 
@@ -7501,23 +7504,24 @@ pending I/O's field in the file appropriately.
 @param[in]      file            Tablespace file
 @param[in]      type            Marks the file as modified type == WRITE */
 void Fil_shard::complete_io(fil_node_t *file, const IORequest &type) {
-  ut_ad(mutex_owned());
+  ut_ad(mutex_owned());  // 断言：当前线程必须持有Fil_shard的互斥锁
 
-  ut_a(file->n_pending_ios > 0);
+  ut_a(file->n_pending_ios > 0);  // 断言：文件的待处理I/O操作数必须大于0
 
-  --file->n_pending_ios;
+  --file->n_pending_ios;  // 减少文件的待处理I/O操作数
 
-  ut_ad(type.validate());
+  ut_ad(type.validate());  // 断言：I/O请求类型必须有效
 
-  if (type.is_write()) {
-    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(file->space->id));
+  if (type.is_write()) {  // 如果I/O操作是写操作
+    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(file->space->id));  // 断言：如果不是只读模式，或者文件属于临时表空间
 
-    write_completed(file);
+    write_completed(file);  // 调用写操作完成处理函数
   }
 
-  if (file->n_pending_ios == 0) {
+  if (file->n_pending_ios == 0) {  // 如果文件的待处理I/O操作数为0
     /* The file must be put back to the LRU list */
-    add_to_lru_if_needed(file);
+    // 文件必须被放回LRU列表
+    add_to_lru_if_needed(file);  // 如果需要，将文件添加到LRU列表
   }
 }
 
@@ -8102,58 +8106,65 @@ void Fil_shard::remove_from_unflushed_list(fil_space_t *space) {
 }
 
 void Fil_shard::space_flush(space_id_t space_id) {
-  ut_ad(mutex_owned());
+  ut_ad(mutex_owned());  // 断言：当前线程必须持有Fil_shard的互斥锁
 
-  fil_space_t *space = get_space_by_id(space_id);
+  fil_space_t *space = get_space_by_id(space_id);  // 根据space_id获取表空间对象
 
   if (space == nullptr || space->purpose == FIL_TYPE_TEMPORARY ||
       space->stop_new_ops) {
-    return;
+    return;  // 如果表空间不存在、是临时表空间或已停止新操作，则直接返回
   }
 
-  const bool disable_flush = fil_disable_space_flushing(space);
+  const bool disable_flush = fil_disable_space_flushing(space);  // 检查是否禁用了表空间的刷新
 
   if (disable_flush) {
     /* No need to flush. User has explicitly disabled
     buffering. However, flush should be called if the file
-    size changes to keep OЅ metadata in sync. */
-    ut_ad(!space->is_in_unflushed_spaces);
-    ut_ad(space_is_flushed(space));
+    size changes to keep OS metadata in sync. */
+    // 如果禁用了刷新，则不需要刷新。用户显式禁用了缓冲。
+    // 但是，如果文件大小发生变化，则应调用刷新以保持操作系统元数据同步。
+    ut_ad(!space->is_in_unflushed_spaces);  // 断言：表空间不应在未刷新列表中
+    ut_ad(space_is_flushed(space));  // 断言：表空间应已被刷新
 
     /* Flush only if the file size changes */
-    bool no_flush = true;
-    for (const auto &file : space->files) {
+    // 仅在文件大小发生变化时刷新
+    bool no_flush = true;  // 初始化标志位，表示是否不需要刷新
+    for (const auto &file : space->files) {  // 遍历表空间的所有文件
 #ifdef UNIV_DEBUG
-      ut_ad(file.is_flushed());
+      ut_ad(file.is_flushed());  // 断言：文件应已被刷新
 #endif /* UNIV_DEBUG */
-      if (file.flush_size != file.size) {
+      if (file.flush_size != file.size) {  // 如果文件的刷新大小与当前大小不一致
         /* Found at least one file whose size has changed */
-        no_flush = false;
+        // 发现至少一个文件的大小发生了变化
+        no_flush = false;  // 设置标志位为false，表示需要刷新
         break;
       }
     }
 
     if (no_flush) {
       /* Nothing to flush. Just return */
+      // 如果没有需要刷新的内容，则直接返回
       return;
     }
   }
 
   /* Prevent dropping of the space while we are flushing */
-  ++space->n_pending_flushes;
+  // 防止在刷新过程中表空间被删除
+  ++space->n_pending_flushes;  // 增加表空间的待刷新计数
 
-  for (auto &file : space->files) {
-    int64_t old_mod_counter = file.modification_counter;
+  for (auto &file : space->files) {  // 遍历表空间的所有文件
+    int64_t old_mod_counter = file.modification_counter;  // 获取文件的修改计数器
 
-    if (!file.is_open) {
-      continue;
+    if (!file.is_open) {  // 如果文件未打开
+      continue;  // 跳过该文件
     }
 
     /* Skip flushing if the file size has not changed since
     last flush was done and the flush mode is O_DIRECT_NO_FSYNC */
+    // 如果文件大小自上次刷新以来没有变化，并且刷新模式为O_DIRECT_NO_FSYNC，则跳过刷新
     if (disable_flush && (file.flush_size == file.size)) {
-      ut_ad(old_mod_counter <= file.flush_counter);
-      continue;
+      ut_ad(old_mod_counter <= file.flush_counter);  // 断言：修改计数器应小于等于刷新计数器
+      continue;  // 跳过该文件
     }
 
     /* If we are here and the flush mode is O_DIRECT_NO_FSYNC, then
@@ -8163,84 +8174,86 @@ void Fil_shard::space_flush(space_id_t space_id) {
     on every write operation.
     For other flush modes, if the flush_counter is same or ahead of
     the mod_counter, skip the flush. */
+    // 如果刷新模式为O_DIRECT_NO_FSYNC，则文件大小发生了变化，因此应刷新，无论修改计数器和刷新计数器的值如何。
+    // 对于其他刷新模式，如果刷新计数器大于或等于修改计数器，则跳过刷新。
     if (!disable_flush && (old_mod_counter <= file.flush_counter)) {
-      continue;
+      continue;  // 跳过该文件
     }
 
-    switch (space->purpose) {
+    switch (space->purpose) {  // 根据表空间的用途进行处理
       case FIL_TYPE_TEMPORARY:
-        ut_error;  // we already checked for this
+        ut_error;  // 临时表空间不应进入此处，触发错误
 
       case FIL_TYPE_TABLESPACE:
       case FIL_TYPE_IMPORT:
-        ++fil_n_pending_tablespace_flushes;
+        ++fil_n_pending_tablespace_flushes;  // 增加待刷新的表空间计数
         break;
     }
 
-    bool skip_flush = is_fast_shutdown();
+    bool skip_flush = is_fast_shutdown();  // 检查是否处于快速关闭状态
 #ifdef _WIN32
-    if (file.is_raw_disk) {
-      skip_flush |= true;
+    if (file.is_raw_disk) {  // 如果是原始磁盘
+      skip_flush |= true;  // 跳过刷新
     }
 #endif /* _WIN32 */
 
-    while (file.n_pending_flushes > 0 && !skip_flush) {
+    while (file.n_pending_flushes > 0 && !skip_flush) {  // 如果有其他线程正在刷新该文件且不跳过刷新
       /* We want to avoid calling os_file_flush() on
       the file twice at the same time, because we do
       not know what bugs OS's may contain in file
       I/O */
+      // 我们希望避免同时多次调用os_file_flush()，因为不知道操作系统在文件I/O中可能存在的bug
+      int64_t sig_count = os_event_reset(file.sync_event);  // 重置同步事件
 
-      int64_t sig_count = os_event_reset(file.sync_event);
+      mutex_release();  // 释放互斥锁
 
-      mutex_release();
+      os_event_wait_low(file.sync_event, sig_count);  // 等待同步事件
 
-      os_event_wait_low(file.sync_event, sig_count);
+      mutex_acquire();  // 重新获取互斥锁
 
-      mutex_acquire();
-
-      if (file.flush_counter >= old_mod_counter) {
-        skip_flush |= true;
+      if (file.flush_counter >= old_mod_counter) {  // 如果刷新计数器大于或等于修改计数器
+        skip_flush |= true;  // 跳过刷新
       }
-      skip_flush |= is_fast_shutdown();
+      skip_flush |= is_fast_shutdown();  // 检查是否处于快速关闭状态
     }
 
-    if (!skip_flush) {
-      ut_a(file.is_open);
-      ++file.n_pending_flushes;
+    if (!skip_flush) {  // 如果不跳过刷新
+      ut_a(file.is_open);  // 断言：文件必须已打开
+      ++file.n_pending_flushes;  // 增加文件的待刷新计数
 
-      mutex_release();
+      mutex_release();  // 释放互斥锁
 
-      os_file_flush(file.handle);
+      os_file_flush(file.handle);  // 刷新文件
 
-      file.flush_size = file.size;
+      file.flush_size = file.size;  // 更新文件的刷新大小
 
-      mutex_acquire();
+      mutex_acquire();  // 重新获取互斥锁
 
-      os_event_set(file.sync_event);
+      os_event_set(file.sync_event);  // 设置同步事件
 
-      --file.n_pending_flushes;
+      --file.n_pending_flushes;  // 减少文件的待刷新计数
     }
 
-    if (file.flush_counter < old_mod_counter) {
-      file.flush_counter = old_mod_counter;
+    if (file.flush_counter < old_mod_counter) {  // 如果刷新计数器小于修改计数器
+      file.flush_counter = old_mod_counter;  // 更新刷新计数器
 
-      remove_from_unflushed_list(space);
+      remove_from_unflushed_list(space);  // 从未刷新列表中移除表空间
     }
 
-    switch (space->purpose) {
+    switch (space->purpose) {  // 根据表空间的用途进行处理
       case FIL_TYPE_TEMPORARY:
-        ut_error;  // we already checked for this
+        ut_error;  // 临时表空间不应进入此处，触发错误
 
       case FIL_TYPE_TABLESPACE:
       case FIL_TYPE_IMPORT:
-        --fil_n_pending_tablespace_flushes;
+        --fil_n_pending_tablespace_flushes;  // 减少待刷新的表空间计数
         continue;
     }
 
-    ut_d(ut_error);
+    ut_d(ut_error);  // 调试模式下触发错误
   }
 
-  --space->n_pending_flushes;
+  --space->n_pending_flushes;  // 减少表空间的待刷新计数
 }
 
 void fil_flush(space_id_t space_id) {

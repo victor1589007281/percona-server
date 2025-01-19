@@ -183,41 +183,49 @@ instead of the general LRU list.
 @param[in,out]  buf_pool        buffer pool instance
 @return true if should use unzip_LRU */
 bool buf_LRU_evict_from_unzip_LRU(buf_pool_t *buf_pool) {
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程必须持有LRU列表的互斥锁
 
   /* If the unzip_LRU list is empty, we can only use the LRU. */
+  // 如果unzip_LRU列表为空，则只能使用LRU列表
   if (UT_LIST_GET_LEN(buf_pool->unzip_LRU) == 0) {
-    return false;
+    return false;  // 返回false，表示不使用unzip_LRU列表
   }
 
   /* If unzip_LRU is at most 10% of the size of the LRU list,
   then use the LRU.  This slack allows us to keep hot
   decompressed pages in the buffer pool. */
+  // 如果unzip_LRU列表的长度不超过LRU列表长度的10%，则使用LRU列表。
+  // 这个余量允许我们在缓冲池中保留热门的解压缩页。
   if (UT_LIST_GET_LEN(buf_pool->unzip_LRU) <=
       UT_LIST_GET_LEN(buf_pool->LRU) / 10) {
-    return false;
+    return false;  // 返回false，表示不使用unzip_LRU列表
   }
 
   /* If eviction hasn't started yet, we assume by default
   that a workload is disk bound. */
+  // 如果驱逐尚未开始，我们默认假设工作负载是磁盘密集型的。
   if (buf_pool->freed_page_clock == 0) {
-    return true;
+    return true;  // 返回true，表示使用unzip_LRU列表
   }
 
   /* Calculate the average over past intervals, and add the values
   of the current interval. */
+  // 计算过去时间间隔的平均值，并加上当前时间间隔的值。
   ulint io_avg =
-      buf_LRU_stat_sum.io / BUF_LRU_STAT_N_INTERVAL + buf_LRU_stat_cur.io;
+      buf_LRU_stat_sum.io / BUF_LRU_STAT_N_INTERVAL + buf_LRU_stat_cur.io;  // 计算I/O操作的平均值
 
   ulint unzip_avg =
-      buf_LRU_stat_sum.unzip / BUF_LRU_STAT_N_INTERVAL + buf_LRU_stat_cur.unzip;
+      buf_LRU_stat_sum.unzip / BUF_LRU_STAT_N_INTERVAL + buf_LRU_stat_cur.unzip;  // 计算解压缩操作的平均值
 
   /* Decide based on our formula.  If the load is I/O bound
   (unzip_avg is smaller than the weighted io_avg), evict an
   uncompressed frame from unzip_LRU.  Otherwise we assume that
   the load is CPU bound and evict from the regular LRU. */
-  return (unzip_avg <= io_avg * BUF_LRU_IO_TO_UNZIP_FACTOR);
+  // 根据公式决定。如果负载是I/O密集型的（unzip_avg小于加权的io_avg），则从unzip_LRU列表中驱逐未压缩帧。
+  // 否则，我们假设负载是CPU密集型的，并从常规LRU列表中驱逐。
+  return (unzip_avg <= io_avg * BUF_LRU_IO_TO_UNZIP_FACTOR);  // 返回是否使用unzip_LRU列表
 }
+
 
 /** Attempts to drop page hash index on a batch of pages belonging to a
 particular space id.
@@ -1050,46 +1058,48 @@ LRU list.  The compressed page is preserved, and it need not be clean.
 @return true if freed */
 static bool buf_LRU_free_from_unzip_LRU_list(buf_pool_t *buf_pool,
                                              bool scan_all) {
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程必须持有LRU列表的互斥锁
 
-  if (!buf_LRU_evict_from_unzip_LRU(buf_pool)) {
-    return (false);
+  if (!buf_LRU_evict_from_unzip_LRU(buf_pool)) {  // 如果无法从unzip LRU列表中驱逐页面
+    return (false);  // 返回false，表示没有页面被释放
   }
 
-  ulint scanned = 0;
-  bool freed = false;
+  ulint scanned = 0;  // 初始化扫描计数器
+  bool freed = false;  // 初始化释放标志为false
 
+  // 从unzip LRU列表的末尾开始扫描
   for (buf_block_t *block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);
        block != nullptr && !freed && (scan_all || scanned < srv_LRU_scan_depth);
        ++scanned) {
-    buf_block_t *prev_block;
+    buf_block_t *prev_block;  // 前一个块
 
-    prev_block = UT_LIST_GET_PREV(unzip_LRU, block);
+    prev_block = UT_LIST_GET_PREV(unzip_LRU, block);  // 获取前一个块
 
-    mutex_enter(&block->mutex);
+    mutex_enter(&block->mutex);  // 获取当前块的互斥锁
 
-    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad(block->in_unzip_LRU_list);
-    ut_ad(block->page.in_LRU_list);
+    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);  // 断言：块的状态必须是文件页
+    ut_ad(block->in_unzip_LRU_list);  // 断言：块必须在unzip LRU列表中
+    ut_ad(block->page.in_LRU_list);  // 断言：块的页必须在LRU列表中
 
-    freed = buf_LRU_free_page(&block->page, false);
+    freed = buf_LRU_free_page(&block->page, false);  // 尝试释放未压缩页
 
-    if (!freed) {
-      mutex_exit(&block->mutex);
+    if (!freed) {  // 如果页面未被释放
+      mutex_exit(&block->mutex);  // 释放当前块的互斥锁
     }
 
-    block = prev_block;
+    block = prev_block;  // 移动到前一个块
   }
 
-  if (scanned) {
+  if (scanned) {  // 如果扫描了页面
     MONITOR_INC_VALUE_CUMULATIVE(MONITOR_LRU_UNZIP_SEARCH_SCANNED,
                                  MONITOR_LRU_UNZIP_SEARCH_SCANNED_NUM_CALL,
                                  MONITOR_LRU_UNZIP_SEARCH_SCANNED_PER_CALL,
-                                 scanned);
+                                 scanned);  // 更新监控计数器
   }
 
-  return (freed);
+  return (freed);  // 返回是否成功释放页面的标志
 }
+
 
 /** Try to free a clean page from the common LRU list.
 @param[in,out]  buf_pool        buffer pool instance
@@ -1645,25 +1655,31 @@ loop:
 
 /** Calculates the desired number for the old blocks list.
 @param[in]      buf_pool        buffer pool instance */
+// 计算旧块列表的期望数量。
+// @param[in]      buf_pool        缓冲池实例
 static size_t calculate_desired_LRU_old_size(const buf_pool_t *buf_pool) {
   return std::min(UT_LIST_GET_LEN(buf_pool->LRU) *
                       static_cast<size_t>(buf_pool->LRU_old_ratio) /
                       BUF_LRU_OLD_RATIO_DIV,
                   UT_LIST_GET_LEN(buf_pool->LRU) -
                       (BUF_LRU_OLD_TOLERANCE + BUF_LRU_NON_OLD_MIN_LEN));
+  // 返回 LRU 列表长度乘以 LRU_old_ratio 除以 BUF_LRU_OLD_RATIO_DIV 和
+  // LRU 列表长度减去 (BUF_LRU_OLD_TOLERANCE + BUF_LRU_NON_OLD_MIN_LEN) 的最小值
 }
 
 /** Moves the LRU_old pointer so that the length of the old blocks list
 is inside the allowed limits.
 @param[in]      buf_pool        buffer pool instance */
+// 移动 LRU_old 指针，使旧块列表的长度在允许范围内。
+// @param[in]      buf_pool        缓冲池实例
 static inline void buf_LRU_old_adjust_len(buf_pool_t *buf_pool) {
   ulint old_len;
   ulint new_len;
 
-  ut_a(buf_pool->LRU_old);
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-  ut_ad(buf_pool->LRU_old_ratio >= BUF_LRU_OLD_RATIO_MIN);
-  ut_ad(buf_pool->LRU_old_ratio <= BUF_LRU_OLD_RATIO_MAX);
+  ut_a(buf_pool->LRU_old); // 断言 LRU_old 指针已定义
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
+  ut_ad(buf_pool->LRU_old_ratio >= BUF_LRU_OLD_RATIO_MIN); // 断言 LRU_old_ratio 大于等于最小值
+  ut_ad(buf_pool->LRU_old_ratio <= BUF_LRU_OLD_RATIO_MAX); // 断言 LRU_old_ratio 小于等于最大值
   static_assert(BUF_LRU_OLD_RATIO_MIN * BUF_LRU_OLD_MIN_LEN >
                     BUF_LRU_OLD_RATIO_DIV * (BUF_LRU_OLD_TOLERANCE + 5),
                 "BUF_LRU_OLD_RATIO_MIN * BUF_LRU_OLD_MIN_LEN <= "
@@ -1671,41 +1687,43 @@ static inline void buf_LRU_old_adjust_len(buf_pool_t *buf_pool) {
 #ifdef UNIV_LRU_DEBUG
   /* buf_pool->LRU_old must be the first item in the LRU list
   whose "old" flag is set. */
-  ut_a(buf_pool->LRU_old->old);
+  // buf_pool->LRU_old 必须是 LRU 列表中第一个设置了“旧”标志的项。
+  ut_a(buf_pool->LRU_old->old); // 断言 LRU_old 指针指向的块是旧块
   ut_a(!UT_LIST_GET_PREV(LRU, buf_pool->LRU_old) ||
-       !UT_LIST_GET_PREV(LRU, buf_pool->LRU_old)->old);
+       !UT_LIST_GET_PREV(LRU, buf_pool->LRU_old)->old); // 断言 LRU_old 指针前面的块不是旧块
   ut_a(!UT_LIST_GET_NEXT(LRU, buf_pool->LRU_old) ||
-       UT_LIST_GET_NEXT(LRU, buf_pool->LRU_old)->old);
+       UT_LIST_GET_NEXT(LRU, buf_pool->LRU_old)->old); // 断言 LRU_old 指针后面的块是旧块
 #endif /* UNIV_LRU_DEBUG */
 
-  old_len = buf_pool->LRU_old_len;
-  new_len = calculate_desired_LRU_old_size(buf_pool);
+  old_len = buf_pool->LRU_old_len; // 获取 LRU_old 列表的长度
+  new_len = calculate_desired_LRU_old_size(buf_pool); // 计算期望的 LRU_old 列表长度
 
   for (;;) {
-    buf_page_t *LRU_old = buf_pool->LRU_old;
+    buf_page_t *LRU_old = buf_pool->LRU_old; // 获取 LRU_old 指针
 
-    ut_a(LRU_old);
-    ut_ad(LRU_old->in_LRU_list);
+    ut_a(LRU_old); // 断言 LRU_old 指针已定义
+    ut_ad(LRU_old->in_LRU_list); // 断言 LRU_old 指针指向的块在 LRU 列表中
 #ifdef UNIV_LRU_DEBUG
-    ut_a(LRU_old->old);
+    ut_a(LRU_old->old); // 断言 LRU_old 指针指向的块是旧块
 #endif /* UNIV_LRU_DEBUG */
 
     /* Update the LRU_old pointer if necessary */
+    // 如有必要，更新 LRU_old 指针
 
     if (old_len + BUF_LRU_OLD_TOLERANCE < new_len) {
-      buf_pool->LRU_old = LRU_old = UT_LIST_GET_PREV(LRU, LRU_old);
+      buf_pool->LRU_old = LRU_old = UT_LIST_GET_PREV(LRU, LRU_old); // 将 LRU_old 指针指向前一个块
 #ifdef UNIV_LRU_DEBUG
-      ut_a(!LRU_old->old);
+      ut_a(!LRU_old->old); // 断言前一个块不是旧块
 #endif /* UNIV_LRU_DEBUG */
-      old_len = ++buf_pool->LRU_old_len;
-      buf_page_set_old(LRU_old, true);
+      old_len = ++buf_pool->LRU_old_len; // 增加 LRU_old 列表长度
+      buf_page_set_old(LRU_old, true); // 将前一个块设置为旧块
 
     } else if (old_len > new_len + BUF_LRU_OLD_TOLERANCE) {
-      buf_pool->LRU_old = UT_LIST_GET_NEXT(LRU, LRU_old);
-      old_len = --buf_pool->LRU_old_len;
-      buf_page_set_old(LRU_old, false);
+      buf_pool->LRU_old = UT_LIST_GET_NEXT(LRU, LRU_old); // 将 LRU_old 指针指向后一个块
+      old_len = --buf_pool->LRU_old_len; // 减少 LRU_old 列表长度
+      buf_page_set_old(LRU_old, false); // 将当前块设置为非旧块
     } else {
-      return;
+      return; // 如果 LRU_old 列表长度在允许范围内，则返回
     }
   }
 }
@@ -1766,21 +1784,25 @@ void buf_LRU_adjust_hp(buf_pool_t *buf_pool, const buf_page_t *bpage) {
 
 /** Removes a block from the LRU list.
 @param[in]      bpage   control block */
+// 从 LRU 列表中移除一个块。
+// @param[in]      bpage   控制块
 static inline void buf_LRU_remove_block(buf_page_t *bpage) {
-  buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
+  buf_pool_t *buf_pool = buf_pool_from_bpage(bpage); // 从页面获取缓冲池实例
 
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
 
-  ut_a(buf_page_in_file(bpage));
+  ut_a(buf_page_in_file(bpage)); // 断言页面在文件中
 
-  ut_ad(bpage->in_LRU_list);
+  ut_ad(bpage->in_LRU_list); // 断言页面在 LRU 列表中
 
   /* Important that we adjust the hazard pointers before removing
   bpage from the LRU list. */
+  // 在从 LRU 列表中移除 bpage 之前调整 hazard 指针非常重要。
   buf_LRU_adjust_hp(buf_pool, bpage);
 
   /* If the LRU_old pointer is defined and points to just this block,
   move it backward one step */
+  // 如果 LRU_old 指针已定义并且指向此块，则将其向后移动一步
 
   if (bpage == buf_pool->LRU_old) {
     /* Below: the previous block is guaranteed to exist,
@@ -1788,51 +1810,59 @@ static inline void buf_LRU_remove_block(buf_page_t *bpage) {
     by BUF_LRU_OLD_TOLERANCE from strict
     buf_pool->LRU_old_ratio/BUF_LRU_OLD_RATIO_DIV of the LRU
     list length. */
-    buf_page_t *prev_bpage = UT_LIST_GET_PREV(LRU, bpage);
+    // 下面：保证存在前一个块，因为 LRU_old 指针只允许与 LRU 列表长度的
+    // buf_pool->LRU_old_ratio/BUF_LRU_OLD_RATIO_DIV 严格相差 BUF_LRU_OLD_TOLERANCE。
+    buf_page_t *prev_bpage = UT_LIST_GET_PREV(LRU, bpage); // 获取前一个块
 
-    ut_a(prev_bpage);
+    ut_a(prev_bpage); // 断言前一个块存在
 #ifdef UNIV_LRU_DEBUG
-    ut_a(!prev_bpage->old);
+    ut_a(!prev_bpage->old); // 断言前一个块不是旧块
 #endif /* UNIV_LRU_DEBUG */
-    buf_pool->LRU_old = prev_bpage;
-    buf_page_set_old(prev_bpage, true);
+    buf_pool->LRU_old = prev_bpage; // 将 LRU_old 指针指向前一个块
+    buf_page_set_old(prev_bpage, true); // 将前一个块设置为旧块
 
-    buf_pool->LRU_old_len++;
+    buf_pool->LRU_old_len++; // 增加 LRU_old 长度
   }
 
   /* Remove the block from the LRU list */
+  // 从 LRU 列表中移除块
   UT_LIST_REMOVE(buf_pool->LRU, bpage);
-  ut_d(bpage->in_LRU_list = false);
+  ut_d(bpage->in_LRU_list = false); // 设置块不在 LRU 列表中
 
-  buf_pool->stat.LRU_bytes -= bpage->size.physical();
+  buf_pool->stat.LRU_bytes -= bpage->size.physical(); // 减少 LRU 字节数
 
-  buf_unzip_LRU_remove_block_if_needed(bpage);
+  buf_unzip_LRU_remove_block_if_needed(bpage); // 如果需要，从 unzip_LRU 列表中移除块
 
   /* If the LRU list is so short that LRU_old is not defined,
   clear the "old" flags and return */
+  // 如果 LRU 列表太短以至于 LRU_old 未定义，则清除“旧”标志并返回
   if (UT_LIST_GET_LEN(buf_pool->LRU) < BUF_LRU_OLD_MIN_LEN) {
     for (auto bpage : buf_pool->LRU) {
       /* This loop temporarily violates the
       assertions of buf_page_set_old(). */
-      bpage->old = false;
+      // 此循环暂时违反了 buf_page_set_old() 的断言。
+      bpage->old = false; // 清除“旧”标志
     }
 
-    buf_pool->LRU_old = nullptr;
-    buf_pool->LRU_old_len = 0;
+    buf_pool->LRU_old = nullptr; // 清除 LRU_old 指针
+    buf_pool->LRU_old_len = 0; // 重置 LRU_old 长度
 
     return;
   }
 
-  ut_ad(buf_pool->LRU_old);
+  ut_ad(buf_pool->LRU_old); // 断言 LRU_old 指针已定义
 
   /* Update the LRU_old_len field if necessary */
+  // 如有必要，更新 LRU_old_len 字段
   if (buf_page_is_old(bpage)) {
-    buf_pool->LRU_old_len--;
+    buf_pool->LRU_old_len--; // 减少 LRU_old 长度
   }
 
   /* Adjust the length of the old block list if necessary */
+  // 如有必要，调整旧块列表的长度
   buf_LRU_old_adjust_len(buf_pool);
 }
+
 
 /** Adds a block to the LRU list of decompressed zip pages.
 @param[in]      block   control block
@@ -1967,6 +1997,7 @@ bool buf_LRU_free_page(buf_page_t *bpage, bool zip) {
   ut_ad(mutex_own(block_mutex)); // 断言当前线程拥有页面的互斥锁
   ut_ad(buf_page_in_file(bpage)); // 断言页面在文件中
 
+//检查 buf_fix_count 计数和 io_fix 状态，如果被使用中，则退出，不能释放这个page
   if (!buf_page_can_relocate(bpage)) {
     /* Do not free buffer fixed and I/O-fixed blocks. */
     // 不释放固定和 I/O 固定的块
@@ -2043,6 +2074,7 @@ bool buf_LRU_free_page(buf_page_t *bpage, bool zip) {
   ut_ad(rw_lock_own(hash_lock, RW_LOCK_X)); // 断言当前线程拥有哈希锁
   ut_ad(buf_page_can_relocate(bpage)); // 断言页面可以重新定位
 
+// 从 LRU 和 page_hash 中删除
   if (!buf_LRU_block_remove_hashed(bpage, zip, false)) {
     mutex_exit(&buf_pool->LRU_list_mutex); // 退出 LRU 列表互斥锁
 
@@ -2315,38 +2347,52 @@ If a compressed page is freed other compressed pages may be relocated.
 caller needs to free the page to the free list
 @retval false if BUF_BLOCK_ZIP_PAGE was removed from page_hash. In
 this case the block is already returned to the buddy allocator. */
+// 从 LRU 列表和页面哈希表中移除一个块。
+// 如果块是仅压缩的（BUF_BLOCK_ZIP_PAGE），则对象将被释放。
+//
+// 调用者必须持有 buf_pool->LRU_list_mutex、buf_page_get_mutex() 互斥锁
+// 和适当的 hash_lock。此函数将释放 buf_page_get_mutex() 和 hash_lock。
+//
+// 如果释放了压缩页面，其他压缩页面可能会被重新定位。
+//
+// @param[in]      bpage           块，必须包含文件页面并且
+//                                 处于可以释放的状态；页面可能有也可能没有哈希索引
+// @param[in]      zip             如果应移除未压缩页面的压缩页面，则为 true
+// @param[in]      ignore_content  如果应忽略页面内容，因为它可能未初始化，则为 true
+// @retval true 如果 BUF_BLOCK_FILE_PAGE 从 page_hash 中移除。调用者需要将页面释放到空闲列表
+// @retval false 如果 BUF_BLOCK_ZIP_PAGE 从 page_hash 中移除。在这种情况下，块已返回到伙伴分配器。
 static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
                                         bool ignore_content) {
   const buf_page_t *hashed_bpage;
-  buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
+  buf_pool_t *buf_pool = buf_pool_from_bpage(bpage); // 从页面获取缓冲池实例
   rw_lock_t *hash_lock;
 
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-  ut_ad(mutex_own(buf_page_get_mutex(bpage)));
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
+  ut_ad(mutex_own(buf_page_get_mutex(bpage))); // 断言当前线程拥有页面的互斥锁
 
-  hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
+  hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id); // 获取页面的哈希锁
 
-  ut_ad(rw_lock_own(hash_lock, RW_LOCK_X));
+  ut_ad(rw_lock_own(hash_lock, RW_LOCK_X)); // 断言当前线程拥有哈希锁
 
-  ut_a(buf_page_get_io_fix(bpage) == BUF_IO_NONE);
-  ut_a(bpage->buf_fix_count == 0);
+  ut_a(buf_page_get_io_fix(bpage) == BUF_IO_NONE); // 断言页面没有 IO 固定
+  ut_a(bpage->buf_fix_count == 0); // 断言页面的固定计数为 0
 
-  buf_LRU_remove_block(bpage);
+  buf_LRU_remove_block(bpage); // 从 LRU 列表中移除块
 
-  buf_pool->freed_page_clock += 1;
+  buf_pool->freed_page_clock += 1; // 增加已释放页面的时钟计数
 
   switch (buf_page_get_state(bpage)) {
     case BUF_BLOCK_FILE_PAGE: {
-      UNIV_MEM_ASSERT_W(bpage, sizeof(buf_block_t));
-      UNIV_MEM_ASSERT_W(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE);
+      UNIV_MEM_ASSERT_W(bpage, sizeof(buf_block_t)); // 断言页面内存有效
+      UNIV_MEM_ASSERT_W(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE); // 断言页面帧内存有效
 
-      buf_block_modify_clock_inc((buf_block_t *)bpage);
+      buf_block_modify_clock_inc((buf_block_t *)bpage); // 增加块修改时钟计数
 
       if (bpage->zip.data != nullptr) {
         const page_t *page = ((buf_block_t *)bpage)->frame;
 
-        ut_a(!zip || !bpage->is_dirty());
-        ut_ad(bpage->size.is_compressed());
+        ut_a(!zip || !bpage->is_dirty()); // 断言页面未压缩或未脏
+        ut_ad(bpage->size.is_compressed()); // 断言页面大小为压缩大小
 
         switch (fil_page_get_type(page)) {
           case FIL_PAGE_TYPE_ALLOCATED:
@@ -2360,11 +2406,13 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
           case FIL_PAGE_TYPE_ZLOB_FRAG:
           case FIL_PAGE_TYPE_ZLOB_FRAG_ENTRY:
             /* These are essentially uncompressed pages. */
+            // 这些本质上是未压缩的页面。
             if (!zip) {
               /* InnoDB writes the data to the
               uncompressed page frame.  Copy it
               to the compressed page, which will
               be preserved. */
+              // InnoDB 将数据写入未压缩的页面帧。将其复制到压缩页面，该页面将被保留。
               memcpy(bpage->zip.data, page, bpage->size.physical());
             }
             break;
@@ -2377,7 +2425,7 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
           case FIL_PAGE_RTREE:
 #ifdef UNIV_ZIP_DEBUG
             ut_a(page_zip_validate(&bpage->zip, page,
-                                   ((buf_block_t *)bpage)->index));
+                                   ((buf_block_t *)bpage)->index)); // 断言页面压缩验证通过
 #endif /* UNIV_ZIP_DEBUG */
             break;
           default:
@@ -2399,6 +2447,7 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
       if (!ignore_content) {
         /* Account the eviction of index leaf pages from
         the buffer pool(s). */
+        // 记录从缓冲池中驱逐索引叶页面。
 
         const byte *frame = bpage->zip.data != nullptr
                                 ? bpage->zip.data
@@ -2412,15 +2461,15 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
 
           space_index_t idx_id = btr_page_get_index_id(frame);
 
-          buf_stat_per_index->dec(index_id_t(space_id, idx_id));
+          buf_stat_per_index->dec(index_id_t(space_id, idx_id)); // 减少索引页面计数
         }
       }
     }
       [[fallthrough]];
     case BUF_BLOCK_ZIP_PAGE:
-      ut_a(!bpage->is_dirty());
+      ut_a(!bpage->is_dirty()); // 断言页面未脏
       if (bpage->size.is_compressed()) {
-        UNIV_MEM_ASSERT_W(bpage->zip.data, bpage->size.physical());
+        UNIV_MEM_ASSERT_W(bpage->zip.data, bpage->size.physical()); // 断言页面压缩数据内存有效
       }
       break;
     case BUF_BLOCK_POOL_WATCH:
@@ -2429,11 +2478,11 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
     case BUF_BLOCK_READY_FOR_USE:
     case BUF_BLOCK_MEMORY:
     case BUF_BLOCK_REMOVE_HASH:
-      ut_error;
+      ut_error; // 如果页面状态为上述任意一种，则触发错误
       break;
   }
 
-  hashed_bpage = buf_page_hash_get_low(buf_pool, bpage->id);
+  hashed_bpage = buf_page_hash_get_low(buf_pool, bpage->id); // 从哈希表中获取页面
 
   if (bpage != hashed_bpage) {
     ib::error(ER_IB_MSG_137)
@@ -2455,38 +2504,39 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
     ut_d(ut_error);
   }
 
-  ut_ad(!bpage->in_zip_hash);
-  ut_ad(bpage->in_page_hash);
-  ut_d(bpage->in_page_hash = false);
+  ut_ad(!bpage->in_zip_hash); // 断言页面不在 zip 哈希表中
+  ut_ad(bpage->in_page_hash); // 断言页面在页面哈希表中
+  ut_d(bpage->in_page_hash = false); // 设置页面不在页面哈希表中
 
-  HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, bpage->id.hash(), bpage);
+// 从page哈希表中删除页面
+  HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, bpage->id.hash(), bpage); 
 
   switch (buf_page_get_state(bpage)) {
     case BUF_BLOCK_ZIP_PAGE:
-      ut_ad(!bpage->in_free_list);
-      ut_ad(!bpage->in_flush_list);
-      ut_ad(!bpage->in_LRU_list);
-      ut_a(bpage->zip.data);
-      ut_a(bpage->size.is_compressed());
+      ut_ad(!bpage->in_free_list); // 断言页面不在空闲列表中
+      ut_ad(!bpage->in_flush_list); // 断言页面不在刷新列表中
+      ut_ad(!bpage->in_LRU_list); // 断言页面不在 LRU 列表中
+      ut_a(bpage->zip.data); // 断言页面有压缩数据
+      ut_a(bpage->size.is_compressed()); // 断言页面大小为压缩大小
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
-      UT_LIST_REMOVE(buf_pool->zip_clean, bpage);
+      UT_LIST_REMOVE(buf_pool->zip_clean, bpage); // 从 zip_clean 列表中移除页面
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
 
-      mutex_exit(&buf_pool->zip_mutex);
-      rw_lock_x_unlock(hash_lock);
+      mutex_exit(&buf_pool->zip_mutex); // 退出 zip 互斥锁
+      rw_lock_x_unlock(hash_lock); // 释放哈希锁
 
-      buf_buddy_free(buf_pool, bpage->zip.data, bpage->size.physical());
+      buf_buddy_free(buf_pool, bpage->zip.data, bpage->size.physical()); // 释放压缩数据
 
-      buf_page_free_descriptor(bpage);
+      buf_page_free_descriptor(bpage); // 释放页面描述符
       return (false);
 
     case BUF_BLOCK_FILE_PAGE:
-      memset(((buf_block_t *)bpage)->frame + FIL_PAGE_OFFSET, 0xff, 4);
+      memset(((buf_block_t *)bpage)->frame + FIL_PAGE_OFFSET, 0xff, 4); // 将页面帧的 FIL_PAGE_OFFSET 位置设置为 0xff
       memset(((buf_block_t *)bpage)->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID,
-             0xff, 4);
-      UNIV_MEM_INVALID(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE);
-      buf_page_set_state(bpage, BUF_BLOCK_REMOVE_HASH);
+             0xff, 4); // 将页面帧的 FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID 位置设置为 0xff
+      UNIV_MEM_INVALID(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE); // 将页面帧内存标记为无效
+      buf_page_set_state(bpage, BUF_BLOCK_REMOVE_HASH); // 设置页面状态为 BUF_BLOCK_REMOVE_HASH
 
       /* Question: If we release bpage and hash mutex here
       then what protects us against:
@@ -2507,25 +2557,32 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
       and by the time we'll release it in the caller we'd
       have inserted the compressed only descriptor in the
       page_hash. */
-      ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
-      rw_lock_x_unlock(hash_lock);
-      mutex_exit(&((buf_block_t *)bpage)->mutex);
+      // 问题：如果我们在这里释放 bpage 和 hash 互斥锁，那么是什么保护我们免受以下情况的影响：
+      // 1) 其他线程缓冲固定此页面
+      // 2) 其他线程尝试读取此页面但在缓冲池中找不到它，尝试从磁盘读取它。
+      // 答案：
+      // 1) 不可能发生，因为页面不再在 page_hash 中。唯一的可能性是当在使表空间无效时，我们缓冲固定 LRU 中的 prev_page 以避免在扫描期间重新定位。但这不可能，因为我们持有 LRU 列表互斥锁。
+      // 2) 不可能，因为在 buf_page_init_for_read() 中，我们在持有 LRU 列表互斥锁时查找 page_hash，并且由于我们在这里持有 LRU 列表互斥锁，并且在调用者释放它之前，我们已经将仅压缩描述符插入 page_hash 中。
+      ut_ad(mutex_own(&buf_pool->LRU_list_mutex)); // 断言当前线程拥有 LRU 列表互斥锁
+      rw_lock_x_unlock(hash_lock); // 释放哈希锁
+      mutex_exit(&((buf_block_t *)bpage)->mutex); // 退出页面的互斥锁
 
       if (zip && bpage->zip.data) {
         /* Free the compressed page. */
+        // 释放压缩页面。
         void *data = bpage->zip.data;
         bpage->zip.data = nullptr;
 
-        ut_ad(!bpage->in_free_list);
-        ut_ad(!bpage->in_flush_list);
-        ut_ad(!bpage->in_LRU_list);
+        ut_ad(!bpage->in_free_list); // 断言页面不在空闲列表中
+        ut_ad(!bpage->in_flush_list); // 断言页面不在刷新列表中
+        ut_ad(!bpage->in_LRU_list); // 断言页面不在 LRU 列表中
 
-        buf_buddy_free(buf_pool, data, bpage->size.physical());
+        buf_buddy_free(buf_pool, data, bpage->size.physical()); // 释放压缩数据
 
-        page_zip_set_size(&bpage->zip, 0);
+        page_zip_set_size(&bpage->zip, 0); // 设置页面压缩大小为 0
 
         bpage->size.copy_from(
-            page_size_t(bpage->size.logical(), bpage->size.logical(), false));
+            page_size_t(bpage->size.logical(), bpage->size.logical(), false)); // 复制页面大小
       }
 
       return (true);
@@ -2539,7 +2596,7 @@ static bool buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip,
       break;
   }
 
-  ut_error;
+  ut_error; // 触发错误
 }
 
 static void buf_LRU_block_free_hashed_page(buf_block_t *block) noexcept {

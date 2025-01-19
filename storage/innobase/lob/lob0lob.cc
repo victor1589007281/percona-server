@@ -1019,40 +1019,48 @@ void BtrContext::free_updated_extern_fields(trx_id_t trx_id, undo_no_t undo_no,
 @param[in]      all     true=remove also the compressed page
                         if there is one
 @param[in]      mtr     Mini-transaction to commit */
+// 释放为 BLOB 部分保留的缓冲区块。
+// @param[in]      index   索引
+// @param[in]      block   缓冲区块
+// @param[in]      all     如果为 true，则移除压缩页面（如果有的话）
+// @param[in]      mtr     要提交的小事务
 void blob_free(dict_index_t *index, buf_block_t *block, bool all, mtr_t *mtr) {
-  buf_pool_t *buf_pool = buf_pool_from_block(block);
-  page_id_t page_id(block->page.id.space(), block->page.id.page_no());
-  bool freed = false;
+  buf_pool_t *buf_pool = buf_pool_from_block(block); // 从块获取缓冲池实例
+  page_id_t page_id(block->page.id.space(), block->page.id.page_no()); // 获取页面 ID
+  bool freed = false; // 初始化释放标志
 
-  ut_ad(mtr_is_block_fix(mtr, block, MTR_MEMO_PAGE_X_FIX, index->table));
+  ut_ad(mtr_is_block_fix(mtr, block, MTR_MEMO_PAGE_X_FIX, index->table)); // 断言块已固定
 
-  mtr_commit(mtr);
+  mtr_commit(mtr); // 提交小事务
 
-  mutex_enter(&buf_pool->LRU_list_mutex);
-  buf_page_mutex_enter(block);
+  mutex_enter(&buf_pool->LRU_list_mutex); // 进入 LRU 列表互斥锁
+  buf_page_mutex_enter(block); // 进入页面互斥锁
 
   /* Only free the block if it is still allocated to
   the same file page. */
+  // 仅当块仍分配给相同的文件页面时才释放块。
 
   if (buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE &&
       page_id == block->page.id) {
-    freed = buf_LRU_free_page(&block->page, all);
+    freed = buf_LRU_free_page(&block->page, all); // 尝试释放页面
 
     if (!freed && all && block->page.zip.data &&
         buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE &&
         page_id == block->page.id) {
       /* Attempt to deallocate the uncompressed page
-      if the whole block cannot be deallocted. */
+      if the whole block cannot be deallocated. */
+      // 如果整个块无法释放，则尝试释放未压缩的页面。
 
-      freed = buf_LRU_free_page(&block->page, false);
+      freed = buf_LRU_free_page(&block->page, false); // 尝试释放未压缩的页面
     }
   }
 
   if (!freed) {
-    mutex_exit(&buf_pool->LRU_list_mutex);
-    buf_page_mutex_exit(block);
+    mutex_exit(&buf_pool->LRU_list_mutex); // 退出 LRU 列表互斥锁
+    buf_page_mutex_exit(block); // 退出页面互斥锁
   }
 }
+
 
 /** Gets the externally stored size of a record, in units of a database page.
 @param[in]      index   index

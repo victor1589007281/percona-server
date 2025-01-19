@@ -3388,8 +3388,8 @@ The caller should not be holding any mutexes when this function is called.
 @param[in]      page_id page id
 */
 static void buf_block_try_discard_uncompressed(const page_id_t &page_id) {
-  buf_page_t *bpage;
-  buf_pool_t *buf_pool = buf_pool_get(page_id);
+  buf_page_t *bpage;  // 定义一个指向缓冲页的指针
+  buf_pool_t *buf_pool = buf_pool_get(page_id);  // 根据页面ID获取对应的缓冲池实例
 
   /* Since we need to acquire buf_pool->LRU_list_mutex to discard
   the uncompressed frame and because page_hash mutex resides below
@@ -3397,22 +3397,25 @@ static void buf_block_try_discard_uncompressed(const page_id_t &page_id) {
   release the page_hash mutex. This means that the block in question
   can move out of page_hash. Therefore we need to check again if the
   block is still in page_hash. */
-  mutex_enter(&buf_pool->LRU_list_mutex);
+  // 由于我们需要获取buf_pool->LRU_list_mutex来丢弃未压缩帧，并且page_hash互斥锁在同步顺序中位于
+  // buf_pool->LRU_list_mutex之下，因此我们必须首先释放page_hash互斥锁。这意味着相关的块可能会从
+  // page_hash中移出。因此我们需要再次检查该块是否仍在page_hash中。
+  mutex_enter(&buf_pool->LRU_list_mutex);  // 获取LRU列表的互斥锁
 
-  bpage = buf_page_hash_get(buf_pool, page_id);
+  bpage = buf_page_hash_get(buf_pool, page_id);  // 从page_hash中获取页面
 
-  if (bpage) {
-    BPageMutex *block_mutex = buf_page_get_mutex(bpage);
+  if (bpage) {  // 如果页面存在
+    BPageMutex *block_mutex = buf_page_get_mutex(bpage);  // 获取页面的互斥锁
 
-    mutex_enter(block_mutex);
+    mutex_enter(block_mutex);  // 获取页面的互斥锁
 
-    if (buf_LRU_free_page(bpage, false)) {
-      return;
+    if (buf_LRU_free_page(bpage, false)) {  // 尝试释放未压缩帧
+      return;  // 如果成功释放，则直接返回
     }
-    mutex_exit(block_mutex);
+    mutex_exit(block_mutex);  // 释放页面的互斥锁
   }
 
-  mutex_exit(&buf_pool->LRU_list_mutex);
+  mutex_exit(&buf_pool->LRU_list_mutex);  // 释放LRU列表的互斥锁
 }
 
 /** Get read access to a compressed page (usually of type
@@ -5723,34 +5726,35 @@ void buf_read_page_handle_error(buf_page_t *bpage) {
 bool buf_page_free_stale(buf_pool_t *buf_pool, buf_page_t *bpage) noexcept {
   /* If a page was seen as stale it will still be stale, because we have LRU
   mutex.*/
-  ut_ad(bpage->was_stale());
-  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(bpage->was_stale());  // 断言：页面必须是过时的（stale）
+  ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程必须持有LRU列表的互斥锁
 
-  auto *block_mutex = buf_page_get_mutex(bpage);
+  auto *block_mutex = buf_page_get_mutex(bpage);  // 获取页面的互斥锁
 
-  mutex_enter(block_mutex);
+  mutex_enter(block_mutex);  // 获取页面的互斥锁
 
   /* At this point the page can be queued for flushing. */
+  // 此时，页面可能已经被排队等待刷新
 
-  const auto io_type = buf_page_get_io_fix(bpage);
+  const auto io_type = buf_page_get_io_fix(bpage);  // 获取页面的I/O状态
 
-  bool success = false;
-  if (io_type == BUF_IO_NONE) {
-    if (bpage->is_dirty()) {
-      buf_flush_remove(bpage);
+  bool success = false;  // 初始化成功标志为false
+  if (io_type == BUF_IO_NONE) {  // 如果页面没有进行I/O操作
+    if (bpage->is_dirty()) {  // 如果页面是脏页
+      buf_flush_remove(bpage);  // 从刷新队列中移除该页面
     }
-    success = buf_LRU_free_page(bpage, true);
+    success = buf_LRU_free_page(bpage, true);  // 尝试释放页面
   }
 
-  if (success) {
-    ut_ad(!mutex_own(&buf_pool->LRU_list_mutex));
+  if (success) {  // 如果页面成功释放
+    ut_ad(!mutex_own(&buf_pool->LRU_list_mutex));  // 断言：LRU列表的互斥锁已被释放
   } else {
-    mutex_exit(block_mutex);
-    ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+    mutex_exit(block_mutex);  // 释放页面的互斥锁
+    ut_ad(mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程仍然持有LRU列表的互斥锁
   }
 
-  ut_ad(!mutex_own(block_mutex));
-  return success;
+  ut_ad(!mutex_own(block_mutex));  // 断言：页面的互斥锁已被释放
+  return success;  // 返回页面是否成功释放的标志
 }
 
 bool buf_page_free_stale(buf_pool_t *buf_pool, buf_page_t *bpage,
@@ -5803,67 +5807,81 @@ bool buf_page_free_stale(buf_pool_t *buf_pool, buf_page_t *bpage,
   return success;
 }
 
+/*
+该函数用于在写操作期间释放一个过时的（stale）页面。函数会处理页面的I/O状态、刷新队列以及未完成的写请求数量，并尝试释放页面。如果释放失败，则释放相关的互斥锁。
+
+函数参数说明：
+buf_page_t *bpage: 需要释放的页面。
+bool owns_sx_lock: 表示当前线程是否持有SX锁。
+*/
 void buf_page_free_stale_during_write(buf_page_t *bpage,
                                       bool owns_sx_lock) noexcept {
-  auto buf_pool = buf_pool_from_bpage(bpage);
+  auto buf_pool = buf_pool_from_bpage(bpage);  // 获取页面所属的缓冲池实例
 
-  ut_a(bpage->is_io_fix_write());
-  ut_ad(bpage->current_thread_has_io_responsibility());
+  ut_a(bpage->is_io_fix_write());  // 断言：页面必须处于写I/O固定状态
+  ut_ad(bpage->current_thread_has_io_responsibility());  // 断言：当前线程必须负责该页面的I/O操作
 
-  mutex_enter(&buf_pool->LRU_list_mutex);
+  mutex_enter(&buf_pool->LRU_list_mutex);  // 获取LRU列表的互斥锁
 
-  auto block_mutex = buf_page_get_mutex(bpage);
-  mutex_enter(block_mutex);
+  auto block_mutex = buf_page_get_mutex(bpage);  // 获取页面的互斥锁
+  mutex_enter(block_mutex);  // 获取页面的互斥锁
 
   /* The page is IO-fixed, so if it was seen stale, it would not be freed in
   meantime. */
-  ut_a(bpage->was_stale());
-  ut_a(buf_page_in_file(bpage));
+  // 页面处于I/O固定状态，因此如果它被标记为过时（stale），在此期间不会被释放。
+  ut_a(bpage->was_stale());  // 断言：页面必须是过时的
+  ut_a(buf_page_in_file(bpage));  // 断言：页面必须在文件中
 
-  if (owns_sx_lock) {
-    rw_lock_sx_unlock_gen(&((buf_block_t *)bpage)->lock, BUF_IO_WRITE);
+  if (owns_sx_lock) {  // 如果当前线程持有SX锁
+    rw_lock_sx_unlock_gen(&((buf_block_t *)bpage)->lock, BUF_IO_WRITE);  // 释放SX锁
   }
 
-  const auto io_type = buf_page_get_io_fix(bpage);
-  const auto flush_type = buf_page_get_flush_type(bpage);
+  const auto io_type = buf_page_get_io_fix(bpage);  // 获取页面的I/O状态
+  const auto flush_type = buf_page_get_flush_type(bpage);  // 获取页面的刷新类型
 
-  ut_a(io_type == BUF_IO_WRITE);
+  ut_a(io_type == BUF_IO_WRITE);  // 断言：页面的I/O状态必须是写操作
 
-  mutex_enter(&buf_pool->flush_state_mutex);
+  mutex_enter(&buf_pool->flush_state_mutex);  // 获取刷新状态互斥锁
 
-  if (bpage->is_dirty()) {
-    buf_flush_remove(bpage);
+  if (bpage->is_dirty()) {  // 如果页面是脏页
+    buf_flush_remove(bpage);  // 从刷新队列中移除该页面
   }
 
   /* The current thread is responsible for the write IO, so we are allowed to
   reset it back to BUF_IO_NONE. */
-  buf_page_set_io_fix(bpage, BUF_IO_NONE);
+  // 当前线程负责写I/O操作，因此可以将I/O状态重置为BUF_IO_NONE。
+  buf_page_set_io_fix(bpage, BUF_IO_NONE);  // 将页面的I/O状态重置为无I/O操作
 
-  ut_a(owns_sx_lock || buf_page_get_state(bpage) != BUF_BLOCK_FILE_PAGE);
+  ut_a(owns_sx_lock || buf_page_get_state(bpage) != BUF_BLOCK_FILE_PAGE);  // 断言：如果当前线程不持有SX锁，则页面状态不能是文件页
 
   /* Since we aborted a write request. We need to adjust the number of
   of outstanding write requests. */
-  --buf_pool->n_flush[flush_type];
+  // 由于我们中止了一个写请求，因此需要调整未完成的写请求数量。
+  --buf_pool->n_flush[flush_type];  // 减少对应刷新类型的未完成写请求数量
 
   if (buf_pool->n_flush[flush_type] == 0 &&
-      buf_pool->init_flush[flush_type] == false) {
-    os_event_set(buf_pool->no_flush[flush_type]);
+      buf_pool->init_flush[flush_type] == false) {  // 如果没有未完成的写请求且刷新未初始化
+    os_event_set(buf_pool->no_flush[flush_type]);  // 设置刷新事件
   }
 
-  mutex_exit(&buf_pool->flush_state_mutex);
+  mutex_exit(&buf_pool->flush_state_mutex);  // 释放刷新状态互斥锁
 
   /* Free the page. This can fail, if some other thread start to free this stale
   page during page creation - the buf_page_free_stale will buf fix the page to
   acquire the LRU mutex, and right before that acquisition happens our thread
   can be during a flush that will end up on this line.*/
-  if (!buf_LRU_free_page(bpage, true)) {
-    mutex_exit(block_mutex);
-    mutex_exit(&buf_pool->LRU_list_mutex);
+  // 释放页面。这可能会失败，如果在页面创建期间其他线程开始释放这个过时页面，
+  // buf_page_free_stale会固定页面以获取LRU互斥锁，而在获取之前，当前线程可能正在刷新页面。
+  if (!buf_LRU_free_page(bpage, true)) {  // 尝试释放页面
+    mutex_exit(block_mutex);  // 释放页面的互斥锁
+    mutex_exit(&buf_pool->LRU_list_mutex);  // 释放LRU列表的互斥锁
   }
 
-  ut_ad(!mutex_own(block_mutex));
-  ut_ad(!mutex_own(&buf_pool->LRU_list_mutex));
+  ut_ad(!mutex_own(block_mutex));  // 断言：当前线程不再持有页面的互斥锁
+  ut_ad(!mutex_own(&buf_pool->LRU_list_mutex));  // 断言：当前线程不再持有LRU列表的互斥锁
 }
+
+
 #ifdef UNIV_DEBUG
 /** Helper iostream operator presenting the io_fix value as human-readable
 name of the enum. Used in error messages of Buf_io_fix_latching_rules.

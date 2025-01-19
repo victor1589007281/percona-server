@@ -512,16 +512,16 @@ class Double_write {
   [[nodiscard]] static Double_write *instance(buf_flush_t flush_type,
                                               uint32_t buf_pool_index,
                                               bool is_reduced) noexcept {
-    ut_a(buf_pool_index < srv_buf_pool_instances);
+    ut_a(buf_pool_index < srv_buf_pool_instances);  // 断言：缓冲池实例索引必须小于缓冲池实例总数
 
-    auto midpoint = s_instances->size() / 2;
-    auto i = midpoint > 0 ? buf_pool_index % midpoint : 0;
+    auto midpoint = s_instances->size() / 2;  // 计算双写缓冲区实例列表的中间点
+    auto i = midpoint > 0 ? buf_pool_index % midpoint : 0;  // 根据缓冲池实例索引计算双写缓冲区实例的索引
 
-    if (flush_type == BUF_FLUSH_LIST) {
-      i += midpoint;
+    if (flush_type == BUF_FLUSH_LIST) {  // 如果刷新类型是BUF_FLUSH_LIST
+      i += midpoint;  // 将索引增加中间点，以选择后半部分的双写缓冲区实例
     }
 
-    return (is_reduced ? s_r_instances->at(i) : s_instances->at(i));
+    return (is_reduced ? s_r_instances->at(i) : s_instances->at(i));  // 根据是否使用缩减模式返回相应的双写缓冲区实例
   }
 
   /** Wait for any pending batch to complete.
@@ -1067,9 +1067,11 @@ class Batch_segment : public Segment {
   [[nodiscard]] bool write_complete() noexcept {
     /* We "release our reference" here, so can't access the segment after this
     fetch_sub() unless we decreased it to 0 and handle requeuing it. */
-    const auto n = m_uncompleted.fetch_sub(1, std::memory_order_relaxed);
-    ut_ad(0 < n);
-    return n == 1;
+    // 在页面写操作完成时调用此函数。
+    // 我们在这里“释放引用”，因此在fetch_sub()之后不能访问该段，除非我们将引用计数减少到0并处理重新入队。
+    const auto n = m_uncompleted.fetch_sub(1, std::memory_order_relaxed);  // 原子地减少未完成的页面计数
+    ut_ad(0 < n);  // 断言：未完成的页面计数必须大于0
+    return n == 1;  // 如果未完成的页面计数减少到1，则返回true，表示批次结束
   }
 
   /** Reset the state. */
@@ -1615,50 +1617,53 @@ void Double_write::check_block(const buf_block_t *block) noexcept {
 
 dberr_t Double_write::write_to_datafile(const buf_page_t *in_bpage, bool sync,
                                         const file::Block *e_block) noexcept {
-  ut_ad(buf_page_in_file(in_bpage));
-  ut_ad(in_bpage->current_thread_has_io_responsibility());
-  ut_ad(in_bpage->is_io_fix_write());
-  uint32_t len;
-  void *frame{};
+  ut_ad(buf_page_in_file(in_bpage));  // 断言：页面必须在文件中
+  ut_ad(in_bpage->current_thread_has_io_responsibility());  // 断言：当前线程必须负责该页面的I/O操作
+  ut_ad(in_bpage->is_io_fix_write());  // 断言：页面必须处于写I/O固定状态
 
-  if (e_block == nullptr) {
-    Double_write::prepare(in_bpage, &frame, &len);
+  uint32_t len;  // 定义写入数据的长度
+  void *frame{};  // 定义指向写入数据的指针
+
+  if (e_block == nullptr) {  // 如果加密块为空
+    Double_write::prepare(in_bpage, &frame, &len);  // 准备写入数据
   } else {
-    frame = os_block_get_frame(e_block);
-    len = e_block->m_size;
+    frame = os_block_get_frame(e_block);  // 获取加密块的帧
+    len = e_block->m_size;  // 获取加密块的大小
   }
 
   /* Our IO API is common for both reads and writes and is
   therefore geared towards a non-const parameter. */
-  auto bpage = const_cast<buf_page_t *>(in_bpage);
+  // 我们的I/O API同时适用于读和写操作，因此需要一个非const参数。
+  auto bpage = const_cast<buf_page_t *>(in_bpage);  // 将const页面转换为非const页面
 
-  uint32_t type = IORequest::WRITE;
+  uint32_t type = IORequest::WRITE;  // 定义I/O请求类型为写操作
 
-  if (sync) {
-    type |= IORequest::DO_NOT_WAKE;
+  if (sync) {  // 如果需要同步
+    type |= IORequest::DO_NOT_WAKE;  // 设置I/O请求类型为不唤醒
   }
 
-  IORequest io_request(type);
-  io_request.set_encrypted_block(e_block);
+  IORequest io_request(type);  // 创建I/O请求对象
+  io_request.set_encrypted_block(e_block);  // 设置加密块
 
 #ifdef UNIV_DEBUG
   {
-    byte *page = static_cast<byte *>(frame);
-    ut_ad(mach_read_from_4(page + FIL_PAGE_OFFSET) == bpage->page_no());
-    ut_ad(mach_read_from_4(page + FIL_PAGE_SPACE_ID) == bpage->space());
+    byte *page = static_cast<byte *>(frame);  // 将帧转换为字节指针
+    ut_ad(mach_read_from_4(page + FIL_PAGE_OFFSET) == bpage->page_no());  // 断言：页面偏移量必须与页面号匹配
+    ut_ad(mach_read_from_4(page + FIL_PAGE_SPACE_ID) == bpage->space());  // 断言：页面空间ID必须与页面空间匹配
   }
 #endif /* UNIV_DEBUG */
 
-  io_request.set_original_size(bpage->size.physical());
+  io_request.set_original_size(bpage->size.physical());  // 设置I/O请求的原始大小
   auto err =
-      fil_io(io_request, sync, bpage->id, bpage->size, 0, len, frame, bpage);
+      fil_io(io_request, sync, bpage->id, bpage->size, 0, len, frame, bpage);  // 执行I/O操作
 
   /* When a tablespace is deleted with BUF_REMOVE_NONE, fil_io() might
   return DB_PAGE_IS_STALE or DB_TABLESPACE_DELETED. */
+  // 当表空间以BUF_REMOVE_NONE方式删除时，fil_io()可能会返回DB_PAGE_IS_STALE或DB_TABLESPACE_DELETED。
   ut_a(err == DB_SUCCESS || err == DB_TABLESPACE_DELETED ||
-       err == DB_PAGE_IS_STALE);
+       err == DB_PAGE_IS_STALE);  // 断言：I/O操作的结果必须是成功、表空间已删除或页面已过时
 
-  return err;
+  return err;  // 返回I/O操作的结果
 }
 
 /** 
@@ -2622,56 +2627,57 @@ void Double_write::write_complete(buf_page_t *bpage,
                                   buf_flush_t flush_type) noexcept {
   if (s_instances == nullptr) {
     /* Not initialized yet. */
-    return;
+    return;  // 如果双写缓冲区未初始化，则直接返回
   }
 
-  const auto batch_id = bpage->get_dblwr_batch_id();
+  const auto batch_id = bpage->get_dblwr_batch_id();  // 获取页面的双写批次ID
 
-  switch (flush_type) {
-    case BUF_FLUSH_LRU:
-    case BUF_FLUSH_LIST:
-    case BUF_FLUSH_SINGLE_PAGE:
-      if (batch_id != std::numeric_limits<uint16_t>::max()) {
-        ut_ad(batch_id < s_segments.size());
-        auto batch_segment = s_segments[batch_id];
+  switch (flush_type) {  // 根据刷新类型进行处理
+    case BUF_FLUSH_LRU:  // LRU刷新
+    case BUF_FLUSH_LIST:  // 列表刷新
+    case BUF_FLUSH_SINGLE_PAGE:  // 单页刷新
+      if (batch_id != std::numeric_limits<uint16_t>::max()) {  // 如果批次ID有效
+        ut_ad(batch_id < s_segments.size());  // 断言：批次ID必须在有效范围内
+        auto batch_segment = s_segments[batch_id];  // 获取对应的批次段
 
-        if (batch_segment->write_complete()) {
-          batch_segment->completed();
+        if (batch_segment->write_complete()) {  // 如果批次段的写操作完成
+          batch_segment->completed();  // 标记批次段为完成状态
 
-          srv_stats.dblwr_pages_written.add(batch_segment->batch_size());
+          srv_stats.dblwr_pages_written.add(batch_segment->batch_size());  // 更新统计信息，记录写入的页面数量
 
-          batch_segment->reset();
+          batch_segment->reset();  // 重置批次段
 
-          Batch_segments *segments{nullptr};
+          Batch_segments *segments{nullptr};  // 定义批次段队列指针
 
-          if (is_reduced_batch_id(batch_id)) {
+          if (is_reduced_batch_id(batch_id)) {  // 如果批次ID是缩减的批次ID
             segments = (flush_type == BUF_FLUSH_LRU)
-                           ? Double_write::s_r_LRU_batch_segments
-                           : Double_write::s_r_flush_list_batch_segments;
+                           ? Double_write::s_r_LRU_batch_segments  // 使用缩减的LRU批次段队列
+                           : Double_write::s_r_flush_list_batch_segments;  // 使用缩减的刷新列表批次段队列
           } else {
             segments = (flush_type == BUF_FLUSH_LRU)
-                           ? Double_write::s_LRU_batch_segments
-                           : Double_write::s_flush_list_batch_segments;
+                           ? Double_write::s_LRU_batch_segments  // 使用LRU批次段队列
+                           : Double_write::s_flush_list_batch_segments;  // 使用刷新列表批次段队列
           }
 
-          fil_flush_file_spaces();
+          fil_flush_file_spaces();  // 刷新文件空间
 
-          while (!segments->enqueue(batch_segment)) {
-            std::this_thread::yield();
+          while (!segments->enqueue(batch_segment)) {  // 将批次段重新加入队列
+            std::this_thread::yield();  // 如果队列满，则让出CPU
           }
         }
       }
-      bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());
+      bpage->set_dblwr_batch_id(std::numeric_limits<uint16_t>::max());  // 重置页面的双写批次ID为无效值
       break;
 
-    case BUF_FLUSH_N_TYPES:
-      ut_error;
+    case BUF_FLUSH_N_TYPES:  // 无效的刷新类型
+      ut_error;  // 触发错误
   }
 }
 
 void dblwr::write_complete(buf_page_t *bpage, buf_flush_t flush_type) noexcept {
-  Double_write::write_complete(bpage, flush_type);
+  Double_write::write_complete(bpage, flush_type);  // 调用Double_write类的write_complete方法
 }
+
 
 dberr_t dblwr::recv::recover(recv::Pages *pages, fil_space_t *space) noexcept {
 #ifndef UNIV_HOTBACKUP

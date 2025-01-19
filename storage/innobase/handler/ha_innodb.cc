@@ -22036,39 +22036,39 @@ static char *srv_buffer_pool_evict;
 Keep the compressed pages in the buffer pool.
 @return whether all uncompressed pages were evicted */
 [[nodiscard]] static bool innodb_buffer_pool_evict_uncompressed(void) {
-  bool all_evicted = true;
+  bool all_evicted = true;  // 初始化一个标志位，表示是否所有未压缩页都被成功驱逐
 
-  for (ulint i = 0; i < srv_buf_pool_instances; i++) {
-    buf_pool_t *buf_pool = &buf_pool_ptr[i];
+  for (ulint i = 0; i < srv_buf_pool_instances; i++) {  // 遍历所有缓冲池实例
+    buf_pool_t *buf_pool = &buf_pool_ptr[i];  // 获取当前缓冲池实例
 
-    mutex_enter(&buf_pool->LRU_list_mutex);
+    mutex_enter(&buf_pool->LRU_list_mutex);  // 获取缓冲池的LRU列表互斥锁
 
     for (buf_block_t *block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);
-         block != nullptr;) {
-      buf_block_t *prev_block = UT_LIST_GET_PREV(unzip_LRU, block);
-      ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-      ut_ad(block->in_unzip_LRU_list);
-      ut_ad(block->page.in_LRU_list);
+         block != nullptr;) {  // 遍历未压缩页的LRU列表
+      buf_block_t *prev_block = UT_LIST_GET_PREV(unzip_LRU, block);  // 获取前一个未压缩页
+      ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);  // 断言：块的状态必须是文件页
+      ut_ad(block->in_unzip_LRU_list);  // 断言：块必须在未压缩LRU列表中
+      ut_ad(block->page.in_LRU_list);  // 断言：块的页必须在LRU列表中
 
-      mutex_enter(&block->mutex);
+      mutex_enter(&block->mutex);  // 获取块的互斥锁
 
-      if (!buf_LRU_free_page(&block->page, false)) {
-        mutex_exit(&block->mutex);
-        all_evicted = false;
+      if (!buf_LRU_free_page(&block->page, false)) {  // 尝试释放未压缩页
+        mutex_exit(&block->mutex);  // 释放块的互斥锁
+        all_evicted = false;  // 如果释放失败，设置标志位为false
       } else {
         /* buf_LRU_free_page() released LRU_list_mutex.
         have to restart the unzip_LRU scan. */
-        mutex_enter(&buf_pool->LRU_list_mutex);
-        block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);
-        continue;
+        mutex_enter(&buf_pool->LRU_list_mutex);  // 重新获取缓冲池的LRU列表互斥锁
+        block = UT_LIST_GET_LAST(buf_pool->unzip_LRU);  // 重新从LRU列表的末尾开始扫描
+        continue;  // 继续下一次循环
       }
-      block = prev_block;
+      block = prev_block;  // 移动到前一个未压缩页
     }
 
-    mutex_exit(&buf_pool->LRU_list_mutex);
+    mutex_exit(&buf_pool->LRU_list_mutex);  // 释放缓冲池的LRU列表互斥锁
   }
 
-  return (all_evicted);
+  return (all_evicted);  // 返回是否所有未压缩页都被成功驱逐
 }
 
 /** Called on SET GLOBAL innodb_buffer_pool_evict=...
@@ -22646,9 +22646,11 @@ static void checkpoint_disabled_update(THD *, SYS_VAR *, void *,
 
 /** Force a dirty pages flush now.
 @param[in]  save      immediate result from check function */
+// 强制立即刷新脏页。
+// @param[in]  save      检查函数的立即结果
 static void buf_flush_list_now_set(THD *, SYS_VAR *, void *, const void *save) {
-  if (*(bool *)save) {
-    buf_flush_sync_all_buf_pools();
+  if (*(bool *)save) {  // 如果 save 为 true
+    buf_flush_sync_all_buf_pools();  // 调用函数同步刷新所有缓冲池的脏页
   }
 }
 
@@ -23027,6 +23029,20 @@ static MYSQL_SYSVAR_BOOL(checkpoint_disabled, srv_checkpoint_disabled,
                          PLUGIN_VAR_OPCMDARG, "Disable checkpoints", nullptr,
                          checkpoint_disabled_update, false);
 
+/*
+该变量可以通过 SQL 语句动态修改，例如：SET GLOBAL innodb_buf_flush_list_now = true;
+定义了一个 MySQL 系统变量 innodb_buf_flush_list_now，用于控制是否立即强制刷新 InnoDB 缓冲池中的脏页。当该变量被设置为 true 时，会触发脏页的强制刷新。
+
+关键逻辑说明：
+变量定义：
+buf_flush_list_now：系统变量的名称。
+innodb_buf_flush_list_now：系统变量的内部名称。
+PLUGIN_VAR_OPCMDARG：指定该变量为命令行参数，并且可以在运行时动态修改。
+"Force dirty page flush now"：变量的描述信息，说明该变量的作用是强制刷新脏页。
+nullptr：表示没有检查函数，直接使用默认的检查逻辑。
+buf_flush_list_now_set：设置函数，当变量值发生变化时调用该函数。
+false：变量的默认值为 false。
+*/
 static MYSQL_SYSVAR_BOOL(buf_flush_list_now, innodb_buf_flush_list_now,
                          PLUGIN_VAR_OPCMDARG, "Force dirty page flush now",
                          nullptr, buf_flush_list_now_set, false);

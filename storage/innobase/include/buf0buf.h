@@ -1223,18 +1223,23 @@ class buf_page_t {
   checked to be guaranteed. */
   // 检查上次页面ID初始化时保存的表空间引用是否已被删除或截断
   inline bool was_stale() const {
-    ut_a(m_space != nullptr);
-    ut_a(id.space() == m_space->id);
+    ut_a(m_space != nullptr);  // 断言：m_space指针不能为空
+    ut_a(id.space() == m_space->id);  // 断言：当前页面的表空间ID必须与m_space的ID一致
+
     /* If the the version is OK, then the space must not be deleted.
     However, version is modified before the deletion flag is set, so reading
     these values need to be executed in reversed order. The atomic reads
     cannot be relaxed for it to work. */
-    bool was_not_deleted = m_space->was_not_deleted();
-    if (m_version == m_space->get_recent_version()) {
-      ut_a(was_not_deleted);
-      return false;
+    // 如果版本号正确，则表空间一定未被删除。
+    // 但是，版本号在删除标志设置之前会被修改，因此读取这些值的顺序需要反过来。
+    // 为了保证逻辑正确，原子读取不能被放宽。
+    bool was_not_deleted = m_space->was_not_deleted();  // 检查表空间是否未被删除
+
+    if (m_version == m_space->get_recent_version()) {  // 如果当前版本号与表空间的最新版本号一致
+      ut_a(was_not_deleted);  // 断言：表空间必须未被删除
+      return false;  // 返回false，表示表空间未被删除或截断
     } else {
-      return true;
+      return true;  // 返回true，表示表空间已被删除或截断
     }
   }
 
