@@ -1605,64 +1605,74 @@ dberr_t buf_pool_init(ulint total_size, bool populate, ulint n_instances) {
 static bool buf_page_realloc(buf_pool_t *buf_pool, buf_block_t *block) {
   buf_block_t *new_block;
 
+  // 确保当前线程持有 LRU 列表的互斥锁
   ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  // 确保自适应哈希索引（AHI）未启用
   ut_ad(!btr_search_enabled);
 
-  /* Try allocating from the buf_pool->free list if it is not empty. This
-  method is executed during withdrawing phase of BufferPool resize only. It is
-  better to not block other user threads as much as possible. So, the main
-  strategy is to passively reserve and use blocks that are already on the free
-  list. Otherwise, if we were to call `buf_LRU_get_free_block` instead of
-  `buf_LRU_get_free_only`, we would have to release the LRU mutex before the
-  call and this would cause a need to break the reallocation loop in
-  `buf_pool_withdraw_blocks`, which would render withdrawing even more
-  inefficient. */
+  /* 尝试从 buf_pool->free 列表中分配一个块。这个方法仅在缓冲池调整大小的撤回阶段执行。
+     为了尽可能不阻塞其他用户线程，主要策略是使用已经在 free 列表中的块。
+     否则，如果我们调用 `buf_LRU_get_free_block` 而不是 `buf_LRU_get_free_only`，
+     我们将不得不在调用之前释放 LRU 互斥锁，这将导致需要在 `buf_pool_withdraw_blocks`
+     中中断重新分配循环，从而使撤回过程更加低效。 */
   new_block = buf_LRU_get_free_only(buf_pool);
 
+  // 如果没有可用的空闲块，返回 false
   if (new_block == nullptr) {
-    return (false); /* free_list was not enough */
+    return (false); /* free_list 不足 */
   }
 
+  // 获取块的哈希锁
   rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, block->page.id);
 
+  // 获取哈希锁和块的互斥锁
   rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
   mutex_enter(&block->mutex);
 
+  // 检查块是否可以重新分配
   if (buf_page_can_relocate(&block->page)) {
+    // 获取新块的互斥锁
     mutex_enter(&new_block->mutex);
 
+    // 将旧块的内容复制到新块
     memcpy(new_block->frame, block->frame, UNIV_PAGE_SIZE);
+    // 使用旧块的页面信息初始化新块的页面
     new (&new_block->page) buf_page_t(block->page);
 
-    /* relocate LRU list */
+    /* 重新定位 LRU 列表 */
     ut_ad(block->page.in_LRU_list);
     ut_ad(!block->page.in_zip_hash);
     ut_d(block->page.in_LRU_list = false);
 
+    // 调整缓冲池的 LRU 列表中的热点指针
     buf_LRU_adjust_hp(buf_pool, &block->page);
 
+    // 从 LRU 列表中移除旧块
     auto prev_b = UT_LIST_GET_PREV(LRU, &block->page);
     UT_LIST_REMOVE(buf_pool->LRU, &block->page);
 
+    // 将新块插入到 LRU 列表中的正确位置
     if (prev_b != nullptr) {
       UT_LIST_INSERT_AFTER(buf_pool->LRU, prev_b, &new_block->page);
     } else {
       UT_LIST_ADD_FIRST(buf_pool->LRU, &new_block->page);
     }
 
+    // 如果旧块是 LRU 列表中的旧块，更新 LRU_old 指针
     if (buf_pool->LRU_old == &block->page) {
       buf_pool->LRU_old = &new_block->page;
     }
 
     ut_ad(new_block->page.in_LRU_list);
 
-    /* relocate unzip_LRU list */
+    /* 重新定位 unzip_LRU 列表 */
     if (block->page.zip.data != nullptr) {
       ut_ad(block->in_unzip_LRU_list);
       ut_d(new_block->in_unzip_LRU_list = true);
       UNIV_MEM_DESC(&new_block->page.zip.data,
                     page_zip_get_size(&new_block->page.zip));
 
+      // 从 unzip_LRU 列表中移除旧块
       auto prev_block = UT_LIST_GET_PREV(unzip_LRU, block);
       UT_LIST_REMOVE(buf_pool->unzip_LRU, block);
 
@@ -1670,6 +1680,7 @@ static bool buf_page_realloc(buf_pool_t *buf_pool, buf_block_t *block) {
       block->page.zip.data = nullptr;
       page_zip_set_size(&block->page.zip, 0);
 
+      // 将新块插入到 unzip_LRU 列表中的正确位置
       if (prev_block != nullptr) {
         UT_LIST_INSERT_AFTER(buf_pool->unzip_LRU, prev_block, new_block);
       } else {
@@ -1680,34 +1691,38 @@ static bool buf_page_realloc(buf_pool_t *buf_pool, buf_block_t *block) {
       ut_d(new_block->in_unzip_LRU_list = false);
     }
 
-    /* relocate buf_pool->page_hash */
+    /* 重新定位 buf_pool->page_hash */
     ut_ad(block->page.in_page_hash);
     ut_ad(&block->page == buf_page_hash_get_low(buf_pool, block->page.id));
     ut_d(block->page.in_page_hash = false);
     const auto hash_value = block->page.id.hash();
     ut_ad(hash_value == new_block->page.id.hash());
+    // 从哈希表中删除旧块
     HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, hash_value,
                 (&block->page));
+    // 将新块插入到哈希表中
     HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, hash_value,
                 (&new_block->page));
 
     ut_ad(new_block->page.in_page_hash);
 
+    // 增加块的修改时钟
     buf_block_modify_clock_inc(block);
+    // 将旧块的页面标记为无效
     memset(block->frame + FIL_PAGE_OFFSET, 0xff, 4);
     memset(block->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, 0xff, 4);
     UNIV_MEM_INVALID(block->frame, UNIV_PAGE_SIZE);
+    // 将旧块的状态设置为 BUF_BLOCK_REMOVE_HASH
     buf_block_set_state(block, BUF_BLOCK_REMOVE_HASH);
 
-    /* Relocate buf_pool->flush_list. */
+    /* 重新定位 buf_pool->flush_list */
     if (block->page.is_dirty()) {
       buf_flush_relocate_on_flush_list(&block->page, &new_block->page);
     }
 
-    /* Set other flags of buf_block_t */
+    /* 设置 buf_block_t 的其他标志 */
 
-    /* This code should only be executed by buf_pool_resize(),
-    while the adaptive hash index is disabled. */
+    /* 这段代码仅在缓冲池调整大小期间执行，且自适应哈希索引被禁用。 */
     block->ahi.assert_empty();
     new_block->ahi.assert_empty_on_init();
     ut_ad(!block->ahi.index);
@@ -1715,22 +1730,24 @@ static bool buf_page_realloc(buf_pool_t *buf_pool, buf_block_t *block) {
     new_block->n_hash_helps = 0;
     new_block->ahi.recommended_prefix_info = {0, 1, true};
 
+    // 释放哈希锁和块的互斥锁
     rw_lock_x_unlock(hash_lock);
     mutex_exit(&block->mutex);
     mutex_exit(&new_block->mutex);
 
-    /* Free block */
+    /* 释放旧块 */
     buf_block_set_state(block, BUF_BLOCK_MEMORY);
     buf_LRU_block_free_non_file_page(block);
   } else {
+    // 如果块不能被重新分配，释放哈希锁和块的互斥锁
     rw_lock_x_unlock(hash_lock);
     mutex_exit(&block->mutex);
 
-    /* Free new_block */
+    /* 释放新块 */
     buf_LRU_block_free_non_file_page(new_block);
   }
 
-  return (true); /* free_list was enough */
+  return (true); /* free_list 足够 */
 }
 
 static void buf_resize_status(buf_pool_resize_status_code_t status,
@@ -2583,8 +2600,10 @@ withdraw_retry:
     // 重新分配缓冲池块数组
     {
       /* reallocate buf_pool->chunks */
+      // 计算新块数组的大小
       const ulint new_chunks_size = buf_pool->n_chunks_new * sizeof(*chunk);
 
+      // 分配新的块数组内存
       buf_chunk_t *new_chunks = reinterpret_cast<buf_chunk_t *>(
           ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, new_chunks_size));
 
@@ -2594,29 +2613,37 @@ withdraw_retry:
 
       // 处理内存分配失败的情况
       if (new_chunks == nullptr) {
+        // 输出错误日志，提示内存分配失败
         ib::error(ER_IB_MSG_64) << "buffer pool " << i
                                 << " : failed to allocate"
                                    " the chunk array.";
+        // 恢复原来的块数
         buf_pool->n_chunks_new = buf_pool->n_chunks;
-        warning = true;
-        buf_pool->chunks_old = nullptr;
+        warning = true;  // 设置警告标志
+        buf_pool->chunks_old = nullptr;  // 清空旧的块数组指针
+        // 重新注册现有的块
         for (ulint j = 0; j < buf_pool->n_chunks_new; j++) {
           buf_pool_register_chunk(&buf_pool->chunks[j]);
         }
-        goto calc_buf_pool_size;
+        goto calc_buf_pool_size;  // 跳转到计算缓冲池大小的逻辑
       }
 
       // 复制现有块到新数组
+      // 计算需要复制的块数，取新旧块数的最小值
       ulint n_chunks_copy =
           std::min(buf_pool->n_chunks_new, buf_pool->n_chunks);
 
+      // 复制现有块到新数组
       memcpy(new_chunks, buf_pool->chunks, n_chunks_copy * sizeof(*chunk));
 
+      // 重新注册新数组中的块
       for (ulint j = 0; j < n_chunks_copy; j++) {
         buf_pool_register_chunk(&new_chunks[j]);
       }
 
+      // 保存旧的块数组指针
       buf_pool->chunks_old = buf_pool->chunks;
+      // 更新缓冲池的块数组指针为新分配的数组
       buf_pool->chunks = new_chunks;
     }
 

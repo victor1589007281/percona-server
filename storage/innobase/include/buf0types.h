@@ -208,6 +208,7 @@ constexpr uint32_t BUF_BUDDY_LOW_SHIFT = UNIV_ZIP_SIZE_SHIFT_MIN;
 constexpr uint32_t BUF_BUDDY_LOW = (1U << BUF_BUDDY_LOW_SHIFT);
 
 /** Actual number of buddy sizes based on current page size */
+// 基于当前页面大小的实际伙伴大小数量
 #define BUF_BUDDY_SIZES (UNIV_PAGE_SIZE_SHIFT - BUF_BUDDY_LOW_SHIFT)
 
 /** Maximum number of buddy sizes based on the max page size */

@@ -116,15 +116,55 @@ static inline void buf_buddy_mem_invalid(buf_buddy_free_t *, ulint i) {
           BUF_BUDDY_STAMP_FREE);
 }
 
+/*
+伙伴分配器（Buddy Allocator） 是一种内存管理算法，主要用于动态分配和释放内存块。它的核心思想是将内存划分为大小相等的块，并通过递归分割和合并这些块来满足不同大小的内存请求。伙伴分配器的特点是高效且易于管理，特别适合处理频繁的内存分配和释放操作。
+
+伙伴分配器的工作原理：
+内存划分：
+
+内存被划分为一系列大小相等的块，通常是 2 的幂次方大小（如 1KB、2KB、4KB 等）。
+这些块按大小组织成多个链表或树结构，每个链表或树对应一个特定大小的块。
+分配内存：
+
+当请求分配一块内存时，伙伴分配器会查找是否有足够大的空闲块。
+如果找到的块比请求的大小大，则将该块一分为二，形成两个“伙伴”块（大小相等且相邻）。
+这个过程会递归进行，直到找到合适大小的块。
+释放内存：
+
+当释放一块内存时，伙伴分配器会检查其“伙伴”块是否也是空闲的。
+如果伙伴块空闲，则将这两个块合并成一个更大的块。
+这个过程会递归进行，直到无法继续合并。
+伙伴分配器的优点：
+高效的内存分配和释放：通过递归分割和合并，伙伴分配器能够快速找到合适大小的内存块。
+减少内存碎片：通过合并空闲块，伙伴分配器可以有效减少内存碎片。
+简单易实现：伙伴分配器的逻辑相对简单，适合嵌入式系统或操作系统内核中的内存管理。
+伙伴分配器的缺点：
+内部碎片：由于内存块大小是 2 的幂次方，可能会导致分配的内存块比实际需要的更大，从而产生内部碎片。
+不适合小内存分配：对于非常小的内存请求（如几个字节），伙伴分配器的效率较低。
+*/
+/*
+标记一个内存块为空闲状态。具体来说，它的作用是为一个空闲的内存块打上“空闲标记”，并更新相关的元数据，以便伙伴分配器能够识别和管理这个空闲块。
+*/
 /** Stamps a buddy free. */
 static inline void buf_buddy_stamp_free(
     buf_buddy_free_t *buf, /*!< in/out: block to stamp */
     ulint i)               /*!< in: block size */
 {
+  // In debug mode, fill the stamp area with the block size value.
+  // 在调试模式下，用块大小值填充 stamp 区域。
   ut_d(memset(&buf->stamp, static_cast<int>(i), BUF_BUDDY_LOW << i));
+
+  // Mark the memory as invalid for the given block size.
+  // 将内存标记为给定块大小的无效状态。
   buf_buddy_mem_invalid(buf, i);
+
+  // Write the "free" stamp value at the specified offset in the stamp area.
+  // 在 stamp 区域的指定偏移处写入 "free" 标记值。
   mach_write_to_4(buf->stamp.bytes + BUF_BUDDY_STAMP_OFFSET,
                   BUF_BUDDY_STAMP_FREE);
+
+  // Set the size of the block in the stamp structure.
+  // 在 stamp 结构中设置块的大小。
   buf->stamp.size = i;
 }
 
