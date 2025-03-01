@@ -663,24 +663,27 @@ void buf_read_ibuf_merge_pages(bool sync, const space_id_t *space_ids,
 
 void buf_read_recv_pages(bool sync, space_id_t space_id,
                          const page_no_t *page_nos, ulint n_stored) {
-  ulint count;
-  fil_space_t *space = fil_space_get(space_id);
+  ulint count; // 计数器
+  fil_space_t *space = fil_space_get(space_id); // 获取表空间
 
   if (space == nullptr) {
     /* The tablespace is missing: do nothing */
+    /* 表空间丢失：不执行任何操作 */
     return;
   }
 
-  fil_space_open_if_needed(space);
+  fil_space_open_if_needed(space); // 如果需要，打开表空间
 
-  auto req_size = page_nos[n_stored - 1] + 1;
+  auto req_size = page_nos[n_stored - 1] + 1; // 计算所需大小
 
   /* Extend the tablespace if needed. Required only while
   recovering from cloned database. */
+  /* 如果需要，扩展表空间。仅在从克隆数据库恢复时需要。 */
   if (recv_sys->is_cloned_db && space->size < req_size) {
     /* Align size to multiple of extent size */
+    /* 将大小对齐到区大小的倍数 */
     if (req_size > FSP_EXTENT_SIZE) {
-      req_size = ut_calc_align(req_size, FSP_EXTENT_SIZE);
+      req_size = ut_calc_align(req_size, FSP_EXTENT_SIZE); // 计算对齐大小
     }
 
     ib::info(ER_IB_MSG_143) << "Extending tablespace : " << space->id
@@ -688,52 +691,52 @@ void buf_read_recv_pages(bool sync, space_id_t space_id,
                             << " from page number: " << space->size << " pages"
                             << " to " << req_size << " pages"
                             << " for page number: " << page_nos[n_stored - 1]
-                            << " during recovery.";
+                            << " during recovery."; // 打印扩展表空间信息
 
-    if (!fil_space_extend(space, req_size)) {
+    if (!fil_space_extend(space, req_size)) { // 扩展表空间
       ib::error(ER_IB_MSG_144)
           << "Could not extend tablespace: " << space->id
           << " space name: " << space->name << " to " << req_size << " pages"
-          << " during recovery.";
+          << " during recovery."; // 打印扩展表空间失败信息
     }
   }
 
-  const page_size_t page_size(space->flags);
+  const page_size_t page_size(space->flags); // 获取页面大小
 
-  for (ulint i = 0; i < n_stored; i++) {
-    buf_pool_t *buf_pool;
-    const page_id_t cur_page_id(space_id, page_nos[i]);
+  for (ulint i = 0; i < n_stored; i++) { // 遍历存储的页面编号
+    buf_pool_t *buf_pool; // 缓冲池
+    const page_id_t cur_page_id(space_id, page_nos[i]); // 当前页面 ID
 
-    count = 0;
+    count = 0; // 重置计数器
 
-    buf_pool = buf_pool_get(cur_page_id);
+    buf_pool = buf_pool_get(cur_page_id); // 获取缓冲池
     os_rmb;
 
-    while (buf_pool->n_pend_reads >= recv_n_pool_free_frames / 2) {
-      os_aio_simulated_wake_handler_threads();
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    while (buf_pool->n_pend_reads >= recv_n_pool_free_frames / 2) { // 如果挂起的读取数大于等于缓冲池空闲帧数的一半
+      os_aio_simulated_wake_handler_threads(); // 唤醒模拟的处理线程
+      std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 休眠 10 毫秒
 
-      count++;
+      count++; // 增加计数器
 
-      if (!(count % 1000)) {
+      if (!(count % 1000)) { // 每等待 1000 次打印一次错误信息
         ib::error(ER_IB_MSG_145)
             << "Waited for " << count / 100 << " seconds for "
-            << buf_pool->n_pend_reads << " pending reads";
+            << buf_pool->n_pend_reads << " pending reads"; // 打印等待信息
       }
     }
 
-    dberr_t err;
+    dberr_t err; // 错误码
 
-    if ((i + 1 == n_stored) && sync) {
+    if ((i + 1 == n_stored) && sync) { // 如果是最后一个页面且需要同步
       buf_read_page_low(&err, true, 0, BUF_READ_ANY_PAGE, cur_page_id,
-                        page_size, true, nullptr, false);
+                        page_size, true, nullptr, false); // 同步读取页面
     } else {
       buf_read_page_low(&err, false, IORequest::DO_NOT_WAKE, BUF_READ_ANY_PAGE,
-                        cur_page_id, page_size, true, nullptr, false);
+                        cur_page_id, page_size, true, nullptr, false); // 异步读取页面
     }
   }
 
-  os_aio_simulated_wake_handler_threads();
+  os_aio_simulated_wake_handler_threads(); // 唤醒模拟的处理线程
 
-  DBUG_PRINT("ib_buf", ("recovery read-ahead (%u pages)", unsigned(n_stored)));
+  DBUG_PRINT("ib_buf", ("recovery read-ahead (%u pages)", unsigned(n_stored))); // 打印调试信息
 }

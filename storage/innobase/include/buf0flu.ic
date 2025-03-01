@@ -137,6 +137,7 @@ static inline void buf_flush_note_modification(
 }
 
 /** This function should be called when recovery has modified a buffer page. */
+/** 当恢复修改了缓冲页面时，应调用此函数。 */
 static inline void buf_flush_recv_note_modification(
     buf_block_t *block, /*!< in: block which is modified */
     lsn_t start_lsn,    /*!< in: start lsn of the first mtr in a
@@ -146,31 +147,31 @@ static inline void buf_flush_recv_note_modification(
 {
 #ifdef UNIV_DEBUG
   {
-    ut_ad(!srv_read_only_mode);
-    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad(block->page.buf_fix_count > 0);
+    ut_ad(!srv_read_only_mode); // 断言服务器不是只读模式
+    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE); // 断言块状态为文件页面
+    ut_ad(block->page.buf_fix_count > 0); // 断言页面缓冲固定计数大于 0
 
     buf_pool_t *buf_pool = buf_pool_from_block(block);
 
-    ut_ad(!buf_flush_list_mutex_own(buf_pool));
+    ut_ad(!buf_flush_list_mutex_own(buf_pool)); // 断言当前线程不拥有刷新列表互斥锁
 
-    ut_ad(start_lsn != 0);
-    ut_ad(block->page.get_newest_lsn() <= end_lsn);
+    ut_ad(start_lsn != 0); // 断言起始 LSN 不为 0
+    ut_ad(block->page.get_newest_lsn() <= end_lsn); // 断言页面最新的 LSN 小于等于结束 LSN
   }
 #endif /* UNIV_DEBUG */
 
-  buf_page_mutex_enter(block);
+  buf_page_mutex_enter(block); // 进入页面互斥锁
 
-  block->page.set_newest_lsn(end_lsn);
+  block->page.set_newest_lsn(end_lsn); // 设置页面最新的 LSN
 
-  if (!block->page.is_dirty()) {
+  if (!block->page.is_dirty()) { // 如果页面不是脏页
     buf_pool_t *buf_pool = buf_pool_from_block(block);
 
-    buf_flush_insert_sorted_into_flush_list(buf_pool, block, start_lsn);
+    buf_flush_insert_sorted_into_flush_list(buf_pool, block, start_lsn); // 将块按顺序插入刷新列表
   } else {
-    ut_ad(block->page.get_oldest_lsn() <= start_lsn);
+    ut_ad(block->page.get_oldest_lsn() <= start_lsn); // 断言页面最旧的 LSN 小于等于起始 LSN
   }
 
-  buf_page_mutex_exit(block);
+  buf_page_mutex_exit(block); // 退出页面互斥锁
 }
 #endif /* !UNIV_HOTBACKUP */

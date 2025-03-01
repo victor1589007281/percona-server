@@ -6389,18 +6389,19 @@ static void init_icu_data_directory() {
 
 #endif  // MYSQL_ICU_DATADIR
 
-static int init_server_components() {
-  buffered_error_log.resize(buffered_error_log_size * 1024);
 
-  DBUG_TRACE;
+static int init_server_components() {
+  buffered_error_log.resize(buffered_error_log_size * 1024);  // 调整缓冲错误日志的大小
+
+  DBUG_TRACE;  // 调试跟踪
   /*
     We need to call each of these following functions to ensure that
     all things are initialized so that unireg_abort() doesn't fail
   */
-  mdl_init();
-  partitioning_init();
-  if (table_def_init() || hostname_cache_init(host_cache_size))
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  mdl_init();  // 初始化元数据锁
+  partitioning_init();  // 初始化分区功能
+  if (table_def_init() || hostname_cache_init(host_cache_size))  // 初始化表定义和主机名缓存
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 如果初始化失败，终止程序
 
   /*
     This load function has to be called after the opt_plugin_dir variable
@@ -6412,33 +6413,33 @@ static int init_server_components() {
     plugins/components.
   */
   if (!is_help_or_validate_option() && !opt_initialize)
-    dynamic_loader_srv->load(component_urns, NUMBER_OF_COMPONENTS);
+    dynamic_loader_srv->load(component_urns, NUMBER_OF_COMPONENTS);  // 加载动态组件
 
   /*
     Timers not needed if only starting with --help.
   */
   if (!is_help_or_validate_option()) {
-    if (my_timer_initialize())
-      LogErr(ERROR_LEVEL, ER_CANT_INIT_TIMER, errno);
+    if (my_timer_initialize())  // 初始化计时器
+      LogErr(ERROR_LEVEL, ER_CANT_INIT_TIMER, errno);  // 如果初始化失败，记录错误
     else
-      have_statement_timeout = SHOW_OPTION_YES;
+      have_statement_timeout = SHOW_OPTION_YES;  // 设置语句超时标志
   }
 
-  randominit(&sql_rand, (ulong)server_start_time, (ulong)server_start_time / 2);
-  setup_fpu();
+  randominit(&sql_rand, (ulong)server_start_time, (ulong)server_start_time / 2);  // 初始化随机数生成器
+  setup_fpu();  // 设置浮点单元
 
-  init_global_table_stats();
-  init_global_index_stats();
+  init_global_table_stats();  // 初始化全局表统计信息
+  init_global_index_stats();  // 初始化全局索引统计信息
 
-  setup_error_log();  // opens the log if needed
+  setup_error_log();  // 打开错误日志
 
-  enter_cond_hook = thd_enter_cond;
-  exit_cond_hook = thd_exit_cond;
-  enter_stage_hook = thd_enter_stage;
-  set_waiting_for_disk_space_hook = thd_set_waiting_for_disk_space;
-  is_killed_hook = thd_killed;
+  enter_cond_hook = thd_enter_cond;  // 设置线程进入条件钩子
+  exit_cond_hook = thd_exit_cond;  // 设置线程退出条件钩子
+  enter_stage_hook = thd_enter_stage;  // 设置线程进入阶段钩子
+  set_waiting_for_disk_space_hook = thd_set_waiting_for_disk_space;  // 设置等待磁盘空间钩子
+  is_killed_hook = thd_killed;  // 设置线程被杀死钩子
 
-  xa::Transaction_cache::initialize();
+  xa::Transaction_cache::initialize();  // 初始化XA事务缓存
 
   /*
     Try to read the previous run's error log and make it available in
@@ -6459,75 +6460,75 @@ static int init_server_components() {
     a second of start-up, with a half-dozen or less messages buffered
     if no issues were encountered.
   */
-  if (setup_error_log_components()) unireg_abort(MYSQLD_ABORT_EXIT);
+  if (setup_error_log_components()) unireg_abort(MYSQLD_ABORT_EXIT);  // 设置错误日志组件
 
-  if (MDL_context_backup_manager::init()) {
-    LogErr(ERROR_LEVEL, ER_OOM);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (MDL_context_backup_manager::init()) {  // 初始化MDL上下文备份管理器
+    LogErr(ERROR_LEVEL, ER_OOM);  // 如果初始化失败，记录内存不足错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
   /*
     initialize delegates for extension observers, errors have already
     been reported in the function
   */
-  if (delegates_init()) unireg_abort(MYSQLD_ABORT_EXIT);
+  if (delegates_init()) unireg_abort(MYSQLD_ABORT_EXIT);  // 初始化扩展观察者委托
 
   /* need to configure logging before initializing storage engines */
-  if (opt_log_replica_updates && !opt_bin_log) {
-    LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--log-replica-updates");
+  if (opt_log_replica_updates && !opt_bin_log) {  // 如果启用了副本更新日志但没有启用二进制日志
+    LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--log-replica-updates");  // 记录警告
   }
-  if (binlog_format_used && !opt_bin_log)
-    LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--binlog-format");
+  if (binlog_format_used && !opt_bin_log)  // 如果使用了二进制日志格式但没有启用二进制日志
+    LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--binlog-format");  // 记录警告
 
   /* Check that we have not let the format to unspecified at this point */
   assert((uint)global_system_variables.binlog_format <=
-         array_elements(binlog_format_names) - 1);
+         array_elements(binlog_format_names) - 1);  // 断言二进制日志格式已指定
 
-  opt_server_id_mask = ~ulong(0);
+  opt_server_id_mask = ~ulong(0);  // 设置服务器ID掩码
   opt_server_id_mask =
-      (opt_server_id_bits == 32) ? ~ulong(0) : (1 << opt_server_id_bits) - 1;
-  if (server_id != (server_id & opt_server_id_mask)) {
-    LogErr(ERROR_LEVEL, ER_SERVERID_TOO_LARGE);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+      (opt_server_id_bits == 32) ? ~ulong(0) : (1 << opt_server_id_bits) - 1;  // 根据服务器ID位数设置掩码
+  if (server_id != (server_id & opt_server_id_mask)) {  // 如果服务器ID超出范围
+    LogErr(ERROR_LEVEL, ER_SERVERID_TOO_LARGE);  // 记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (opt_bin_log) {
+  if (opt_bin_log) {  // 如果启用了二进制日志
     /* Reports an error and aborts, if the --log-bin's path
        is a directory.*/
     if (opt_bin_logname &&
-        opt_bin_logname[strlen(opt_bin_logname) - 1] == FN_LIBCHAR) {
+        opt_bin_logname[strlen(opt_bin_logname) - 1] == FN_LIBCHAR) {  // 如果二进制日志路径是目录
       LogErr(ERROR_LEVEL, ER_NEED_FILE_INSTEAD_OF_DIR, "--log-bin",
-             opt_bin_logname);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+             opt_bin_logname);  // 记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
 
     /* Reports an error and aborts, if the --log-bin-index's path
        is a directory.*/
     if (opt_binlog_index_name &&
         opt_binlog_index_name[strlen(opt_binlog_index_name) - 1] ==
-            FN_LIBCHAR) {
+            FN_LIBCHAR) {  // 如果二进制日志索引路径是目录
       LogErr(ERROR_LEVEL, ER_NEED_FILE_INSTEAD_OF_DIR, "--log-bin-index",
-             opt_binlog_index_name);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+             opt_binlog_index_name);  // 记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
 
     char buf[FN_REFLEN];
     const char *ln;
-    if (log_bin_supplied) {
+    if (log_bin_supplied) {  // 如果提供了二进制日志路径
       /*
         Binary log basename defaults to "`hostname`-bin" name prefix
         if --log-bin is used without argument.
       */
-      ln = mysql_bin_log.generate_name(opt_bin_logname, "-bin", buf);
+      ln = mysql_bin_log.generate_name(opt_bin_logname, "-bin", buf);  // 生成二进制日志文件名
     } else {
       /*
         Binary log basename defaults to "binlog" name prefix
         if --log-bin is not used.
       */
-      ln = mysql_bin_log.generate_name(opt_bin_logname, "", buf);
+      ln = mysql_bin_log.generate_name(opt_bin_logname, "", buf);  // 生成二进制日志文件名
     }
 
-    if (!opt_bin_logname && !opt_binlog_index_name && log_bin_supplied) {
+    if (!opt_bin_logname && !opt_binlog_index_name && log_bin_supplied) {  // 如果未提供二进制日志文件名和索引文件名
       /*
         User didn't give us info to name the binlog index file.
         Picking `hostname`-bin.index like did in 4.x, causes replication to
@@ -6535,11 +6536,11 @@ static int init_server_components() {
         require a name. But as we don't want to break many existing setups, we
         only give warning, not error.
       */
-      LogErr(INFORMATION_LEVEL, ER_LOG_BIN_BETTER_WITH_NAME, ln);
+      LogErr(INFORMATION_LEVEL, ER_LOG_BIN_BETTER_WITH_NAME, ln);  // 记录信息
     }
-    if (ln == buf) {
-      my_free(opt_bin_logname);
-      opt_bin_logname = my_strdup(key_memory_opt_bin_logname, buf, MYF(0));
+    if (ln == buf) {  // 如果生成的文件名在缓冲区中
+      my_free(opt_bin_logname);  // 释放旧的二进制日志文件名
+      opt_bin_logname = my_strdup(key_memory_opt_bin_logname, buf, MYF(0));  // 复制新的二进制日志文件名
     }
 
     /*
@@ -6548,49 +6549,49 @@ static int init_server_components() {
       cause a succeeding 'mysqld --initialize' to fail.
     */
     if (!is_help_or_validate_option() &&
-        mysql_bin_log.open_index_file(opt_binlog_index_name, ln, true)) {
-      unireg_abort(MYSQLD_ABORT_EXIT);
+        mysql_bin_log.open_index_file(opt_binlog_index_name, ln, true)) {  // 打开二进制日志索引文件
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 如果打开失败，终止程序
     }
   }
 
-  if (opt_bin_log) {
+  if (opt_bin_log) {  // 如果启用了二进制日志
     /*
       opt_bin_logname[0] needs to be checked to make sure opt binlog name is
       not an empty string, in case it is an empty string default file
       extension will be passed
      */
-    if (log_bin_supplied) {
+    if (log_bin_supplied) {  // 如果提供了二进制日志路径
       log_bin_basename = rpl_make_log_name(
           key_memory_MYSQL_BIN_LOG_basename, opt_bin_logname,
           default_logfile_name,
-          (opt_bin_logname && opt_bin_logname[0]) ? "" : "-bin");
+          (opt_bin_logname && opt_bin_logname[0]) ? "" : "-bin");  // 生成二进制日志基本名称
     } else {
       log_bin_basename =
           rpl_make_log_name(key_memory_MYSQL_BIN_LOG_basename, opt_bin_logname,
-                            default_binlogfile_name, "");
+                            default_binlogfile_name, "");  // 生成二进制日志基本名称
     }
 
     log_bin_index =
         rpl_make_log_name(key_memory_MYSQL_BIN_LOG_index, opt_binlog_index_name,
-                          log_bin_basename, ".index");
+                          log_bin_basename, ".index");  // 生成二进制日志索引名称
 
     if ((!opt_binlog_index_name || !opt_binlog_index_name[0]) &&
-        log_bin_index) {
+        log_bin_index) {  // 如果未提供二进制日志索引名称
       strmake(default_binlog_index_name,
               log_bin_index + dirname_length(log_bin_index),
-              FN_REFLEN + index_ext_length - 1);
-      opt_binlog_index_name = default_binlog_index_name;
+              FN_REFLEN + index_ext_length - 1);  // 生成默认的二进制日志索引名称
+      opt_binlog_index_name = default_binlog_index_name;  // 设置二进制日志索引名称
     }
 
-    if (log_bin_basename == nullptr || log_bin_index == nullptr) {
-      LogErr(ERROR_LEVEL, ER_RPL_CANT_MAKE_PATHS, (int)FN_REFLEN, (int)FN_LEN);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+    if (log_bin_basename == nullptr || log_bin_index == nullptr) {  // 如果生成的基本名称或索引名称为空
+      LogErr(ERROR_LEVEL, ER_RPL_CANT_MAKE_PATHS, (int)FN_REFLEN, (int)FN_LEN);  // 记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
   }
 
   DBUG_PRINT("debug",
              ("opt_bin_logname: %s, opt_relay_logname: %s, pidfile_name: %s",
-              opt_bin_logname, opt_relay_logname, pidfile_name));
+              opt_bin_logname, opt_relay_logname, pidfile_name));  // 调试打印二进制日志名称、中继日志名称和PID文件名称
 
   /*
     opt_relay_logname[0] needs to be checked to make sure opt relaylog name is
@@ -6600,40 +6601,40 @@ static int init_server_components() {
   relay_log_basename = rpl_make_log_name(
       key_memory_MYSQL_RELAY_LOG_basename, opt_relay_logname,
       default_logfile_name,
-      (opt_relay_logname && opt_relay_logname[0]) ? "" : relay_ext);
+      (opt_relay_logname && opt_relay_logname[0]) ? "" : relay_ext);  // 生成中继日志基本名称
 
-  if (!opt_relay_logname || !opt_relay_logname[0]) {
-    if (relay_log_basename) {
+  if (!opt_relay_logname || !opt_relay_logname[0]) {  // 如果未提供中继日志名称
+    if (relay_log_basename) {  // 如果生成了中继日志基本名称
       strmake(default_relaylogfile_name,
               relay_log_basename + dirname_length(relay_log_basename),
-              FN_REFLEN + relay_ext_length - 1);
-      opt_relay_logname = default_relaylogfile_name;
+              FN_REFLEN + relay_ext_length - 1);  // 生成默认的中继日志文件名称
+      opt_relay_logname = default_relaylogfile_name;  // 设置中继日志名称
     }
   } else
-    opt_relay_logname_supplied = true;
+    opt_relay_logname_supplied = true;  // 标记中继日志名称已提供
 
   if (relay_log_basename != nullptr)
     relay_log_index = rpl_make_log_name(key_memory_MYSQL_RELAY_LOG_index,
                                         opt_relaylog_index_name,
-                                        relay_log_basename, ".index");
+                                        relay_log_basename, ".index");  // 生成中继日志索引名称
 
-  if (!opt_relaylog_index_name || !opt_relaylog_index_name[0]) {
-    if (relay_log_index) {
+  if (!opt_relaylog_index_name || !opt_relaylog_index_name[0]) {  // 如果未提供中继日志索引名称
+    if (relay_log_index) {  // 如果生成了中继日志索引名称
       strmake(default_relaylog_index_name,
               relay_log_index + dirname_length(relay_log_index),
-              FN_REFLEN + relay_ext_length + index_ext_length - 1);
-      opt_relaylog_index_name = default_relaylog_index_name;
+              FN_REFLEN + relay_ext_length + index_ext_length - 1);  // 生成默认的中继日志索引名称
+      opt_relaylog_index_name = default_relaylog_index_name;  // 设置中继日志索引名称
     }
   } else
-    opt_relaylog_index_name_supplied = true;
+    opt_relaylog_index_name_supplied = true;  // 标记中继日志索引名称已提供
 
-  if (relay_log_basename == nullptr || relay_log_index == nullptr) {
-    LogErr(ERROR_LEVEL, ER_RPL_CANT_MAKE_PATHS, (int)FN_REFLEN, (int)FN_LEN);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (relay_log_basename == nullptr || relay_log_index == nullptr) {  // 如果生成的中继日志基本名称或索引名称为空
+    LogErr(ERROR_LEVEL, ER_RPL_CANT_MAKE_PATHS, (int)FN_REFLEN, (int)FN_LEN);  // 记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
   if (log_bin_basename != nullptr &&
-      !strcmp(log_bin_basename, relay_log_basename)) {
+      !strcmp(log_bin_basename, relay_log_basename)) {  // 如果二进制日志和中继日志的基本名称相同
     const int bin_ext_length = 4;
     char default_binlogfile_name_from_hostname[FN_REFLEN + bin_ext_length];
     /* Generate default bin log file name. */
@@ -6641,7 +6642,7 @@ static int init_server_components() {
             FN_REFLEN - 1);
     strcat(default_binlogfile_name_from_hostname, "-bin");
 
-    if (!default_relaylogfile_name[0]) {
+    if (!default_relaylogfile_name[0]) {  // 如果未生成默认的中继日志文件名称
       /* Generate default relay log file name. */
       strmake(default_relaylogfile_name, default_logfile_name, FN_REFLEN - 1);
       strcat(default_relaylogfile_name, relay_ext);
@@ -6653,22 +6654,22 @@ static int init_server_components() {
     LogErr(ERROR_LEVEL, ER_RPL_CANT_HAVE_SAME_BASENAME, log_bin_basename,
            "--log-bin", default_binlogfile_name,
            default_binlogfile_name_from_hostname, "--relay-log",
-           default_relaylogfile_name);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+           default_relaylogfile_name);  // 记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (global_system_variables.binlog_row_value_options != 0) {
+  if (global_system_variables.binlog_row_value_options != 0) {  // 如果设置了二进制日志行值选项
     const char *msg = nullptr;
     longlong err = ER_BINLOG_ROW_VALUE_OPTION_IGNORED;
-    if (!opt_bin_log)
+    if (!opt_bin_log)  // 如果未启用二进制日志
       msg = "the binary log is disabled";
-    else if (global_system_variables.binlog_format == BINLOG_FORMAT_STMT)
+    else if (global_system_variables.binlog_format == BINLOG_FORMAT_STMT)  // 如果二进制日志格式为STATEMENT
       msg = "binlog_format=STATEMENT";
-    else if (log_bin_use_v1_row_events) {
+    else if (log_bin_use_v1_row_events) {  // 如果使用V1行事件
       msg = "binlog_row_value_options=PARTIAL_JSON";
       err = ER_BINLOG_USE_V1_ROW_EVENTS_IGNORED;
     } else if (global_system_variables.binlog_row_image ==
-               BINLOG_ROW_IMAGE_FULL) {
+               BINLOG_ROW_IMAGE_FULL) {  // 如果二进制日志行图像为FULL
       msg = "binlog_row_image=FULL";
       err = ER_BINLOG_ROW_VALUE_OPTION_USED_ONLY_FOR_AFTER_IMAGES;
     }
@@ -6676,10 +6677,10 @@ static int init_server_components() {
       switch (err) {
         case ER_BINLOG_ROW_VALUE_OPTION_IGNORED:
         case ER_BINLOG_ROW_VALUE_OPTION_USED_ONLY_FOR_AFTER_IMAGES:
-          LogErr(WARNING_LEVEL, err, msg, "PARTIAL_JSON");
+          LogErr(WARNING_LEVEL, err, msg, "PARTIAL_JSON");  // 记录警告
           break;
         case ER_BINLOG_USE_V1_ROW_EVENTS_IGNORED:
-          LogErr(WARNING_LEVEL, err, msg);
+          LogErr(WARNING_LEVEL, err, msg);  // 记录警告
           break;
         default:
           assert(0); /* purecov: deadcode */
@@ -6688,22 +6689,22 @@ static int init_server_components() {
   }
 
   /* call ha_init_key_cache() on all key caches to init them */
-  process_key_caches(&ha_init_key_cache);
+  process_key_caches(&ha_init_key_cache);  // 初始化所有键缓存
 
   /* Allow storage engine to give real error messages */
-  if (ha_init_errors()) return 1;
+  if (ha_init_errors()) return 1;  // 初始化存储引擎错误处理
 
-  if (gtid_server_init()) {
-    LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_GTID);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (gtid_server_init()) {  // 初始化GTID
+    LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_GTID);  // 如果初始化失败，记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (opt_log_replica_updates && replicate_same_server_id) {
-    if (opt_bin_log && global_gtid_mode.get() != Gtid_mode::ON) {
-      LogErr(ERROR_LEVEL, ER_RPL_INFINITY_DENIED);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+  if (opt_log_replica_updates && replicate_same_server_id) {  // 如果启用了副本更新日志且服务器ID相同
+    if (opt_bin_log && global_gtid_mode.get() != Gtid_mode::ON) {  // 如果启用了二进制日志但GTID模式未开启
+      LogErr(ERROR_LEVEL, ER_RPL_INFINITY_DENIED);  // 记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     } else
-      LogErr(WARNING_LEVEL, ER_RPL_INFINITY_IGNORED);
+      LogErr(WARNING_LEVEL, ER_RPL_INFINITY_IGNORED);  // 记录警告
   }
 
   {
@@ -6714,8 +6715,8 @@ static int init_server_components() {
 #ifndef NDEBUG
     int dummy =
 #endif
-        Log_resource::dummy_function_to_ensure_we_are_linked_into_the_server();
-    assert(dummy == 1);
+        Log_resource::dummy_function_to_ensure_we_are_linked_into_the_server();  // 确保日志资源模块被链接到服务器
+    assert(dummy == 1);  // 断言函数返回值为1
   }
 
   /*
@@ -6723,7 +6724,7 @@ static int init_server_components() {
     and before the server component initialization to allow other components
     to register their UDFs at init time and de-register them at deinit time.
   */
-  udf_init_globals();
+  udf_init_globals();  // 初始化UDF全局变量
 
   /*
     Set tc_log to point to TC_LOG_DUMMY early in order to allow plugin_init()
@@ -6731,55 +6732,55 @@ static int init_server_components() {
     If necessary tc_log will be adjusted to point to correct TC_LOG instance
     later.
   */
-  tc_log = &tc_log_dummy;
+  tc_log = &tc_log_dummy;  // 设置事务日志为虚拟日志
 
   /*
    Each server should have one UUID. We will create it automatically, if it
    does not exist. It should be initialized before opening binlog file. Because
    server's uuid will be stored into the new binlog file.
   */
-  if (!is_help_or_validate_option() && init_server_auto_options()) {
-    LogErr(ERROR_LEVEL, ER_CANT_CREATE_UUID);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (!is_help_or_validate_option() && init_server_auto_options()) {  // 初始化服务器自动选项
+    LogErr(ERROR_LEVEL, ER_CANT_CREATE_UUID);  // 如果初始化失败，记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
   /*Load early plugins */
   if (plugin_register_early_plugins(&remaining_argc, remaining_argv,
                                     (is_help_or_validate_option())
                                         ? PLUGIN_INIT_SKIP_INITIALIZATION
-                                        : 0)) {
-    LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_EARLY_PLUGINS);
-    unireg_abort(1);
+                                        : 0)) {  // 注册早期插件
+    LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_EARLY_PLUGINS);  // 如果注册失败，记录错误
+    unireg_abort(1);  // 终止程序
   }
 
   /* Load builtin plugins, initialize MyISAM, CSV and InnoDB */
   if (plugin_register_builtin_and_init_core_se(&remaining_argc,
-                                               remaining_argv)) {
+                                               remaining_argv)) {  // 注册内置插件并初始化核心存储引擎
     if (!opt_validate_config)
-      LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_BUILTIN_PLUGINS);
-    unireg_abort(1);
+      LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_BUILTIN_PLUGINS);  // 如果初始化失败，记录错误
+    unireg_abort(1);  // 终止程序
   }
 
   /*
     Needs to be done before dd::init() which runs DDL commands (for real)
     during instance initialization.
   */
-  init_sql_command_flags();
+  init_sql_command_flags();  // 初始化SQL命令标志
 
   /*
     plugin_register_dynamic_and_init_all() needs DD initialized.
     Initialize DD to create data directory using current server.
   */
-  if (opt_initialize) {
+  if (opt_initialize) {  // 如果启用了初始化模式
     if (!is_help_or_validate_option()) {
-      if (dd::init(dd::enum_dd_init_type::DD_INITIALIZE)) {
-        LogErr(ERROR_LEVEL, ER_DD_INIT_FAILED);
-        unireg_abort(1);
+      if (dd::init(dd::enum_dd_init_type::DD_INITIALIZE)) {  // 初始化数据字典
+        LogErr(ERROR_LEVEL, ER_DD_INIT_FAILED);  // 如果初始化失败，记录错误
+        unireg_abort(1);  // 终止程序
       }
 
-      if (dd::init(dd::enum_dd_init_type::DD_INITIALIZE_SYSTEM_VIEWS)) {
-        LogErr(ERROR_LEVEL, ER_SYSTEM_VIEW_INIT_FAILED);
-        unireg_abort(1);
+      if (dd::init(dd::enum_dd_init_type::DD_INITIALIZE_SYSTEM_VIEWS)) {  // 初始化系统视图
+        LogErr(ERROR_LEVEL, ER_SYSTEM_VIEW_INIT_FAILED);  // 如果初始化失败，记录错误
+        unireg_abort(1);  // 终止程序
       }
     }
   } else {
@@ -6790,18 +6791,18 @@ static int init_server_components() {
       If server is starting on data directory with DD tables, DD is initialized.
     */
     if (!is_help_or_validate_option() &&
-        dd::init(dd::enum_dd_init_type::DD_RESTART_OR_UPGRADE)) {
-      LogErr(ERROR_LEVEL, ER_DD_INIT_FAILED);
+        dd::init(dd::enum_dd_init_type::DD_RESTART_OR_UPGRADE)) {  // 初始化数据字典（重启或升级）
+      LogErr(ERROR_LEVEL, ER_DD_INIT_FAILED);  // 如果初始化失败，记录错误
 
-      if (!dd::upgrade::no_server_upgrade_required()) {
-        dd_init_failed_during_upgrade = true;
+      if (!dd::upgrade::no_server_upgrade_required()) {  // 如果需要升级
+        dd_init_failed_during_upgrade = true;  // 标记升级期间数据字典初始化失败
       }
 
       /* If clone recovery fails, we rollback the files to previous
       dataset and attempt to restart server. */
       int exit_code =
-          clone_recovery_error ? MYSQLD_RESTART_EXIT : MYSQLD_ABORT_EXIT;
-      unireg_abort(exit_code);
+          clone_recovery_error ? MYSQLD_RESTART_EXIT : MYSQLD_ABORT_EXIT;  // 设置退出代码
+      unireg_abort(exit_code);  // 终止程序
     }
   }
 
@@ -6822,10 +6823,10 @@ static int init_server_components() {
   */
   int flags = 0;
 
-  if (opt_noacl) flags |= PLUGIN_INIT_SKIP_PLUGIN_TABLE;
+  if (opt_noacl) flags |= PLUGIN_INIT_SKIP_PLUGIN_TABLE;  // 如果启用了无ACL模式，跳过插件表
   if (is_help_or_validate_option())
-    flags |= PLUGIN_INIT_SKIP_INITIALIZATION | PLUGIN_INIT_SKIP_PLUGIN_TABLE;
-  if (opt_initialize) flags |= PLUGIN_INIT_SKIP_DYNAMIC_LOADING;
+    flags |= PLUGIN_INIT_SKIP_INITIALIZATION | PLUGIN_INIT_SKIP_PLUGIN_TABLE;  // 如果是帮助或验证选项，跳过初始化和插件表
+  if (opt_initialize) flags |= PLUGIN_INIT_SKIP_DYNAMIC_LOADING;  // 如果是初始化模式，跳过动态加载
 
   /*
     In the case of upgrade, we need to delay initialization of plugins that
@@ -6834,41 +6835,41 @@ static int init_server_components() {
   if (!is_help_or_validate_option() && !opt_initialize &&
       !dd::upgrade::no_server_upgrade_required() &&
       opt_upgrade_mode != UPGRADE_MINIMAL)
-    flags |= PLUGIN_INIT_DELAY_UNTIL_AFTER_UPGRADE;
+    flags |= PLUGIN_INIT_DELAY_UNTIL_AFTER_UPGRADE;  // 如果是升级模式，延迟插件初始化直到升级完成
 
   /*
     Initialize the cost model, but delete it after the plugins are initialized.
     Cost model is needed while dropping and creating pfs tables to
     update metadata of referencing views (if there are any).
    */
-  init_optimizer_cost_module(true);
+  init_optimizer_cost_module(true);  // 初始化优化器成本模型
   {  // New scope in which the error handler hook is modified.
-    ErrorHandlerFunctionPointer ehh_val = error_handler_hook;
+    ErrorHandlerFunctionPointer ehh_val = error_handler_hook;  // 保存当前错误处理钩子
     auto restore_ehh = create_scope_guard([ehh_val]() {
-      assert(ehh_val == my_message_stderr);
-      error_handler_hook = ehh_val;
+      assert(ehh_val == my_message_stderr);  // 断言错误处理钩子未改变
+      error_handler_hook = ehh_val;  // 恢复错误处理钩子
     });
     error_handler_hook = +[](uint c, const char *s, myf f) {
       if (c != ER_NO_SUCH_TABLE || strstr(s, "mysql.server_cost") == nullptr) {
-        my_message_stderr(c, s, f);
+        my_message_stderr(c, s, f);  // 自定义错误处理钩子
       }
     };
     if (plugin_register_dynamic_and_init_all(&remaining_argc, remaining_argv,
-                                             flags)) {
-      delete_optimizer_cost_module();
+                                             flags)) {  // 注册动态插件并初始化所有插件
+      delete_optimizer_cost_module();  // 删除优化器成本模型
       // Delete all DD tables in case of error in initializing plugins.
       if (dd::upgrade_57::in_progress())
-        (void)dd::init(dd::enum_dd_init_type::DD_DELETE);
+        (void)dd::init(dd::enum_dd_init_type::DD_DELETE);  // 如果插件初始化失败，删除数据字典表
 
       if (!opt_validate_config)
-        LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_DYNAMIC_PLUGINS);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+        LogErr(ERROR_LEVEL, ER_CANT_INITIALIZE_DYNAMIC_PLUGINS);  // 如果初始化失败，记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
   }  // End of extra scope where missing server_cost errors are not logged
-  assert(error_handler_hook == my_message_stderr);
+  assert(error_handler_hook == my_message_stderr);  // 断言错误处理钩子已恢复
   dynamic_plugins_are_initialized =
-      true; /* Don't separate from init function */
-  delete_optimizer_cost_module();
+      true; /* Don't separate from init function */  // 标记动态插件已初始化
+  delete_optimizer_cost_module();  // 删除优化器成本模型
 
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
   if (!is_help_or_validate_option()) {
@@ -6877,36 +6878,36 @@ static int init_server_components() {
       Cost model is needed while dropping and creating pfs tables to
       update metadata of referencing views (if there are any).
     */
-    init_optimizer_cost_module(true);
+    init_optimizer_cost_module(true);  // 初始化优化器成本模型
 
     bool st;
     if (opt_initialize || dd::upgrade_57::in_progress() ||
         opt_upgrade_mode == UPGRADE_FORCE)
       st = dd::performance_schema::init_pfs_tables(
-          dd::enum_dd_init_type::DD_INITIALIZE);
+          dd::enum_dd_init_type::DD_INITIALIZE);  // 初始化性能模式表
     else
       st = dd::performance_schema::init_pfs_tables(
-          dd::enum_dd_init_type::DD_RESTART_OR_UPGRADE);
+          dd::enum_dd_init_type::DD_RESTART_OR_UPGRADE);  // 初始化性能模式表（重启或升级）
 
     /* Now that the pfs is initialized, delete the cost model. */
-    delete_optimizer_cost_module();
+    delete_optimizer_cost_module();  // 删除优化器成本模型
 
     if (st) {
-      LogErr(ERROR_LEVEL, ER_PERFSCHEMA_TABLES_INIT_FAILED);
-      unireg_abort(1);
+      LogErr(ERROR_LEVEL, ER_PERFSCHEMA_TABLES_INIT_FAILED);  // 如果初始化失败，记录错误
+      unireg_abort(1);  // 终止程序
     }
   }
 #endif
 
   if (!is_help_or_validate_option() && dd::upgrade_57::in_progress()) {
     // Populate DD tables with meta data from 5.7
-    if (dd::init(dd::enum_dd_init_type::DD_POPULATE_UPGRADE)) {
-      LogErr(ERROR_LEVEL, ER_DD_POPULATING_TABLES_FAILED);
-      unireg_abort(1);
+    if (dd::init(dd::enum_dd_init_type::DD_POPULATE_UPGRADE)) {  // 从5.7版本填充数据字典表
+      LogErr(ERROR_LEVEL, ER_DD_POPULATING_TABLES_FAILED);  // 如果填充失败，记录错误
+      unireg_abort(1);  // 终止程序
     }
     // Run after_dd_upgrade hook
-    if (RUN_HOOK(server_state, after_dd_upgrade_from_57, (nullptr)))
-      unireg_abort(MYSQLD_ABORT_EXIT);
+    if (RUN_HOOK(server_state, after_dd_upgrade_from_57, (nullptr)))  // 运行升级后的钩子
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
   /*
@@ -6915,26 +6916,26 @@ static int init_server_components() {
   */
   if (!is_help_or_validate_option() && !opt_initialize &&
       !dd::upgrade_57::in_progress() &&
-      dd::init(dd::enum_dd_init_type::DD_UPDATE_I_S_METADATA)) {
-    LogErr(ERROR_LEVEL, ER_DD_UPDATING_PLUGIN_MD_FAILED);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+      dd::init(dd::enum_dd_init_type::DD_UPDATE_I_S_METADATA)) {  // 更新信息模式元数据
+    LogErr(ERROR_LEVEL, ER_DD_UPDATING_PLUGIN_MD_FAILED);  // 如果更新失败，记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  bool recreate_non_dd_based_system_view = dd::upgrade::I_S_upgrade_required();
+  bool recreate_non_dd_based_system_view = dd::upgrade::I_S_upgrade_required();  // 检查是否需要重新创建非DD系统视图
   if (!is_help_or_validate_option() && !opt_initialize &&
       !dd::upgrade::no_server_upgrade_required()) {
     if (opt_upgrade_mode == UPGRADE_MINIMAL)
-      LogErr(WARNING_LEVEL, ER_SERVER_UPGRADE_SKIP);
+      LogErr(WARNING_LEVEL, ER_SERVER_UPGRADE_SKIP);  // 如果是最小升级模式，记录警告
     else {
-      init_optimizer_cost_module(true);
+      init_optimizer_cost_module(true);  // 初始化优化器成本模型
       if (bootstrap::run_bootstrap_thread(nullptr, nullptr,
                                           &dd::upgrade::upgrade_system_schemas,
-                                          SYSTEM_THREAD_SERVER_UPGRADE)) {
-        LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_FAILED);
-        unireg_abort(MYSQLD_ABORT_EXIT);
+                                          SYSTEM_THREAD_SERVER_UPGRADE)) {  // 运行系统模式升级线程
+        LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_FAILED);  // 如果升级失败，记录错误
+        unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
       }
-      delete_optimizer_cost_module();
-      recreate_non_dd_based_system_view = true;
+      delete_optimizer_cost_module();  // 删除优化器成本模型
+      recreate_non_dd_based_system_view = true;  // 标记需要重新创建非DD系统视图
 
       /*
         When upgrade is finished, we need to initialize the plugins that
@@ -6945,8 +6946,8 @@ static int init_server_components() {
               sequence and rewriting the way we create and upgrade server
               resources needed by plugins.
       */
-      if (dd::upgrade::plugin_initialize_delayed_after_upgrade()) {
-        unireg_abort(MYSQLD_ABORT_EXIT);
+      if (dd::upgrade::plugin_initialize_delayed_after_upgrade()) {  // 初始化延迟的插件
+        unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
       }
     }
   }
@@ -6961,211 +6962,211 @@ static int init_server_components() {
       opt_upgrade_mode != UPGRADE_MINIMAL &&
       recreate_non_dd_based_system_view) {
     if (dd::init(
-            dd::enum_dd_init_type::DD_INITIALIZE_NON_DD_BASED_SYSTEM_VIEWS)) {
-      LogErr(ERROR_LEVEL, ER_SYSTEM_VIEW_INIT_FAILED);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+            dd::enum_dd_init_type::DD_INITIALIZE_NON_DD_BASED_SYSTEM_VIEWS)) {  // 初始化非DD系统视图
+      LogErr(ERROR_LEVEL, ER_SYSTEM_VIEW_INIT_FAILED);  // 如果初始化失败，记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
   }
 
-  auto res_grp_mgr = resourcegroups::Resource_group_mgr::instance();
+  auto res_grp_mgr = resourcegroups::Resource_group_mgr::instance();  // 获取资源组管理器实例
   // Initialize the Resource group subsystem.
   if (!is_help_or_validate_option() && !opt_initialize) {
-    if (res_grp_mgr->post_init()) {
-      LogErr(ERROR_LEVEL, ER_RESOURCE_GROUP_POST_INIT_FAILED);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+    if (res_grp_mgr->post_init()) {  // 初始化资源组子系统
+      LogErr(ERROR_LEVEL, ER_RESOURCE_GROUP_POST_INIT_FAILED);  // 如果初始化失败，记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
   }
 
-  Session_tracker session_track_system_variables_check;
+  Session_tracker session_track_system_variables_check;  // 会话跟踪系统变量检查
   LEX_STRING var_list;
   char *tmp_str;
   size_t len = strlen(global_system_variables.track_sysvars_ptr);
   tmp_str = (char *)my_malloc(PSI_NOT_INSTRUMENTED, len * sizeof(char) + 2,
-                              MYF(MY_WME));
-  strcpy(tmp_str, global_system_variables.track_sysvars_ptr);
+                              MYF(MY_WME));  // 分配内存
+  strcpy(tmp_str, global_system_variables.track_sysvars_ptr);  // 复制系统变量
   var_list.length = len;
   var_list.str = tmp_str;
   if (session_track_system_variables_check.server_boot_verify(
-          system_charset_info, var_list)) {
-    LogErr(ERROR_LEVEL, ER_TRACK_VARIABLES_BOGUS);
-    if (tmp_str) my_free(tmp_str);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+          system_charset_info, var_list)) {  // 验证系统变量
+    LogErr(ERROR_LEVEL, ER_TRACK_VARIABLES_BOGUS);  // 如果验证失败，记录错误
+    if (tmp_str) my_free(tmp_str);  // 释放内存
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
-  if (tmp_str) my_free(tmp_str);
+  if (tmp_str) my_free(tmp_str);  // 释放内存
 
   // Validate the configuration if --validate-config was specified.
   if (opt_validate_config && (remaining_argc > 1)) {
-    bool saved_getopt_skip_unknown = my_getopt_skip_unknown;
+    bool saved_getopt_skip_unknown = my_getopt_skip_unknown;  // 保存当前跳过未知选项的状态
     struct my_option no_opts[] = {{nullptr, 0, nullptr, nullptr, nullptr,
                                    nullptr, GET_NO_ARG, NO_ARG, 0, 0, 0,
-                                   nullptr, 0, nullptr}};
+                                   nullptr, 0, nullptr}};  // 空选项
 
-    my_getopt_skip_unknown = false;
+    my_getopt_skip_unknown = false;  // 禁止跳过未知选项
 
     if (handle_options(&remaining_argc, &remaining_argv, no_opts,
-                       mysqld_get_one_option))
-      unireg_abort(MYSQLD_ABORT_EXIT);
-    my_getopt_skip_unknown = saved_getopt_skip_unknown;
+                       mysqld_get_one_option))  // 处理选项
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 如果处理失败，终止程序
+    my_getopt_skip_unknown = saved_getopt_skip_unknown;  // 恢复跳过未知选项的状态
   }
 
-  if (is_help_or_validate_option()) unireg_abort(MYSQLD_SUCCESS_EXIT);
+  if (is_help_or_validate_option()) unireg_abort(MYSQLD_SUCCESS_EXIT);  // 如果是帮助或验证选项，成功退出
 
   /* if the errmsg.sys is not loaded, terminate to maintain behaviour */
-  if (!my_default_lc_messages->errmsgs->is_loaded()) {
-    LogErr(ERROR_LEVEL, ER_CANT_READ_ERRMSGS);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (!my_default_lc_messages->errmsgs->is_loaded()) {  // 如果错误消息文件未加载
+    LogErr(ERROR_LEVEL, ER_CANT_READ_ERRMSGS);  // 记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (opt_libcoredumper) {
+  if (opt_libcoredumper) {  // 如果启用了libcoredumper
 #if HAVE_LIBCOREDUMPER
     if (opt_corefile) {
       sql_print_warning(
           "Started with --core-file and --coredumper. "
-          "--coredumper will take precedence.");
+          "--coredumper will take precedence.");  // 记录警告
     }
     if (opt_libcoredumper_path != NULL) {
-      if (!validate_libcoredumper_path(opt_libcoredumper_path)) {
-        unireg_abort(MYSQLD_ABORT_EXIT);
+      if (!validate_libcoredumper_path(opt_libcoredumper_path)) {  // 验证libcoredumper路径
+        unireg_abort(MYSQLD_ABORT_EXIT);  // 如果验证失败，终止程序
       }
     }
 #else
     sql_print_warning(
         "This version of MySQL has not been compiled with "
-        "libcoredumper support, ignoring --coredumper argument");
+        "libcoredumper support, ignoring --coredumper argument");  // 记录警告
 #endif
   }
 
   /* We have to initialize the storage engines before CSV logging */
-  if (ha_init()) {
-    LogErr(ERROR_LEVEL, ER_CANT_INIT_DBS);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (ha_init()) {  // 初始化存储引擎
+    LogErr(ERROR_LEVEL, ER_CANT_INIT_DBS);  // 如果初始化失败，记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
   /* Initialize ndbinfo tables in DD */
-  if (dd::ndbinfo::init_schema_and_tables(opt_upgrade_mode)) {
-    LogErr(ERROR_LEVEL, ER_NDBINFO_UPGRADING_SCHEMA_FAIL);
-    unireg_abort(1);
+  if (dd::ndbinfo::init_schema_and_tables(opt_upgrade_mode)) {  // 初始化ndbinfo表
+    LogErr(ERROR_LEVEL, ER_NDBINFO_UPGRADING_SCHEMA_FAIL);  // 如果初始化失败，记录错误
+    unireg_abort(1);  // 终止程序
   }
 
-  if (opt_initialize) log_output_options = LOG_FILE;
+  if (opt_initialize) log_output_options = LOG_FILE;  // 如果是初始化模式，设置日志输出选项为文件
 
   /*
     Issue a warning if there were specified additional options to the
     log-output along with NONE. Probably this wasn't what user wanted.
   */
-  if ((log_output_options & LOG_NONE) && (log_output_options & ~LOG_NONE))
-    LogErr(WARNING_LEVEL, ER_LOG_OUTPUT_CONTRADICTORY);
+  if ((log_output_options & LOG_NONE) && (log_output_options & ~LOG_NONE))  // 如果日志输出选项包含NONE和其他选项
+    LogErr(WARNING_LEVEL, ER_LOG_OUTPUT_CONTRADICTORY);  // 记录警告
 
-  if (log_output_options & LOG_TABLE) {
+  if (log_output_options & LOG_TABLE) {  // 如果日志输出选项包含表
     /* Fall back to log files if the csv engine is not loaded. */
-    LEX_CSTRING csv_name = {STRING_WITH_LEN("csv")};
-    if (!plugin_is_ready(csv_name, MYSQL_STORAGE_ENGINE_PLUGIN)) {
-      LogErr(ERROR_LEVEL, ER_NO_CSV_NO_LOG_TABLES);
-      log_output_options = (log_output_options & ~LOG_TABLE) | LOG_FILE;
+    LEX_CSTRING csv_name = {STRING_WITH_LEN("csv")};  // CSV引擎名称
+    if (!plugin_is_ready(csv_name, MYSQL_STORAGE_ENGINE_PLUGIN)) {  // 如果CSV引擎未加载
+      LogErr(ERROR_LEVEL, ER_NO_CSV_NO_LOG_TABLES);  // 记录错误
+      log_output_options = (log_output_options & ~LOG_TABLE) | LOG_FILE;  // 回退到文件日志
     }
   }
 
-  query_logger.set_handlers(log_output_options);
+  query_logger.set_handlers(log_output_options);  // 设置查询日志处理器
 
   // Open slow log file if enabled.
-  query_logger.set_log_file(QUERY_LOG_SLOW);
-  if (opt_slow_log && query_logger.reopen_log_file(QUERY_LOG_SLOW))
-    opt_slow_log = false;
+  query_logger.set_log_file(QUERY_LOG_SLOW);  // 设置慢查询日志文件
+  if (opt_slow_log && query_logger.reopen_log_file(QUERY_LOG_SLOW))  // 如果启用了慢查询日志且重新打开失败
+    opt_slow_log = false;  // 禁用慢查询日志
 
   // Open general log file if enabled.
-  query_logger.set_log_file(QUERY_LOG_GENERAL);
-  if (opt_general_log && query_logger.reopen_log_file(QUERY_LOG_GENERAL))
-    opt_general_log = false;
+  query_logger.set_log_file(QUERY_LOG_GENERAL);  // 设置通用查询日志文件
+  if (opt_general_log && query_logger.reopen_log_file(QUERY_LOG_GENERAL))  // 如果启用了通用查询日志且重新打开失败
+    opt_general_log = false;  // 禁用通用查询日志
 
   /*
     Set the default storage engines
   */
   if (initialize_storage_engine(default_storage_engine, "",
-                                &global_system_variables.table_plugin))
-    unireg_abort(MYSQLD_ABORT_EXIT);
+                                &global_system_variables.table_plugin))  // 初始化默认存储引擎
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 如果初始化失败，终止程序
   if (initialize_storage_engine(default_tmp_storage_engine, " temp",
-                                &global_system_variables.temp_table_plugin))
-    unireg_abort(MYSQLD_ABORT_EXIT);
+                                &global_system_variables.temp_table_plugin))  // 初始化默认临时存储引擎
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 如果初始化失败，终止程序
 
   if (!opt_initialize && !opt_noacl) {
-    set_externally_disabled_storage_engine_names(opt_disabled_storage_engines);
+    set_externally_disabled_storage_engine_names(opt_disabled_storage_engines);  // 设置外部禁用的存储引擎名称
 
     // Log warning if default_storage_engine is a disabled storage engine.
     handlerton *default_se_handle =
-        plugin_data<handlerton *>(global_system_variables.table_plugin);
-    if (ha_is_storage_engine_disabled(default_se_handle))
+        plugin_data<handlerton *>(global_system_variables.table_plugin);  // 获取默认存储引擎句柄
+    if (ha_is_storage_engine_disabled(default_se_handle))  // 如果默认存储引擎被禁用
       LogErr(WARNING_LEVEL, ER_DISABLED_STORAGE_ENGINE_AS_DEFAULT,
-             "default_storage_engine", default_storage_engine);
+             "default_storage_engine", default_storage_engine);  // 记录警告
 
     // Log warning if default_tmp_storage_engine is a disabled storage engine.
     handlerton *default_tmp_se_handle =
-        plugin_data<handlerton *>(global_system_variables.temp_table_plugin);
-    if (ha_is_storage_engine_disabled(default_tmp_se_handle))
+        plugin_data<handlerton *>(global_system_variables.temp_table_plugin);  // 获取默认临时存储引擎句柄
+    if (ha_is_storage_engine_disabled(default_tmp_se_handle))  // 如果默认临时存储引擎被禁用
       LogErr(WARNING_LEVEL, ER_DISABLED_STORAGE_ENGINE_AS_DEFAULT,
-             "default_tmp_storage_engine", default_tmp_storage_engine);
+             "default_tmp_storage_engine", default_tmp_storage_engine);  // 记录警告
   }
 
   /*
     Validate any enforced storage engine
   */
-  if (enforce_storage_engine && !opt_initialize && !opt_noacl) {
+  if (enforce_storage_engine && !opt_initialize && !opt_noacl) {  // 如果强制使用某个存储引擎
     const LEX_CSTRING name{enforce_storage_engine,
-                           strlen(enforce_storage_engine)};
+                           strlen(enforce_storage_engine)};  // 强制使用的存储引擎名称
     plugin_ref plugin;
-    if ((plugin = ha_resolve_by_name(nullptr, &name, false))) {
-      handlerton *hton = plugin_data<handlerton *>(plugin);
+    if ((plugin = ha_resolve_by_name(nullptr, &name, false))) {  // 解析存储引擎
+      handlerton *hton = plugin_data<handlerton *>(plugin);  // 获取存储引擎句柄
       const LEX_CSTRING defname{default_storage_engine,
-                                strlen(default_storage_engine)};
+                                strlen(default_storage_engine)};  // 默认存储引擎名称
       plugin_ref defplugin;
       handlerton *defhton;
-      if ((defplugin = ha_resolve_by_name(nullptr, &defname, false))) {
-        defhton = plugin_data<handlerton *>(defplugin);
-        if (defhton != hton) {
+      if ((defplugin = ha_resolve_by_name(nullptr, &defname, false))) {  // 解析默认存储引擎
+        defhton = plugin_data<handlerton *>(defplugin);  // 获取默认存储引擎句柄
+        if (defhton != hton) {  // 如果强制使用的存储引擎与默认存储引擎不同
           sql_print_warning(
               "Default storage engine (%s)"
               " is not the same as enforced storage engine (%s)",
-              default_storage_engine, enforce_storage_engine);
+              default_storage_engine, enforce_storage_engine);  // 记录警告
         }
       }
-      if (ha_is_storage_engine_disabled(hton)) {
+      if (ha_is_storage_engine_disabled(hton)) {  // 如果强制使用的存储引擎被禁用
         sql_print_error(
             "enforced storage engine %s is among disabled storage "
             "engines",
-            enforce_storage_engine);
-        unireg_abort(MYSQLD_ABORT_EXIT);
+            enforce_storage_engine);  // 记录错误
+        unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
       }
-      plugin_unlock(nullptr, defplugin);
-      plugin_unlock(nullptr, plugin);
+      plugin_unlock(nullptr, defplugin);  // 解锁默认存储引擎
+      plugin_unlock(nullptr, plugin);  // 解锁强制使用的存储引擎
     } else {
       sql_print_error("Unknown/unsupported storage engine: %s",
-                      enforce_storage_engine);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+                      enforce_storage_engine);  // 记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
   }
 
-  DBUG_EXECUTE_IF("total_ha_2pc_equals_2", total_ha_2pc = 2;);
-  if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log)) {
+  DBUG_EXECUTE_IF("total_ha_2pc_equals_2", total_ha_2pc = 2;);  // 调试：设置两阶段提交的存储引擎数量为2
+  if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log)) {  // 如果支持两阶段提交的存储引擎数量大于1或启用了二进制日志
     if (opt_bin_log)
-      tc_log = &mysql_bin_log;
+      tc_log = &mysql_bin_log;  // 设置事务日志为二进制日志
     else
-      tc_log = &tc_log_mmap;
+      tc_log = &tc_log_mmap;  // 设置事务日志为内存映射日志
   }
 
-  if (Recovered_xa_transactions::init()) {
-    LogErr(ERROR_LEVEL, ER_OOM);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (Recovered_xa_transactions::init()) {  // 初始化恢复的XA事务
+    LogErr(ERROR_LEVEL, ER_OOM);  // 如果初始化失败，记录内存不足错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  RUN_HOOK(server_state, before_recovery, (nullptr));
-  if (tc_log->open(opt_bin_log ? opt_bin_logname : opt_tc_log_file)) {
-    LogErr(ERROR_LEVEL, ER_CANT_INIT_TC_LOG);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  RUN_HOOK(server_state, before_recovery, (nullptr));  // 运行恢复前的钩子
+  if (tc_log->open(opt_bin_log ? opt_bin_logname : opt_tc_log_file)) {  // 打开事务日志
+    LogErr(ERROR_LEVEL, ER_CANT_INIT_TC_LOG);  // 如果打开失败，记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (dd::reset_tables_and_tablespaces()) {
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (dd::reset_tables_and_tablespaces()) {  // 重置表和表空间
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 如果重置失败，终止程序
   }
-  ha_post_recover();
+  ha_post_recover();  // 恢复后的存储引擎处理
 
   /*
     Add prepared XA transactions into the cache of XA transactions and acquire
@@ -7175,45 +7176,45 @@ static int init_server_components() {
     function dd::reset_tables_and_tablespaces() when table cache being reset.
   */
   if (Recovered_xa_transactions::instance()
-          .recover_prepared_xa_transactions()) {
-    unireg_abort(MYSQLD_ABORT_EXIT);
+          .recover_prepared_xa_transactions()) {  // 恢复准备好的XA事务
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 如果恢复失败，终止程序
   }
 
   if (global_gtid_mode.get() == Gtid_mode::ON &&
-      _gtid_consistency_mode != GTID_CONSISTENCY_MODE_ON) {
-    LogErr(ERROR_LEVEL, ER_RPL_GTID_MODE_REQUIRES_ENFORCE_GTID_CONSISTENCY_ON);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+      _gtid_consistency_mode != GTID_CONSISTENCY_MODE_ON) {  // 如果GTID模式开启但一致性模式未开启
+    LogErr(ERROR_LEVEL, ER_RPL_GTID_MODE_REQUIRES_ENFORCE_GTID_CONSISTENCY_ON);  // 记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (rpl_encryption.initialize()) {
-    LogErr(ERROR_LEVEL, ER_SERVER_RPL_ENCRYPTION_UNABLE_TO_INITIALIZE);
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  if (rpl_encryption.initialize()) {  // 初始化复制加密
+    LogErr(ERROR_LEVEL, ER_SERVER_RPL_ENCRYPTION_UNABLE_TO_INITIALIZE);  // 如果初始化失败，记录错误
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
 
-  if (rpl_encryption.is_enabled() && !opt_bin_log) {
+  if (rpl_encryption.is_enabled() && !opt_bin_log) {  // 如果启用了复制加密但未启用二进制日志
     sql_print_information(
         "binlog and relay log encryption enabled without binary logging being "
         "enabled. "
-        "If relay logs are in use, they will be encrypted.");
+        "If relay logs are in use, they will be encrypted.");  // 记录信息
   }
 
-  if (opt_bin_log) {
+  if (opt_bin_log) {  // 如果启用了二进制日志
     /*
       Configures what object is used by the current log to store processed
       gtid(s). This is necessary in the MYSQL_BIN_LOG::MYSQL_BIN_LOG to
       correctly compute the set of previous gtids.
     */
-    assert(!mysql_bin_log.is_relay_log);
-    mysql_mutex_t *log_lock = mysql_bin_log.get_log_lock();
-    mysql_mutex_lock(log_lock);
+    assert(!mysql_bin_log.is_relay_log);  // 断言当前日志不是中继日志
+    mysql_mutex_t *log_lock = mysql_bin_log.get_log_lock();  // 获取日志锁
+    mysql_mutex_lock(log_lock);  // 加锁
 
     if (mysql_bin_log.open_binlog(opt_bin_logname, nullptr, max_binlog_size,
                                   false, true /*need_lock_index=true*/,
-                                  true /*need_sid_lock=true*/, nullptr)) {
-      mysql_mutex_unlock(log_lock);
-      unireg_abort(MYSQLD_ABORT_EXIT);
+                                  true /*need_sid_lock=true*/, nullptr)) {  // 打开二进制日志
+      mysql_mutex_unlock(log_lock);  // 解锁
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 如果打开失败，终止程序
     }
-    mysql_mutex_unlock(log_lock);
+    mysql_mutex_unlock(log_lock);  // 解锁
   }
 
   /*
@@ -7222,66 +7223,66 @@ static int init_server_components() {
     expire_logs_days will be ignored and only binlog_expire_logs_seconds
     will be used.
   */
-  if (binlog_expire_logs_seconds_supplied && expire_logs_days_supplied) {
-    if (binlog_expire_logs_seconds != 0 && expire_logs_days != 0) {
-      LogErr(WARNING_LEVEL, ER_EXPIRE_LOGS_DAYS_IGNORED);
-      expire_logs_days = 0;
+  if (binlog_expire_logs_seconds_supplied && expire_logs_days_supplied) {  // 如果同时提供了二进制日志过期秒数和天数
+    if (binlog_expire_logs_seconds != 0 && expire_logs_days != 0) {  // 如果两者都非零
+      LogErr(WARNING_LEVEL, ER_EXPIRE_LOGS_DAYS_IGNORED);  // 记录警告
+      expire_logs_days = 0;  // 忽略天数
     }
   } else if (expire_logs_days_supplied)
-    binlog_expire_logs_seconds = 0;
-  assert(expire_logs_days == 0 || binlog_expire_logs_seconds == 0);
+    binlog_expire_logs_seconds = 0;  // 如果只提供了天数，忽略秒数
+  assert(expire_logs_days == 0 || binlog_expire_logs_seconds == 0);  // 断言两者不会同时非零
 
-  if (!opt_bin_log) {
+  if (!opt_bin_log) {  // 如果未启用二进制日志
     if (binlog_expire_logs_seconds_supplied)
-      LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--binlog-expire-logs-seconds");
+      LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--binlog-expire-logs-seconds");  // 记录警告
     if (expire_logs_days_supplied)
-      LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--expire_logs_days");
+      LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--expire_logs_days");  // 记录警告
     if (binlog_space_limit)
-      LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--binlog-space-limit");
+      LogErr(WARNING_LEVEL, ER_NEED_LOG_BIN, "--binlog-space-limit");  // 记录警告
   }
 
-  if (opt_myisam_log) (void)mi_log(1);
+  if (opt_myisam_log) (void)mi_log(1);  // 如果启用了MyISAM日志，记录日志
 
 #if defined(HAVE_MLOCKALL) && defined(MCL_CURRENT)
-  if (locked_in_memory && !getuid()) {
-    if (setreuid((uid_t)-1, 0) == -1) {  // this should never happen
-      LogErr(ERROR_LEVEL, ER_FAIL_SETREUID, strerror(errno));
-      unireg_abort(MYSQLD_ABORT_EXIT);
+  if (locked_in_memory && !getuid()) {  // 如果启用了内存锁定且当前用户为root
+    if (setreuid((uid_t)-1, 0) == -1) {  // 设置用户ID为root
+      LogErr(ERROR_LEVEL, ER_FAIL_SETREUID, strerror(errno));  // 如果设置失败，记录错误
+      unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
     }
-    if (mlockall(MCL_CURRENT)) {
+    if (mlockall(MCL_CURRENT)) {  // 锁定内存
       LogErr(WARNING_LEVEL, ER_FAILED_TO_LOCK_MEM,
-             errno); /* purecov: inspected */
-      locked_in_memory = false;
+             errno); /* purecov: inspected */  // 如果锁定失败，记录警告
+      locked_in_memory = false;  // 禁用内存锁定
     }
 #ifndef _WIN32
-    if (!user_info.IsVoid()) set_user(mysqld_user, user_info);
+    if (!user_info.IsVoid()) set_user(mysqld_user, user_info);  // 设置用户
 #endif
   } else
 #endif
-    locked_in_memory = false;
+    locked_in_memory = false;  // 禁用内存锁定
 
-  rpl_acf_configuration_handler = new Rpl_acf_configuration_handler();
-  if (rpl_acf_configuration_handler->init()) {
-    unireg_abort(MYSQLD_ABORT_EXIT);
+  rpl_acf_configuration_handler = new Rpl_acf_configuration_handler();  // 初始化复制ACF配置处理器
+  if (rpl_acf_configuration_handler->init()) {  // 如果初始化失败
+    unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }
-  rpl_source_io_monitor = new Source_IO_monitor();
-  udf_load_service.init();
+  rpl_source_io_monitor = new Source_IO_monitor();  // 初始化源IO监控器
+  udf_load_service.init();  // 初始化UDF加载服务
 
   /* Initialize the optimizer cost module */
-  init_optimizer_cost_module(true);
-  ft_init_stopwords();
+  init_optimizer_cost_module(true);  // 初始化优化器成本模型
+  ft_init_stopwords();  // 初始化全文索引停用词
 
-  init_max_user_conn();
+  init_max_user_conn();  // 初始化最大用户连接数
 
-  init_global_user_stats();
-  init_global_client_stats();
-  init_global_thread_stats();
+  init_global_user_stats();  // 初始化全局用户统计
+  init_global_client_stats();  // 初始化全局客户端统计
+  init_global_thread_stats();  // 初始化全局线程统计
 
 #if defined(MYSQL_ICU_DATADIR)
-  init_icu_data_directory();
+  init_icu_data_directory();  // 初始化ICU数据目录
 #endif  // MYSQL_ICU_DATADIR
 
-  return 0;
+  return 0;  // 返回成功
 }
 
 #ifdef _WIN32
@@ -8160,8 +8161,11 @@ int mysqld_main(int argc, char **argv)
 #endif
 
   /* Determine default TCP port and unix socket name */
-  set_ports();
+  /* 确定默认的 TCP 端口和 Unix 套接字名称 */
+  set_ports();// 设置端口
 
+  // 初始化服务器组件
+  // 如果初始化失败，则中止服务器启动
   if (init_server_components()) unireg_abort(MYSQLD_ABORT_EXIT);
 
   if (!server_id_supplied)

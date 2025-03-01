@@ -511,68 +511,73 @@ dberr_t SysTablespace::open_file(Datafile &file) {
 
 dberr_t SysTablespace::read_lsn_and_check_flags(lsn_t *flushed_lsn) {
   /* Only relevant for the system tablespace. */
-  ut_ad(space_id() == TRX_SYS_SPACE);
+  /* 仅对系统表空间相关。 */
+  ut_ad(space_id() == TRX_SYS_SPACE); // 断言表空间 ID 为系统表空间 ID
 
-  files_t::iterator it = m_files.begin();
+  files_t::iterator it = m_files.begin(); // 获取文件列表的起始迭代器
 
-  ut_a(it->m_exists);
-  ut_ad(it->m_handle.m_file != OS_FILE_CLOSED);
+  ut_a(it->m_exists); // 断言文件存在
+  ut_ad(it->m_handle.m_file != OS_FILE_CLOSED); // 断言文件句柄未关闭
 
   dberr_t err =
-      it->read_first_page(m_ignore_read_only ? false : srv_read_only_mode);
+      it->read_first_page(m_ignore_read_only ? false : srv_read_only_mode); // 读取文件的第一页
 
-  if (err != DB_SUCCESS) {
-    return (err);
+  if (err != DB_SUCCESS) { // 如果读取失败
+    return (err); // 返回错误码
   }
 
-  ut_a(it->order() == 0);
+  ut_a(it->order() == 0); // 断言文件顺序为0
 
-  err = recv_sys->dblwr->load();
+  err = recv_sys->dblwr->load(); // 加载双写缓冲区
 
-  if (err != DB_SUCCESS) {
-    return (err);
+  if (err != DB_SUCCESS) { // 如果加载失败
+    return (err); // 返回错误码
   }
 
-  err = recv_sys->dblwr->reduced_load();
+  err = recv_sys->dblwr->reduced_load(); // 加载简化的双写缓冲区
 
-  if (err != DB_SUCCESS) {
-    return (err);
+  if (err != DB_SUCCESS) { // 如果加载失败
+    return (err); // 返回错误码
   }
 
   /* Check the contents of the first page of the first datafile. */
-  for (int retry = 0; retry < 2; ++retry) {
-    err = it->validate_first_page(it->m_space_id, flushed_lsn, false);
+  /* 检查第一个数据文件的第一页内容。 */
+  for (int retry = 0; retry < 2; ++retry) { // 重试两次
+    err = it->validate_first_page(it->m_space_id, flushed_lsn, false); // 验证第一页
 
     if (err != DB_SUCCESS &&
         (retry == 1 || it->open_or_create(srv_read_only_mode) != DB_SUCCESS ||
-         it->restore_from_doublewrite(0) != DB_SUCCESS)) {
-      it->close();
+         it->restore_from_doublewrite(0) != DB_SUCCESS)) { // 如果验证失败且重试次数为1或打开/创建文件失败或从双写缓冲区恢复失败
+      it->close(); // 关闭文件
 
-      return (err);
+      return (err); // 返回错误码
     }
   }
 
   /* Make sure the tablespace space ID matches the
   space ID on the first page of the first datafile. */
-  if (space_id() != it->m_space_id) {
+  /* 确保表空间 ID 与第一个数据文件第一页上的空间 ID 匹配。 */
+  if (space_id() != it->m_space_id) { // 如果表空间 ID 不匹配
     ib::error(ER_IB_MSG_444)
         << "The " << name() << " data file '" << it->name()
         << "' has the wrong space ID. It should be " << space_id() << ", but "
-        << it->m_space_id << " was found";
+        << it->m_space_id << " was found"; // 打印错误信息
 
-    it->close();
+    it->close(); // 关闭文件
 
-    return (err);
+    return (err); // 返回错误码
   }
 
   /* The flags of srv_sys_space do not have SDI Flag set.
   Update the flags of system tablespace to indicate the presence
   of SDI */
-  set_flags(it->flags());
+  /* srv_sys_space 的标志没有设置 SDI 标志。
+  更新系统表空间的标志以指示存在 SDI */
+  set_flags(it->flags()); // 设置标志
 
-  it->close();
+  it->close(); // 关闭文件
 
-  return (DB_SUCCESS);
+  return (DB_SUCCESS); // 返回成功
 }
 
 /** Check if a file can be opened in the correct mode.
@@ -797,47 +802,50 @@ dberr_t SysTablespace::check_file_spec(bool create_new_db,
 dberr_t SysTablespace::open_or_create(bool is_temp, bool create_new_db,
                                       page_no_t *sum_new_sizes,
                                       lsn_t *flush_lsn) {
-  dberr_t err = DB_SUCCESS;
-  fil_space_t *space = nullptr;
+  dberr_t err = DB_SUCCESS; // 初始化错误码为成功
+  fil_space_t *space = nullptr; // 初始化表空间指针为空
 
-  ut_ad(!m_files.empty());
+  ut_ad(!m_files.empty()); // 断言文件列表不为空
 
   if (sum_new_sizes) {
-    *sum_new_sizes = 0;
+    *sum_new_sizes = 0; // 初始化新文件大小总和为0
   }
 
-  files_t::iterator begin = m_files.begin();
-  files_t::iterator end = m_files.end();
+  files_t::iterator begin = m_files.begin(); // 获取文件列表的起始迭代器
+  files_t::iterator end = m_files.end(); // 获取文件列表的结束迭代器
 
-  ut_ad(begin->order() == 0);
+  ut_ad(begin->order() == 0); // 断言第一个文件的顺序为0
 
-  for (files_t::iterator it = begin; it != end; ++it) {
-    if (it->m_exists) {
-      err = open_file(*it);
+  for (files_t::iterator it = begin; it != end; ++it) { // 遍历文件列表
+    if (it->m_exists) { // 如果文件已存在
+      err = open_file(*it); // 打开文件
 
       /* For new raw device increment new size. */
+      /* 对于新的原始设备，增加新大小。 */
       if (sum_new_sizes && it->m_type == SRV_NEW_RAW) {
-        *sum_new_sizes += it->m_size;
+        *sum_new_sizes += it->m_size; // 增加新文件大小
       }
 
-    } else {
-      err = create_file(*it);
+    } else { // 如果文件不存在
+      err = create_file(*it); // 创建文件
 
       if (sum_new_sizes) {
-        *sum_new_sizes += it->m_size;
+        *sum_new_sizes += it->m_size; // 增加新文件大小
       }
 
       /* Set the correct open flags now that we have
       successfully created the file. */
+      /* 现在我们已经成功创建了文件，设置正确的打开标志。 */
       if (err == DB_SUCCESS) {
         /* We ignore new_db OUT parameter here
         as the information is known at this stage */
-        file_found(*it);
+        /* 我们在这里忽略 new_db OUT 参数，因为此阶段已知信息。 */
+        file_found(*it); // 标记文件已找到
       }
     }
 
-    if (err != DB_SUCCESS) {
-      return (err);
+    if (err != DB_SUCCESS) { // 如果发生错误
+      return (err); // 返回错误码
     }
 
 #if !defined(NO_FALLOCATE) && defined(UNIV_LINUX)
@@ -845,36 +853,41 @@ dberr_t SysTablespace::open_or_create(bool is_temp, bool create_new_db,
     tablespace because a tablespace can contain multiple
     files (nodes). The implication is that all files of
     the tablespace should be on the same medium. */
+    /* 注意：这实际上应该是每个节点而不是每个表空间，因为一个表空间可以包含多个文件（节点）。
+    这意味着表空间的所有文件应该在同一介质上。 */
 
-    if (fil_fusionio_enable_atomic_write(it->m_handle)) {
-      if (dblwr::is_enabled()) {
+    if (fil_fusionio_enable_atomic_write(it->m_handle)) { // 如果启用了 FusionIO 原子写入
+      if (dblwr::is_enabled()) { // 如果启用了双写缓冲
         ib::info(ER_IB_MSG_456) << "FusionIO atomic IO enabled,"
                                    " disabling the double write buffer";
+        // 打印信息：启用了 FusionIO 原子 IO，禁用双写缓冲
 
-        dblwr::g_mode = dblwr::Mode::OFF;
+        dblwr::g_mode = dblwr::Mode::OFF; // 禁用双写缓冲
       }
 
-      it->m_atomic_write = true;
+      it->m_atomic_write = true; // 设置文件为原子写入
     } else {
-      it->m_atomic_write = false;
+      it->m_atomic_write = false; // 设置文件为非原子写入
     }
 #else
-    it->m_atomic_write = false;
+    it->m_atomic_write = false; // 设置文件为非原子写入
 #endif /* !NO_FALLOCATE && UNIV_LINUX*/
   }
 
   if (flush_lsn != nullptr) {
-    if (create_new_db) {
+    if (create_new_db) { // 如果是创建新数据库
       /* There are no data files, so we assign the initial value
       to flush_lsn instead of reading it from disk. */
-      *flush_lsn = LOG_START_LSN + LOG_BLOCK_HDR_SIZE;
+      /* 没有数据文件，所以我们将初始值分配给 flush_lsn，而不是从磁盘读取。 */
+      *flush_lsn = LOG_START_LSN + LOG_BLOCK_HDR_SIZE; // 设置初始 flush_lsn
     } else {
       /* Validate the header page in the first datafile in the
       system tablespace and read flush_lsn from the validated
       header page. */
-      err = read_lsn_and_check_flags(flush_lsn);
+      /* 验证系统表空间中第一个数据文件的头页，并从验证的头页读取 flush_lsn。 */
+      err = read_lsn_and_check_flags(flush_lsn); // 读取 LSN 并检查标志
       if (err != DB_SUCCESS) {
-        return (err);
+        return (err); // 返回错误码
       }
     }
   }
@@ -882,38 +895,42 @@ dberr_t SysTablespace::open_or_create(bool is_temp, bool create_new_db,
   /* Close the current handles, add space and file info to the
   fil_system cache and the Data Dictionary, and re-open them
   in file_system cache so that they stay open until shutdown. */
-  ulint node_counter = 0;
-  for (files_t::iterator it = begin; it != end; ++it) {
-    it->close();
-    it->m_exists = true;
+  /* 关闭当前句柄，将空间和文件信息添加到 fil_system 缓存和数据字典中，并在 file_system 缓存中重新打开它们，以便它们在关闭之前保持打开状态。 */
+  ulint node_counter = 0; // 初始化节点计数器
+  for (files_t::iterator it = begin; it != end; ++it) { // 遍历文件列表
+    it->close(); // 关闭文件
+    it->m_exists = true; // 标记文件已存在
 
-    if (it == begin) {
+    if (it == begin) { // 如果是第一个文件
       /* First data file. */
+      /* 第一个数据文件。 */
 
       /* Create the tablespace entry for the multi-file
       tablespace in the tablespace manager. */
+      /* 在表空间管理器中为多文件表空间创建表空间条目。 */
       space =
           fil_space_create(name(), space_id(), flags(),
-                           is_temp ? FIL_TYPE_TEMPORARY : FIL_TYPE_TABLESPACE);
+                           is_temp ? FIL_TYPE_TEMPORARY : FIL_TYPE_TABLESPACE); // 创建表空间
     }
 
-    ut_ad(fil_validate());
+    ut_ad(fil_validate()); // 断言文件系统验证通过
 
     page_no_t max_size =
         (++node_counter == m_files.size()
              ? (m_last_file_size_max == 0 ? PAGE_NO_MAX : m_last_file_size_max)
-             : it->m_size);
+             : it->m_size); // 计算最大页面大小
 
     /* Add the datafile to the fil_system cache. */
+    /* 将数据文件添加到 fil_system 缓存中。 */
     if (!fil_node_create(it->m_filepath, it->m_size, space,
                          it->m_type != SRV_NOT_RAW, it->m_atomic_write,
                          max_size)) {
-      err = DB_ERROR;
-      break;
+      err = DB_ERROR; // 设置错误码
+      break; // 跳出循环
     }
   }
 
-  return (err);
+  return (err); // 返回错误码
 }
 #endif /* !UNIV_HOTBACKUP */
 

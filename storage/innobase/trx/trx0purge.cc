@@ -241,36 +241,38 @@ void trx_purge_sys_mem_create() {
 void trx_purge_sys_initialize(uint32_t n_purge_threads,
                               purge_pq_t *purge_queue) {
   /* Take ownership of purge_queue, we are responsible for freeing it. */
+  /* 接管 purge_queue，我们负责释放它。 */
   purge_sys->purge_queue = purge_queue;
 
-  ut_a(n_purge_threads > 0);
+  ut_a(n_purge_threads > 0); // 断言清除线程数量大于 0
 
-  purge_sys->sess = sess_open();
+  purge_sys->sess = sess_open(); // 打开会话
 
-  purge_sys->trx = purge_sys->sess->trx;
+  purge_sys->trx = purge_sys->sess->trx; // 获取事务
 
-  ut_a(purge_sys->trx->sess == purge_sys->sess);
+  ut_a(purge_sys->trx->sess == purge_sys->sess); // 断言事务的会话等于清除系统的会话
 
   /* A purge transaction is not a real transaction, we use a transaction
   here only because the query threads code requires it. It is otherwise
   quite unnecessary. We should get rid of it eventually. */
-  purge_sys->trx->id = 0;
+  /* 清除事务不是真正的事务，我们在这里使用事务只是因为查询线程代码需要它。否则它是完全不必要的。我们最终应该摆脱它。 */
+  purge_sys->trx->id = 0; // 设置事务 ID 为 0
   purge_sys->trx->start_time.store(std::chrono::system_clock::now(),
-                                   std::memory_order_relaxed);
-  purge_sys->trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
-  purge_sys->trx->op_info = "purge trx";
-  purge_sys->trx->purge_sys_trx = true;
+                                   std::memory_order_relaxed); // 设置事务开始时间
+  purge_sys->trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed); // 设置事务状态为活动
+  purge_sys->trx->op_info = "purge trx"; // 设置事务操作信息
+  purge_sys->trx->purge_sys_trx = true; // 设置事务为清除系统事务
 
-  purge_sys->query = trx_purge_graph_build(purge_sys->trx, n_purge_threads);
+  purge_sys->query = trx_purge_graph_build(purge_sys->trx, n_purge_threads); // 构建清除图
 
-  new (&purge_sys->view) ReadView();
+  new (&purge_sys->view) ReadView(); // 初始化读取视图
 
-  trx_sys->mvcc->clone_oldest_view(&purge_sys->view);
+  trx_sys->mvcc->clone_oldest_view(&purge_sys->view); // 克隆最旧的视图
 
-  purge_sys->view_active = true;
+  purge_sys->view_active = true; // 设置视图为活动
 
   purge_sys->rseg_iter = ut::new_withkey<TrxUndoRsegsIterator>(
-      UT_NEW_THIS_FILE_PSI_KEY, purge_sys);
+      UT_NEW_THIS_FILE_PSI_KEY, purge_sys); // 初始化回滚段迭代器
 }
 
 /************************************************************************

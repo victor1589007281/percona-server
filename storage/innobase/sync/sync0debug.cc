@@ -1659,25 +1659,30 @@ std::string sync_file_created_get(const void *ptr) {
 
 /** Initializes the synchronization data structures.
 @param[in]      max_threads     Maximum threads that can be created. */
+/** 初始化同步数据结构。
+@param[in]      max_threads     可以创建的最大线程数。 */
 void sync_check_init(size_t max_threads) {
-  ut_ad(!LatchDebug::s_initialized);
-  ut_d(LatchDebug::s_initialized = true);
+  ut_ad(!LatchDebug::s_initialized); // 断言 LatchDebug 未初始化
+  ut_d(LatchDebug::s_initialized = true); // 设置 LatchDebug 为已初始化
 
   /** For collecting latch statistic - SHOW ... MUTEX */
-  mutex_monitor = ut::new_withkey<MutexMonitor>(UT_NEW_THIS_FILE_PSI_KEY);
+  /** 用于收集锁存统计信息 - SHOW ... MUTEX */
+  mutex_monitor = ut::new_withkey<MutexMonitor>(UT_NEW_THIS_FILE_PSI_KEY); // 创建 MutexMonitor 实例
 
-  /** For trcking mutex creation location */
-  create_tracker = ut::new_withkey<CreateTracker>(UT_NEW_THIS_FILE_PSI_KEY);
+  /** For tracking mutex creation location */
+  /** 用于跟踪互斥锁创建位置 */
+  create_tracker = ut::new_withkey<CreateTracker>(UT_NEW_THIS_FILE_PSI_KEY); // 创建 CreateTracker 实例
 
-  sync_latch_meta_init();
+  sync_latch_meta_init(); // 初始化锁存元数据
 
   /* Init the mutex list and create the mutex to protect it. */
+  /* 初始化互斥锁列表并创建保护它的互斥锁。 */
 
-  mutex_create(LATCH_ID_RW_LOCK_LIST, &rw_lock_list_mutex);
+  mutex_create(LATCH_ID_RW_LOCK_LIST, &rw_lock_list_mutex); // 创建互斥锁
 
-  ut_d(LatchDebug::init());
+  ut_d(LatchDebug::init()); // 初始化 LatchDebug
 
-  sync_array_init(max_threads);
+  sync_array_init(max_threads); // 初始化同步数组
 }
 
 /** Frees the resources in InnoDB's own synchronization data structures. */

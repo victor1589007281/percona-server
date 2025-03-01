@@ -678,81 +678,82 @@ static void log_sys_create() { // 创建日志系统
 dberr_t log_start(log_t &log, lsn_t checkpoint_lsn, lsn_t start_lsn,
                   byte first_block[OS_FILE_LOG_BLOCK_SIZE],
                   bool allow_checkpoints) {
-  ut_a(log_sys != nullptr);
-  ut_a(checkpoint_lsn >= OS_FILE_LOG_BLOCK_SIZE);
-  ut_a(checkpoint_lsn >= LOG_START_LSN);
-  ut_a(start_lsn >= checkpoint_lsn);
-  ut_a(arch_log_sys == nullptr || !arch_log_sys->is_active());
+  ut_a(log_sys != nullptr); // 断言日志系统不为空
+  ut_a(checkpoint_lsn >= OS_FILE_LOG_BLOCK_SIZE); // 断言检查点 LSN 大于等于日志块大小
+  ut_a(checkpoint_lsn >= LOG_START_LSN); // 断言检查点 LSN 大于等于日志起始 LSN
+  ut_a(start_lsn >= checkpoint_lsn); // 断言起始 LSN 大于等于检查点 LSN
+  ut_a(arch_log_sys == nullptr || !arch_log_sys->is_active()); // 断言归档日志系统为空或未激活
 
-  log.write_to_file_requests_total.store(0);
-  log.write_to_file_requests_interval.store(std::chrono::seconds::zero());
+  log.write_to_file_requests_total.store(0); // 初始化写入文件请求总数
+  log.write_to_file_requests_interval.store(std::chrono::seconds::zero()); // 初始化写入文件请求间隔
 
-  log.recovered_lsn = start_lsn;
-  log.last_checkpoint_lsn = checkpoint_lsn;
-  log.available_for_checkpoint_lsn = checkpoint_lsn;
-  log.m_allow_checkpoints.store(allow_checkpoints);
+  log.recovered_lsn = start_lsn; // 设置恢复的 LSN
+  log.last_checkpoint_lsn = checkpoint_lsn; // 设置最后一个检查点 LSN
+  log.available_for_checkpoint_lsn = checkpoint_lsn; // 设置可用于检查点的 LSN
+  log.m_allow_checkpoints.store(allow_checkpoints); // 设置是否允许检查点
 
-  ut_a((log.sn.load(std::memory_order_acquire) & SN_LOCKED) == 0);
-  log.sn = log_translate_lsn_to_sn(log.recovered_lsn);
-  log.sn_locked = log_translate_lsn_to_sn(log.recovered_lsn);
+  ut_a((log.sn.load(std::memory_order_acquire) & SN_LOCKED) == 0); // 断言日志序列号未锁定
+  log.sn = log_translate_lsn_to_sn(log.recovered_lsn); // 转换恢复的 LSN 为序列号
+  log.sn_locked = log_translate_lsn_to_sn(log.recovered_lsn); // 转换恢复的 LSN 为锁定的序列号
 
-  if ((start_lsn + LOG_BLOCK_TRL_SIZE) % OS_FILE_LOG_BLOCK_SIZE == 0) {
-    start_lsn += LOG_BLOCK_TRL_SIZE + LOG_BLOCK_HDR_SIZE;
-  } else if (start_lsn % OS_FILE_LOG_BLOCK_SIZE == 0) {
-    start_lsn += LOG_BLOCK_HDR_SIZE;
+  if ((start_lsn + LOG_BLOCK_TRL_SIZE) % OS_FILE_LOG_BLOCK_SIZE == 0) { // 如果起始 LSN 加上日志块尾部大小是日志块大小的倍数
+    start_lsn += LOG_BLOCK_TRL_SIZE + LOG_BLOCK_HDR_SIZE; // 更新起始 LSN
+  } else if (start_lsn % OS_FILE_LOG_BLOCK_SIZE == 0) { // 如果起始 LSN 是日志块大小的倍数
+    start_lsn += LOG_BLOCK_HDR_SIZE; // 更新起始 LSN
   }
-  ut_a(start_lsn > LOG_START_LSN);
+  ut_a(start_lsn > LOG_START_LSN); // 断言起始 LSN 大于日志起始 LSN
 
-  log.recent_written.add_link(0, start_lsn);
-  log.recent_written.advance_tail();
-  ut_a(log_buffer_ready_for_write_lsn(log) == start_lsn);
+  log.recent_written.add_link(0, start_lsn); // 添加最近写入的链接
+  log.recent_written.advance_tail(); // 前进尾部
+  ut_a(log_buffer_ready_for_write_lsn(log) == start_lsn); // 断言日志缓冲区准备写入的 LSN 等于起始 LSN
 
-  log.recent_closed.add_link(0, start_lsn);
-  log.recent_closed.advance_tail();
-  ut_a(log_buffer_dirty_pages_added_up_to_lsn(log) == start_lsn);
+  log.recent_closed.add_link(0, start_lsn); // 添加最近关闭的链接
+  log.recent_closed.advance_tail(); // 前进尾部
+  ut_a(log_buffer_dirty_pages_added_up_to_lsn(log) == start_lsn); // 断言日志缓冲区脏页添加到的 LSN 等于起始 LSN
 
-  log.write_lsn = start_lsn;
-  log.flushed_to_disk_lsn = start_lsn;
+  log.write_lsn = start_lsn; // 设置写入 LSN
+  log.flushed_to_disk_lsn = start_lsn; // 设置刷新到磁盘的 LSN
 
-  log.write_ahead_end_offset = 0;
+  log.write_ahead_end_offset = 0; // 设置写入提前结束偏移量
 
-  lsn_t block_lsn;
-  byte *block;
+  lsn_t block_lsn; // 块 LSN
+  byte *block; // 块指针
 
-  block_lsn = ut_uint64_align_down(start_lsn, OS_FILE_LOG_BLOCK_SIZE);
+  block_lsn = ut_uint64_align_down(start_lsn, OS_FILE_LOG_BLOCK_SIZE); // 对齐块 LSN
 
-  ut_a(block_lsn % log.buf_size + OS_FILE_LOG_BLOCK_SIZE <= log.buf_size);
+  ut_a(block_lsn % log.buf_size + OS_FILE_LOG_BLOCK_SIZE <= log.buf_size); // 断言块 LSN 加上日志块大小小于等于日志缓冲区大小
 
-  block = static_cast<byte *>(log.buf) + block_lsn % log.buf_size;
+  block = static_cast<byte *>(log.buf) + block_lsn % log.buf_size; // 获取块指针
 
-  Log_data_block_header block_header;
-  block_header.set_lsn(block_lsn);
-  block_header.m_data_len = start_lsn - block_lsn;
+  Log_data_block_header block_header; // 日志数据块头部
+  block_header.set_lsn(block_lsn); // 设置块 LSN
+  block_header.m_data_len = start_lsn - block_lsn; // 设置数据长度
 
-  if (first_block != nullptr) {
-    std::memcpy(block, first_block, OS_FILE_LOG_BLOCK_SIZE);
-    block_header.m_first_rec_group = log_block_get_first_rec_group(block);
+  if (first_block != nullptr) { // 如果第一个块不为空
+    std::memcpy(block, first_block, OS_FILE_LOG_BLOCK_SIZE); // 复制第一个块
+    block_header.m_first_rec_group = log_block_get_first_rec_group(block); // 获取第一个记录组
   } else {
-    ut_a(start_lsn % OS_FILE_LOG_BLOCK_SIZE == LOG_BLOCK_HDR_SIZE);
-    std::memset(block, 0x00, OS_FILE_LOG_BLOCK_SIZE);
-    block_header.m_first_rec_group = LOG_BLOCK_HDR_SIZE;
+    ut_a(start_lsn % OS_FILE_LOG_BLOCK_SIZE == LOG_BLOCK_HDR_SIZE); // 断言起始 LSN 是日志块头部大小的倍数
+    std::memset(block, 0x00, OS_FILE_LOG_BLOCK_SIZE); // 清空块
+    block_header.m_first_rec_group = LOG_BLOCK_HDR_SIZE; // 设置第一个记录组
   }
 
-  ut_ad(log.first_block_is_correct_for_lsn == start_lsn);
-  ut_ad(LOG_BLOCK_HDR_SIZE <= block_header.m_first_rec_group);
-  ut_ad(block_header.m_first_rec_group <= block_header.m_data_len);
+  ut_ad(log.first_block_is_correct_for_lsn == start_lsn); // 断言第一个块的 LSN 正确
+  ut_ad(LOG_BLOCK_HDR_SIZE <= block_header.m_first_rec_group); // 断言日志块头部大小小于等于第一个记录组
+  ut_ad(block_header.m_first_rec_group <= block_header.m_data_len); // 断言第一个记录组小于等于数据长度
 
-  log_data_block_header_serialize(block_header, block);
+  log_data_block_header_serialize(block_header, block); // 序列化日志数据块头部
 
-  log_update_buf_limit(log, start_lsn);
+  log_update_buf_limit(log, start_lsn); // 更新日志缓冲区限制
 
-  const dberr_t err = log_files_start(log);
+  const dberr_t err = log_files_start(log); // 启动日志文件
 
   /* Do not reorder writes above, below this line. For x86 this
   protects only from unlikely compile-time reordering. */
-  std::atomic_thread_fence(std::memory_order_release);
+  /* 不要重新排序上面的写入和下面的写入。对于 x86，这仅保护不太可能的编译时重新排序。 */
+  std::atomic_thread_fence(std::memory_order_release); // 内存屏障
 
-  return err;
+  return err; // 返回错误码
 }
 
 static void log_sys_free() {
@@ -850,50 +851,50 @@ void log_background_threads_inactive_validate() {
 }
 
 void log_start_background_threads(log_t &log) {
-  ib::info(ER_IB_MSG_1258) << "Log background threads are being started...";
+  ib::info(ER_IB_MSG_1258) << "Log background threads are being started..."; // 打印日志后台线程启动信息
 
-  log_background_threads_inactive_validate();
+  log_background_threads_inactive_validate(); // 验证日志后台线程未激活
 
-  ut_ad(!log.disable_redo_writes);
-  ut_a(!srv_read_only_mode);
-  ut_a(log.sn.load() > 0);
+  ut_ad(!log.disable_redo_writes); // 断言重做写入未禁用
+  ut_a(!srv_read_only_mode); // 断言服务器非只读模式
+  ut_a(log.sn.load() > 0); // 断言日志序列号大于 0
 
-  log.should_stop_threads.store(false);
-  log.writer_threads_paused.store(false);
+  log.should_stop_threads.store(false); // 设置不停止线程
+  log.writer_threads_paused.store(false); // 设置写入线程未暂停
 
   srv_threads.m_log_checkpointer =
-      os_thread_create(log_checkpointer_thread_key, 0, log_checkpointer, &log);
+      os_thread_create(log_checkpointer_thread_key, 0, log_checkpointer, &log); // 创建日志检查点线程
 
   srv_threads.m_log_flush_notifier = os_thread_create(
-      log_flush_notifier_thread_key, 0, log_flush_notifier, &log);
+      log_flush_notifier_thread_key, 0, log_flush_notifier, &log); // 创建日志刷新通知线程
 
   srv_threads.m_log_flusher =
-      os_thread_create(log_flusher_thread_key, 0, log_flusher, &log);
+      os_thread_create(log_flusher_thread_key, 0, log_flusher, &log); // 创建日志刷新线程
 
   srv_threads.m_log_write_notifier = os_thread_create(
-      log_write_notifier_thread_key, 0, log_write_notifier, &log);
+      log_write_notifier_thread_key, 0, log_write_notifier, &log); // 创建日志写入通知线程
 
   srv_threads.m_log_writer =
-      os_thread_create(log_writer_thread_key, 0, log_writer, &log);
+      os_thread_create(log_writer_thread_key, 0, log_writer, &log); // 创建日志写入线程
 
   srv_threads.m_log_files_governor = os_thread_create(
-      log_files_governor_thread_key, 0, log_files_governor, &log);
+      log_files_governor_thread_key, 0, log_files_governor, &log); // 创建日志文件管理线程
 
-  log.m_no_more_dummy_records_requested.store(false);
-  log.m_no_more_dummy_records_promised.store(false);
+  log.m_no_more_dummy_records_requested.store(false); // 设置不再请求虚拟记录
+  log.m_no_more_dummy_records_promised.store(false); // 设置不再承诺虚拟记录
 
-  srv_threads.m_log_checkpointer.start();
-  srv_threads.m_log_flush_notifier.start();
-  srv_threads.m_log_flusher.start();
-  srv_threads.m_log_write_notifier.start();
-  srv_threads.m_log_writer.start();
-  srv_threads.m_log_files_governor.start();
+  srv_threads.m_log_checkpointer.start(); // 启动日志检查点线程
+  srv_threads.m_log_flush_notifier.start(); // 启动日志刷新通知线程
+  srv_threads.m_log_flusher.start(); // 启动日志刷新线程
+  srv_threads.m_log_write_notifier.start(); // 启动日志写入通知线程
+  srv_threads.m_log_writer.start(); // 启动日志写入线程
+  srv_threads.m_log_files_governor.start(); // 启动日志文件管理线程
 
-  log_background_threads_active_validate(log);
+  log_background_threads_active_validate(log); // 验证日志后台线程已激活
 
-  log_control_writer_threads(log);
+  log_control_writer_threads(log); // 控制日志写入线程
 
-  meb::redo_log_archive_init();
+  meb::redo_log_archive_init(); // 初始化重做日志归档
 }
 
 void log_stop_background_threads(log_t &log) {
@@ -1622,108 +1623,116 @@ static dberr_t log_sys_check_directory(const Log_files_context &ctx,
 
 dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
                      lsn_t &new_files_lsn) {
-  ut_a(log_is_data_lsn(flushed_lsn));
-  ut_a(log_sys == nullptr);
+  ut_a(log_is_data_lsn(flushed_lsn)); // 断言 flushed_lsn 是有效的 LSN
+  ut_a(log_sys == nullptr); // 断言 log_sys 为空
 
-  new_files_lsn = 0;
+  new_files_lsn = 0; // 初始化 new_files_lsn 为 0
 
   Log_files_context log_files_ctx{srv_log_group_home_dir,
-                                  Log_files_ruleset::PRE_8_0_30};
+                                  Log_files_ruleset::PRE_8_0_30}; // 创建日志文件上下文
 
-  std::string root_path;
-  bool found_files_in_root{false};
+  std::string root_path; // 根路径
+  bool found_files_in_root{false}; // 是否在根路径中找到文件
   dberr_t err =
-      log_sys_check_directory(log_files_ctx, root_path, found_files_in_root);
+      log_sys_check_directory(log_files_ctx, root_path, found_files_in_root); // 检查目录
 
   /* Report error if innodb_log_group_home_dir / datadir has not been found or
   could not be listed. It's a proper decision for all redo format versions:
     - older formats store there ib_logfile* files directly,
     - newer formats store there #innodb_redo subdirectory. */
+  /* 如果未找到 innodb_log_group_home_dir / datadir 或无法列出，则报告错误。
+  这是所有重做格式版本的正确决定：
+    - 较旧的格式直接存储 ib_logfile* 文件，
+    - 较新的格式存储在 #innodb_redo 子目录中。 */
   if (err != DB_SUCCESS) {
-    ib::error(ER_IB_MSG_LOG_INIT_DIR_LIST_FAILED, root_path.c_str());
-    return err;
+    ib::error(ER_IB_MSG_LOG_INIT_DIR_LIST_FAILED, root_path.c_str()); // 打印错误信息
+    return err; // 返回错误
   }
 
   Log_file_handle::s_on_before_read = [](Log_file_id, Log_file_type file_type,
                                          os_offset_t, os_offset_t read_size) {
-    ut_a(file_type == Log_file_type::NORMAL);
-    ut_a(srv_is_being_started);
+    ut_a(file_type == Log_file_type::NORMAL); // 断言文件类型为 NORMAL
+    ut_a(srv_is_being_started); // 断言服务器正在启动
 #ifndef UNIV_HOTBACKUP
-    srv_stats.data_read.add(read_size);
+    srv_stats.data_read.add(read_size); // 更新读取的数据统计
 #endif /* !UNIV_HOTBACKUP */
   };
 
   Log_file_handle::s_on_before_write =
       [](Log_file_id file_id, Log_file_type file_type, os_offset_t write_offset,
          os_offset_t write_size) {
-        ut_a(!srv_read_only_mode);
-        if (!srv_is_being_started) {
-          ut_a(log_sys != nullptr);
-          auto file = log_sys->m_files.file(file_id);
-          if (file_type == Log_file_type::NORMAL) {
-            ut_a(file != log_sys->m_files.end());
+        ut_a(!srv_read_only_mode); // 断言不是只读模式
+        if (!srv_is_being_started) { // 如果服务器未在启动
+          ut_a(log_sys != nullptr); // 断言 log_sys 不为空
+          auto file = log_sys->m_files.file(file_id); // 获取文件
+          if (file_type == Log_file_type::NORMAL) { // 如果文件类型为 NORMAL
+            ut_a(file != log_sys->m_files.end()); // 断言文件不在末尾
             ut_a((file_id == log_sys->m_current_file.m_id &&
                   write_offset + write_size <= file->m_size_in_bytes) ||
-                 write_offset + write_size <= LOG_FILE_HDR_SIZE);
+                 write_offset + write_size <= LOG_FILE_HDR_SIZE); // 断言写入偏移量和大小有效
           } else {
-            ut_a(file == log_sys->m_files.end());
-            ut_a(file_id == log_sys->m_current_file.next_id());
+            ut_a(file == log_sys->m_files.end()); // 断言文件在末尾
+            ut_a(file_id == log_sys->m_current_file.next_id()); // 断言文件 ID 为下一个 ID
           }
         }
 #ifndef UNIV_HOTBACKUP
-        srv_stats.data_written.add(write_size);
+        srv_stats.data_written.add(write_size); // 更新写入的数据统计
 #endif
       };
 
 #ifdef _WIN32
   Log_file_handle::s_skip_fsyncs =
-      (srv_win_file_flush_method == SRV_WIN_IO_UNBUFFERED);
+      (srv_win_file_flush_method == SRV_WIN_IO_UNBUFFERED); // 设置是否跳过 fsync
 #else
   Log_file_handle::s_skip_fsyncs =
       (srv_unix_file_flush_method == SRV_UNIX_O_DSYNC ||
-       srv_unix_file_flush_method == SRV_UNIX_NOSYNC);
+       srv_unix_file_flush_method == SRV_UNIX_NOSYNC); // 设置是否跳过 fsync
 #endif /* _WIN32 */
 
-  if (!found_files_in_root) {
+  if (!found_files_in_root) { // 如果未在根路径中找到文件
     log_files_ctx =
-        Log_files_context{srv_log_group_home_dir, Log_files_ruleset::CURRENT};
+        Log_files_context{srv_log_group_home_dir, Log_files_ruleset::CURRENT}; // 更新日志文件上下文
 
-    std::string subdir_path;
-    bool found_files_in_subdir{false};
+    std::string subdir_path; // 子目录路径
+    bool found_files_in_subdir{false}; // 是否在子目录中找到文件
     err = log_sys_check_directory(log_files_ctx, subdir_path,
-                                  found_files_in_subdir);
+                                  found_files_in_subdir); // 检查子目录
 
     switch (err) {
       case DB_SUCCESS:
-        if (expect_no_files && found_files_in_subdir) {
+        if (expect_no_files && found_files_in_subdir) { // 如果期望没有文件但在子目录中找到文件
           ib::error(ER_IB_MSG_LOG_INIT_DIR_NOT_EMPTY_WONT_INITIALIZE,
-                    subdir_path.c_str());
-          return DB_ERROR;
+                    subdir_path.c_str()); // 打印错误信息
+          return DB_ERROR; // 返回错误
         }
-        if (!srv_read_only_mode) {
+        if (!srv_read_only_mode) { // 如果不是只读模式
           /* The problem is that a lot of people is not aware
           that sending SHUTDOWN command does not end when the
           server is no longer running, but earlier (obvious!).
           Starting MySQL without waiting on previous instance
           stopped, seems a bad idea and it often led to
           quick failures here if we did not retry. */
+          /* 问题是很多人不知道发送 SHUTDOWN 命令并不会在服务器不再运行时结束，而是更早（显而易见！）。
+          在前一个实例停止之前启动 MySQL 似乎是一个坏主意，如果我们不重试，它通常会导致快速失败。 */
           for (size_t retries = 0;; ++retries) {
             const auto remove_unused_files_ret =
-                log_remove_unused_files(log_files_ctx);
+                log_remove_unused_files(log_files_ctx); // 移除未使用的文件
             if (remove_unused_files_ret.first == DB_SUCCESS) {
-              break;
+              break; // 成功移除未使用的文件
             }
-            ut_a(retries < 300);
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            ut_a(retries < 300); // 断言重试次数小于 300
+            std::this_thread::sleep_for(std::chrono::seconds(1)); // 等待 1 秒
           }
         }
         break;
       case DB_NOT_FOUND:
         /* The #innodb_redo directory has not been found. */
-        if (expect_no_files) {
+        /* 未找到 #innodb_redo 目录。 */
+        if (expect_no_files) { // 如果期望没有文件
           /* InnoDB needs to create new directory #innodb_redo. */
-          if (!os_file_create_directory(subdir_path.c_str(), false)) {
-            return DB_ERROR;
+          /* InnoDB 需要创建新的 #innodb_redo 目录。 */
+          if (!os_file_create_directory(subdir_path.c_str(), false)) { // 创建目录
+            return DB_ERROR; // 返回错误
           }
         } else {
           /* InnoDB does not start if neither ib_logfile* files were found,
@@ -1731,156 +1740,166 @@ dberr_t log_sys_init(bool expect_no_files, lsn_t flushed_lsn,
           about the problem and decide to either:
             - use older version of MySQL (<= 8.0.29) and do a non-fast shutdown,
             - or create the missing #innodb_redo */
+          /* 如果未找到 ib_logfile* 文件，也未找到 #innodb_redo 目录，则 InnoDB 不会启动。
+          应通知用户问题，并决定：
+            - 使用旧版本的 MySQL（<= 8.0.29）并进行非快速关闭，
+            - 或创建缺失的 #innodb_redo */
           ib::error(ER_IB_MSG_LOG_INIT_DIR_MISSING_SUBDIR, LOG_DIRECTORY_NAME,
-                    log_pre_8_0_30::FILE_BASE_NAME, root_path.c_str());
-          return DB_ERROR;
+                    log_pre_8_0_30::FILE_BASE_NAME, root_path.c_str()); // 打印错误信息
+          return DB_ERROR; // 返回错误
         }
         break;
       default:
-        ib::error(ER_IB_MSG_LOG_INIT_DIR_LIST_FAILED, subdir_path.c_str());
-        return err;
+        ib::error(ER_IB_MSG_LOG_INIT_DIR_LIST_FAILED, subdir_path.c_str()); // 打印错误信息
+        return err; // 返回错误
     }
 
   } else {
     /* Found existing files in old location for redo files (PRE_8_0_30).
     If expected to see no files (and create new), return error emitting
     the error message. */
+    /* 在旧位置找到重做文件（PRE_8_0_30）的现有文件。
+    如果期望没有文件（并创建新文件），则返回错误并发出错误消息。 */
     if (expect_no_files) {
       ib::error(ER_IB_MSG_LOG_INIT_DIR_NOT_EMPTY_WONT_INITIALIZE,
-                root_path.c_str());
-      return DB_ERROR;
+                root_path.c_str()); // 打印错误信息
+      return DB_ERROR; // 返回错误
     }
   }
 
-//初始化日志系统
+  // 初始化日志系统
   log_sys_create();
-  ut_a(log_sys != nullptr);
-  log_t &log = *log_sys;
+  ut_a(log_sys != nullptr); // 断言 log_sys 不为空
+  log_t &log = *log_sys; // 获取日志系统
 
-  bool is_concurrency_margin_safe;
+  bool is_concurrency_margin_safe; // 并发边界是否安全
   log_concurrency_margin(
       Log_files_capacity::soft_logical_capacity_for_hard(
           Log_files_capacity::hard_logical_capacity_for_physical(
               srv_redo_log_capacity_used)),
-      is_concurrency_margin_safe);
+      is_concurrency_margin_safe); // 计算并发边界
 
-  if (!is_concurrency_margin_safe) {
-    os_offset_t min_redo_log_capacity = srv_redo_log_capacity_used;
-    os_offset_t max_redo_log_capacity = LOG_CAPACITY_MAX;
+  if (!is_concurrency_margin_safe) { // 如果并发边界不安全
+    os_offset_t min_redo_log_capacity = srv_redo_log_capacity_used; // 最小重做日志容量
+    os_offset_t max_redo_log_capacity = LOG_CAPACITY_MAX; // 最大重做日志容量
     while (min_redo_log_capacity < max_redo_log_capacity) {
       const os_offset_t capacity_to_check =
-          (min_redo_log_capacity + max_redo_log_capacity) / 2;
+          (min_redo_log_capacity + max_redo_log_capacity) / 2; // 计算要检查的容量
 
       log_concurrency_margin(
           Log_files_capacity::soft_logical_capacity_for_hard(
               Log_files_capacity::hard_logical_capacity_for_physical(
                   capacity_to_check)),
-          is_concurrency_margin_safe);
+          is_concurrency_margin_safe); // 计算并发边界
 
       if (is_concurrency_margin_safe) {
-        max_redo_log_capacity = capacity_to_check;
+        max_redo_log_capacity = capacity_to_check; // 更新最大重做日志容量
       } else {
-        min_redo_log_capacity = capacity_to_check + 1;
+        min_redo_log_capacity = capacity_to_check + 1; // 更新最小重做日志容量
       }
     }
 
     /* The innodb_redo_log_capacity is always rounded to 1M */
+    /* innodb_redo_log_capacity 始终四舍五入到 1M */
     min_redo_log_capacity =
-        ut_uint64_align_up(min_redo_log_capacity, 1024UL * 1024);
+        ut_uint64_align_up(min_redo_log_capacity, 1024UL * 1024); // 对齐最小重做日志容量
 
     ib::error(ER_IB_MSG_LOG_PARAMS_CONCURRENCY_MARGIN_UNSAFE,
               ulonglong{srv_redo_log_capacity_used / 1024 / 1024},
               ulong{srv_thread_concurrency},
               ulonglong{min_redo_log_capacity / 1024 / 1024},
-              INNODB_PARAMETERS_MSG);
+              INNODB_PARAMETERS_MSG); // 打印错误信息
 
-    return DB_ERROR;
+    return DB_ERROR; // 返回错误
   }
 
-  log.m_files_ctx = std::move(log_files_ctx);
+  log.m_files_ctx = std::move(log_files_ctx); // 移动日志文件上下文
 
-  if (expect_no_files) {
-    ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
-    ut_a(!srv_read_only_mode);
+  if (expect_no_files) { // 如果期望没有文件
+    ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO); // 断言强制恢复级别小于 SRV_FORCE_NO_LOG_REDO
+    ut_a(!srv_read_only_mode); // 断言不是只读模式
 
-    ut_a(log.m_files_ctx.m_files_ruleset == Log_files_ruleset::CURRENT);
+    ut_a(log.m_files_ctx.m_files_ruleset == Log_files_ruleset::CURRENT); // 断言文件规则集为 CURRENT
 
-    return log_files_create(log, flushed_lsn, new_files_lsn);
+    return log_files_create(log, flushed_lsn, new_files_lsn); // 创建日志文件
   }
 
-  if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
-    return DB_SUCCESS;
+  if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) { // 如果强制恢复级别大于等于 SRV_FORCE_NO_LOG_REDO
+    return DB_SUCCESS; // 返回成功
   }
 
-  Log_files_dict files{log.m_files_ctx};
-  Log_format format;
-  std::string creator_name;
-  Log_flags log_flags;
-  Log_uuid log_uuid;
+  Log_files_dict files{log.m_files_ctx}; // 日志文件字典
+  Log_format format; // 日志格式
+  std::string creator_name; // 创建者名称
+  Log_flags log_flags; // 日志标志
+  Log_uuid log_uuid; // 日志 UUID
 
-  ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
+  ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO); // 断言强制恢复级别小于 SRV_FORCE_NO_LOG_REDO
 
   auto res = log_files_find_and_analyze(
       srv_read_only_mode, log.m_encryption_metadata, files, format,
-      creator_name, log_flags, log_uuid);
+      creator_name, log_flags, log_uuid); // 查找并分析日志文件
   switch (res) {
     case Log_files_find_result::FOUND_VALID_FILES:
-      log.m_format = format;
-      log.m_creator_name = creator_name;
-      log.m_log_flags = log_flags;
-      log.m_log_uuid = log_uuid;
-      log.m_files = std::move(files);
+      log.m_format = format; // 设置日志格式
+      log.m_creator_name = creator_name; // 设置创建者名称
+      log.m_log_flags = log_flags; // 设置日志标志
+      log.m_log_uuid = log_uuid; // 设置日志 UUID
+      log.m_files = std::move(files); // 移动日志文件
       break;
 
     case Log_files_find_result::FOUND_UNINITIALIZED_FILES:
-      ut_a(format == Log_format::CURRENT);
+      ut_a(format == Log_format::CURRENT); // 断言格式为 CURRENT
       [[fallthrough]];
     case Log_files_find_result::FOUND_NO_FILES:
-      ut_a(log.m_files_ctx.m_files_ruleset == Log_files_ruleset::CURRENT);
-      ut_a(files.empty());
+      ut_a(log.m_files_ctx.m_files_ruleset == Log_files_ruleset::CURRENT); // 断言文件规则集为 CURRENT
+      ut_a(files.empty()); // 断言文件为空
 
-      if (srv_read_only_mode) {
-        ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
-        ib::error(ER_IB_MSG_LOG_FILES_CREATE_AND_READ_ONLY_MODE);
-        return DB_ERROR;
+      if (srv_read_only_mode) { // 如果是只读模式
+        ut_a(srv_force_recovery < SRV_FORCE_NO_LOG_REDO); // 断言强制恢复级别小于 SRV_FORCE_NO_LOG_REDO
+        ib::error(ER_IB_MSG_LOG_FILES_CREATE_AND_READ_ONLY_MODE); // 打印错误信息
+        return DB_ERROR; // 返回错误
       }
 
       {
-        const auto ret = log_remove_files(log.m_files_ctx);
-        ut_a(ret.first == DB_SUCCESS);
+        const auto ret = log_remove_files(log.m_files_ctx); // 移除日志文件
+        ut_a(ret.first == DB_SUCCESS); // 断言移除成功
       }
 
-      return log_files_create(log, flushed_lsn, new_files_lsn);
+      return log_files_create(log, flushed_lsn, new_files_lsn); // 创建日志文件
 
     case Log_files_find_result::SYSTEM_ERROR:
     case Log_files_find_result::FOUND_CORRUPTED_FILES:
     case Log_files_find_result::FOUND_DISABLED_FILES:
     case Log_files_find_result::FOUND_VALID_FILES_BUT_MISSING_NEWEST:
-      return DB_ERROR;
+      return DB_ERROR; // 返回错误
   }
 
   /* Check format of the redo log and emit information to the error log,
   if the format was not the newest one. */
-  err = log_sys_check_format(log);
+  /* 检查重做日志的格式，如果格式不是最新的，则将信息发送到错误日志。 */
+  err = log_sys_check_format(log); // 检查日志格式
   if (err != DB_SUCCESS) {
-    return err;
+    return err; // 返回错误
   }
 
   /* Check creator of log files and mark fields of recv_sys: is_cloned_db,
   is_meb_db if needed. */
-  err = log_sys_handle_creator(log);
+  /* 检查日志文件的创建者，并在需要时标记 recv_sys 的字段：is_cloned_db，is_meb_db。 */
+  err = log_sys_handle_creator(log); // 处理日志创建者
   if (err != DB_SUCCESS) {
-    return err;
+    return err; // 返回错误
   }
 
-  if (log_file_header_check_flag(log_flags, LOG_HEADER_FLAG_NO_LOGGING)) {
-    auto result = mtr_t::s_logging.disable(nullptr);
+  if (log_file_header_check_flag(log_flags, LOG_HEADER_FLAG_NO_LOGGING)) { // 如果日志标志包含 LOG_HEADER_FLAG_NO_LOGGING
+    auto result = mtr_t::s_logging.disable(nullptr); // 禁用日志记录
     /* Currently never fails. */
-    ut_a(result == 0);
-    srv_redo_log = false;
+    /* 当前从不失败。 */
+    ut_a(result == 0); // 断言结果为 0
+    srv_redo_log = false; // 设置重做日志标志为 false
   }
 
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 void log_sys_close() {

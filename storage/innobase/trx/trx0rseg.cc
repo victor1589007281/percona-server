@@ -367,89 +367,93 @@ trx_rseg_t *trx_rseg_mem_create(ulint id, space_id_t space_id,
                                 trx_id_t gtid_trx_no, purge_pq_t *purge_queue,
                                 mtr_t *mtr) {
   auto rseg = static_cast<trx_rseg_t *>(
-      ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(trx_rseg_t)));
+      ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, sizeof(trx_rseg_t))); // 分配并初始化回滚段对象
 
-  rseg->id = id;
-  rseg->space_id = space_id;
-  rseg->page_size.copy_from(page_size);
-  rseg->page_no = page_no;
-  rseg->trx_ref_count = 0;
+  rseg->id = id; // 设置回滚段 ID
+  rseg->space_id = space_id; // 设置空间 ID
+  rseg->page_size.copy_from(page_size); // 复制页面大小
+  rseg->page_no = page_no; // 设置页面编号
+  rseg->trx_ref_count = 0; // 初始化事务引用计数
 
-  if (fsp_is_system_temporary(space_id)) {
-    mutex_create(LATCH_ID_TEMP_SPACE_RSEG, &rseg->mutex);
-  } else if (fsp_is_undo_tablespace(space_id)) {
-    mutex_create(LATCH_ID_UNDO_SPACE_RSEG, &rseg->mutex);
-  } else {
-    mutex_create(LATCH_ID_TRX_SYS_RSEG, &rseg->mutex);
+  if (fsp_is_system_temporary(space_id)) { // 如果是系统临时表空间
+    mutex_create(LATCH_ID_TEMP_SPACE_RSEG, &rseg->mutex); // 创建临时表空间回滚段的互斥锁
+  } else if (fsp_is_undo_tablespace(space_id)) { // 如果是 undo 表空间
+    mutex_create(LATCH_ID_UNDO_SPACE_RSEG, &rseg->mutex); // 创建 undo 表空间回滚段的互斥锁
+  } else { // 否则
+    mutex_create(LATCH_ID_TRX_SYS_RSEG, &rseg->mutex); // 创建系统表空间回滚段的互斥锁
   }
 
-  UT_LIST_INIT(rseg->update_undo_list);
-  UT_LIST_INIT(rseg->update_undo_cached);
-  UT_LIST_INIT(rseg->insert_undo_list);
-  UT_LIST_INIT(rseg->insert_undo_cached);
+  UT_LIST_INIT(rseg->update_undo_list); // 初始化更新 undo 日志列表
+  UT_LIST_INIT(rseg->update_undo_cached); // 初始化缓存的更新 undo 日志列表
+  UT_LIST_INIT(rseg->insert_undo_list); // 初始化插入 undo 日志列表
+  UT_LIST_INIT(rseg->insert_undo_cached); // 初始化缓存的插入 undo 日志列表
 
-  auto rseg_header = trx_rsegf_get_new(space_id, page_no, page_size, mtr);
+  auto rseg_header = trx_rsegf_get_new(space_id, page_no, page_size, mtr); // 获取回滚段头部
 
   rseg->max_size =
-      mtr_read_ulint(rseg_header + TRX_RSEG_MAX_SIZE, MLOG_4BYTES, mtr);
+      mtr_read_ulint(rseg_header + TRX_RSEG_MAX_SIZE, MLOG_4BYTES, mtr); // 读取回滚段的最大大小
 
   /* Initialize the undo log lists according to the rseg_header */
-  auto sum_of_undo_sizes = trx_undo_lists_init(rseg);
+  /* 根据回滚段头部初始化 undo 日志列表 */
+  auto sum_of_undo_sizes = trx_undo_lists_init(rseg); // 初始化 undo 日志列表并获取 undo 日志大小总和
 
   rseg->set_curr_size(
       mtr_read_ulint(rseg_header + TRX_RSEG_HISTORY_SIZE, MLOG_4BYTES, mtr) +
-      1 + sum_of_undo_sizes);
+      1 + sum_of_undo_sizes); // 设置当前大小
 
-  auto len = flst_get_len(rseg_header + TRX_RSEG_HISTORY);
+  auto len = flst_get_len(rseg_header + TRX_RSEG_HISTORY); // 获取回滚段历史长度
 
-  if (len > 0) {
-    trx_sys->rseg_history_len += len;
+  if (len > 0) { // 如果历史长度大于 0
+    trx_sys->rseg_history_len += len; // 增加回滚段历史长度
 
     /* Extract GTID from history and send to GTID persistor. */
-    trx_rseg_persist_gtid(rseg, gtid_trx_no);
+    /* 从历史中提取 GTID 并发送到 GTID 持久化器。 */
+    trx_rseg_persist_gtid(rseg, gtid_trx_no); // 持久化 GTID
 
     auto node_addr = trx_purge_get_log_from_hist(
-        flst_get_last(rseg_header + TRX_RSEG_HISTORY, mtr));
+        flst_get_last(rseg_header + TRX_RSEG_HISTORY, mtr)); // 获取历史中的最后一个日志节点地址
 
-    rseg->last_page_no = node_addr.page;
-    rseg->last_offset = node_addr.boffset;
+    rseg->last_page_no = node_addr.page; // 设置最后一个页面编号
+    rseg->last_offset = node_addr.boffset; // 设置最后一个偏移量
 
     auto undo_log_hdr =
         trx_undo_page_get(page_id_t(rseg->space_id, node_addr.page),
                           rseg->page_size, mtr) +
-        node_addr.boffset;
+        node_addr.boffset; // 获取 undo 日志头部
 
-    rseg->last_trx_no = mach_read_from_8(undo_log_hdr + TRX_UNDO_TRX_NO);
+    rseg->last_trx_no = mach_read_from_8(undo_log_hdr + TRX_UNDO_TRX_NO); // 读取最后一个事务编号
 
 #ifdef UNIV_DEBUG
-    /* Update last transactioin number during recovery. */
+    /* Update last transaction number during recovery. */
+    /* 在恢复期间更新最后一个事务编号。 */
     if (rseg->last_trx_no > trx_sys->rw_max_trx_no) {
-      trx_sys->rw_max_trx_no = rseg->last_trx_no;
+      trx_sys->rw_max_trx_no = rseg->last_trx_no; // 更新最大事务编号
     }
 #endif  // UNIV_DEBUG
 
     rseg->last_del_marks =
-        mtr_read_ulint(undo_log_hdr + TRX_UNDO_DEL_MARKS, MLOG_2BYTES, mtr);
+        mtr_read_ulint(undo_log_hdr + TRX_UNDO_DEL_MARKS, MLOG_2BYTES, mtr); // 读取最后一个删除标记
 
-    TrxUndoRsegs elem(rseg->last_trx_no);
-    elem.insert(rseg);
+    TrxUndoRsegs elem(rseg->last_trx_no); // 创建 TrxUndoRsegs 元素
+    elem.insert(rseg); // 插入回滚段
 
-    if (rseg->last_page_no != FIL_NULL) {
+    if (rseg->last_page_no != FIL_NULL) { // 如果最后一个页面编号不为空
       /* The only time an rseg is added that has existing
       undo is when the server is being started. So no
       mutex is needed here. */
-      ut_ad(srv_is_being_started);
+      /* 唯一一次添加具有现有 undo 的回滚段是在服务器启动时。因此这里不需要互斥锁。 */
+      ut_ad(srv_is_being_started); // 断言服务器正在启动
 
       ut_ad(space_id == TRX_SYS_SPACE ||
-            (srv_is_upgrade_mode != undo::is_reserved(space_id)));
+            (srv_is_upgrade_mode != undo::is_reserved(space_id))); // 断言空间 ID 为系统表空间或升级模式与 undo 表空间保留状态不同
 
-      purge_queue->push(elem);
+      purge_queue->push(elem); // 将元素添加到清除队列
     }
   } else {
-    rseg->last_page_no = FIL_NULL;
+    rseg->last_page_no = FIL_NULL; // 设置最后一个页面编号为空
   }
 
-  return rseg;
+  return rseg; // 返回回滚段对象
 }
 
 /** Read each rollback segment slot in the TRX_SYS page and the RSEG_ARRAY
@@ -611,96 +615,113 @@ that reference undo tablespaces and have active undo logs, then quit.
 They require an upgrade of undo tablespaces and that cannot happen with
 active undo logs.
 @param[in]      purge_queue     queue of rsegs to purge */
+/** 读取 TRX_SYS 页面和每个 undo 表空间的 RSEG_ARRAY 页面中的每个回滚段槽。
+为找到的所有回滚段创建 trx_rseg_t 对象。这在数据库启动时运行，并初始化内存中
+的 trx_rseg_t 对象列表。我们需要查看 TRX_SYS 和每个 RSEG_ARRAY 页中的所有槽，
+因为我们需要查找可能需要通过清除恢复的任何现有 undo 日志。由于这仍然是单线程
+启动，因此不需要锁存。如果我们在 TRX_SYS 页面中找到引用 undo 表空间并具有活动
+undo 日志的现有 rseg 槽，则退出。它们需要升级 undo 表空间，而这不能在有活动
+undo 日志的情况下进行。
+@param[in]      purge_queue     需要清除的 rsegs 队列 */
 void trx_rsegs_init(purge_pq_t *purge_queue) {
-  trx_sys->rseg_history_len.store(0);
+  trx_sys->rseg_history_len.store(0); // 初始化回滚段历史长度
 
-  ulint slot;
-  mtr_t mtr;
-  space_id_t space_id;
-  page_no_t page_no;
-  trx_rseg_t *rseg = nullptr;
+  ulint slot; // 槽位
+  mtr_t mtr; // 迷你事务
+  space_id_t space_id; // 空间 ID
+  page_no_t page_no; // 页面编号
+  trx_rseg_t *rseg = nullptr; // 回滚段指针
 
   /* Get GTID transaction number from SYS */
-  mtr.start();
-  trx_sysf_t *sys_header = trx_sysf_get(&mtr);
-  auto page = sys_header - TRX_SYS;
-  auto gtid_trx_no = mach_read_from_8(page + TRX_SYS_TRX_NUM_GTID);
+  /* 从 SYS 获取 GTID 事务编号 */
+  mtr.start(); // 开始迷你事务
+  trx_sysf_t *sys_header = trx_sysf_get(&mtr); // 获取 TRX_SYS 页头
+  auto page = sys_header - TRX_SYS; // 计算页面偏移
+  auto gtid_trx_no = mach_read_from_8(page + TRX_SYS_TRX_NUM_GTID); // 从页面读取 GTID 事务编号
 
-  mtr.commit();
+  mtr.commit(); // 提交迷你事务
 
-  auto &gtid_persistor = clone_sys->get_gtid_persistor();
-  gtid_persistor.set_oldest_trx_no_recovery(gtid_trx_no);
+  auto &gtid_persistor = clone_sys->get_gtid_persistor(); // 获取 GTID 持久化器
+  gtid_persistor.set_oldest_trx_no_recovery(gtid_trx_no); // 设置最早的 GTID 事务编号
 
-  for (slot = 0; slot < TRX_SYS_N_RSEGS; slot++) {
-    mtr.start();
-    trx_sysf_t *sys_header = trx_sysf_get(&mtr);
+  for (slot = 0; slot < TRX_SYS_N_RSEGS; slot++) { // 遍历 TRX_SYS 中的所有回滚段槽
+    mtr.start(); // 开始迷你事务
+    trx_sysf_t *sys_header = trx_sysf_get(&mtr); // 获取 TRX_SYS 页头
 
-    page_no = trx_sysf_rseg_get_page_no(sys_header, slot, &mtr);
+    page_no = trx_sysf_rseg_get_page_no(sys_header, slot, &mtr); // 获取回滚段页面编号
 
-    if (page_no != FIL_NULL) {
-      space_id = trx_sysf_rseg_get_space(sys_header, slot, &mtr);
+    if (page_no != FIL_NULL) { // 如果页面编号不为空
+      space_id = trx_sysf_rseg_get_space(sys_header, slot, &mtr); // 获取回滚段空间 ID
 
-      if (!undo::is_active_truncate_log_present(undo::id2num(space_id))) {
+      if (!undo::is_active_truncate_log_present(undo::id2num(space_id))) { // 如果没有活动的截断日志
         /* Create the trx_rseg_t object.
         Note that all tablespaces with rollback segments
         use univ_page_size. (system, temp & undo) */
+        /* 创建 trx_rseg_t 对象。
+        请注意，所有具有回滚段的表空间都使用 univ_page_size。（系统、临时和 undo） */
         rseg = trx_rseg_mem_create(slot, space_id, page_no, univ_page_size,
-                                   gtid_trx_no, purge_queue, &mtr);
+                                   gtid_trx_no, purge_queue, &mtr); // 创建回滚段对象
 
-        ut_a(rseg->id == slot);
+        ut_a(rseg->id == slot); // 断言回滚段 ID 与槽位一致
 
-        trx_sys->rsegs.push_back(rseg);
+        trx_sys->rsegs.push_back(rseg); // 将回滚段添加到回滚段列表中
       }
     }
-    mtr.commit();
+    mtr.commit(); // 提交迷你事务
   }
 
-  undo::spaces->s_lock();
-  for (auto undo_space : undo::spaces->m_spaces) {
+  undo::spaces->s_lock(); // 加锁
+  for (auto undo_space : undo::spaces->m_spaces) { // 遍历所有 undo 表空间
     /* Remember the size of the purge queue before processing this
     undo tablespace. */
-    size_t purge_queue_size = purge_queue->size();
+    /* 记住在处理此 undo 表空间之前清除队列的大小。 */
+    size_t purge_queue_size = purge_queue->size(); // 获取清除队列大小
 
-    undo_space->rsegs()->x_lock();
+    undo_space->rsegs()->x_lock(); // 加锁
 
-    for (slot = 0; slot < FSP_MAX_ROLLBACK_SEGMENTS; slot++) {
-      page_no = trx_rseg_get_page_no(undo_space->id(), slot);
+    for (slot = 0; slot < FSP_MAX_ROLLBACK_SEGMENTS; slot++) { // 遍历所有回滚段槽
+      page_no = trx_rseg_get_page_no(undo_space->id(), slot); // 获取回滚段页面编号
 
       /* There are no gaps in an RSEG_ARRAY page. New rsegs
       are added sequentially and never deleted until the
       undo tablespace is truncated.*/
-      if (page_no == FIL_NULL) {
-        break;
+      /* RSEG_ARRAY 页面中没有间隙。新的 rsegs 按顺序添加，直到 undo 表空间被截断之前从不删除。 */
+      if (page_no == FIL_NULL) { // 如果页面编号为空
+        break; // 退出循环
       }
 
-      mtr.start();
+      mtr.start(); // 开始迷你事务
 
       /* Create the trx_rseg_t object.
       Note that all tablespaces with rollback segments
       use univ_page_size. */
+      /* 创建 trx_rseg_t 对象。
+      请注意，所有具有回滚段的表空间都使用 univ_page_size。 */
       rseg =
           trx_rseg_mem_create(slot, undo_space->id(), page_no, univ_page_size,
-                              gtid_trx_no, purge_queue, &mtr);
+                              gtid_trx_no, purge_queue, &mtr); // 创建回滚段对象
 
-      ut_a(rseg->id == slot);
+      ut_a(rseg->id == slot); // 断言回滚段 ID 与槽位一致
 
-      undo_space->rsegs()->push_back(rseg);
+      undo_space->rsegs()->push_back(rseg); // 将回滚段添加到回滚段列表中
 
-      mtr.commit();
+      mtr.commit(); // 提交迷你事务
     }
-    undo_space->rsegs()->x_unlock();
+    undo_space->rsegs()->x_unlock(); // 解锁
 
     /* If there are no undo logs in this explicit undo tablespace at
     startup, mark it empty so that it will not be used until the state
     recorded in the DD can be applied in apply_dd_undo_state(). */
-    if (undo_space->is_explicit() && !undo_space->is_empty()) {
-      size_t cur_size = purge_queue->size();
-      if (purge_queue_size == cur_size) {
-        undo_space->set_empty();
+    /* 如果在启动时此显式 undo 表空间中没有 undo 日志，则将其标记为空，
+    以便在应用 DD 中记录的状态之前不会使用它。 */
+    if (undo_space->is_explicit() && !undo_space->is_empty()) { // 如果是显式 undo 表空间且不为空
+      size_t cur_size = purge_queue->size(); // 获取当前清除队列大小
+      if (purge_queue_size == cur_size) { // 如果清除队列大小未变化
+        undo_space->set_empty(); // 将 undo 表空间标记为空
       }
     }
   }
-  undo::spaces->s_unlock();
+  undo::spaces->s_unlock(); // 解锁
 }
 
 /** Create a rollback segment in the given tablespace. This could be either

@@ -55,13 +55,18 @@
 namespace dd {
 
 bool init(enum_dd_init_type dd_init) {
+  // 检查初始化类型是否为DD_INITIALIZE或DD_RESTART_OR_UPGRADE
   if (dd_init == enum_dd_init_type::DD_INITIALIZE ||
       dd_init == enum_dd_init_type::DD_RESTART_OR_UPGRADE) {
+    // 初始化共享字典缓存
     cache::Shared_dictionary_cache::init();
+    // 添加静态的DD表到系统表集合中
     System_tables::instance()->add_inert_dd_tables();
+    // 初始化系统视图
     System_views::instance()->init();
   }
 
+  // 调用Dictionary_impl的init方法进行进一步的初始化
   return Dictionary_impl::init(dd_init);
 }
 

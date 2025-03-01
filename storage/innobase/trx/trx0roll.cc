@@ -571,71 +571,73 @@ trx_savept_t trx_savept_take(trx_t *trx) /*!< in: transaction */
 }
 
 /** Roll back an active transaction. */
-static void trx_rollback_active(trx_t *trx) /*!< in/out: transaction */
+/** 回滚一个活动事务。 */
+static void trx_rollback_active(trx_t *trx) /*!< in/out: transaction */ // 事务
 {
-  mem_heap_t *heap;
-  que_fork_t *fork;
-  que_thr_t *thr;
-  roll_node_t *roll_node;
-  int64_t rows_to_undo;
-  const char *unit = "";
+  mem_heap_t *heap; // 内存堆
+  que_fork_t *fork; // 查询叉
+  que_thr_t *thr; // 查询线程
+  roll_node_t *roll_node; // 回滚节点
+  int64_t rows_to_undo; // 需要撤销的行数
+  const char *unit = ""; // 单位
 
-  heap = mem_heap_create(512, UT_LOCATION_HERE);
+  heap = mem_heap_create(512, UT_LOCATION_HERE); // 创建内存堆
 
-  fork = que_fork_create(nullptr, nullptr, QUE_FORK_RECOVERY, heap);
-  fork->trx = trx;
+  fork = que_fork_create(nullptr, nullptr, QUE_FORK_RECOVERY, heap); // 创建查询叉
+  fork->trx = trx; // 设置事务
 
-  thr = que_thr_create(fork, heap, nullptr);
+  thr = que_thr_create(fork, heap, nullptr); // 创建查询线程
 
-  roll_node = roll_node_create(heap);
+  roll_node = roll_node_create(heap); // 创建回滚节点
 
-  thr->child = roll_node;
-  roll_node->common.parent = thr;
+  thr->child = roll_node; // 设置查询线程的子节点
+  roll_node->common.parent = thr; // 设置回滚节点的父节点
 
-  trx->graph = fork;
+  trx->graph = fork; // 设置事务的图
 
-  ut_a(thr == que_fork_start_command(fork));
+  ut_a(thr == que_fork_start_command(fork)); // 断言查询线程等于查询叉启动命令
 
-  trx_sys_mutex_enter();
+  trx_sys_mutex_enter(); // 进入事务系统互斥锁
 
-  trx_roll_crash_recv_trx = trx;
+  trx_roll_crash_recv_trx = trx; // 设置回滚崩溃接收事务
 
-  trx_roll_max_undo_no = trx->undo_no;
+  trx_roll_max_undo_no = trx->undo_no; // 设置最大撤销号
 
-  trx_roll_progress_printed_pct = 0;
+  trx_roll_progress_printed_pct = 0; // 设置回滚进度打印百分比
 
-  rows_to_undo = trx_roll_max_undo_no;
+  rows_to_undo = trx_roll_max_undo_no; // 设置需要撤销的行数
 
-  trx_sys_mutex_exit();
+  trx_sys_mutex_exit(); // 退出事务系统互斥锁
 
-  if (rows_to_undo > 1000000000) {
-    rows_to_undo = rows_to_undo / 1000000;
-    unit = "M";
+  if (rows_to_undo > 1000000000) { // 如果需要撤销的行数大于 10 亿
+    rows_to_undo = rows_to_undo / 1000000; // 将行数除以 100 万
+    unit = "M"; // 设置单位为百万
   }
 
-  const trx_id_t trx_id = trx_get_id_for_print(trx);
+  const trx_id_t trx_id = trx_get_id_for_print(trx); // 获取事务 ID
 
   ib::info(ER_IB_MSG_1186) << "Rolling back trx with id " << trx_id << ", "
-                           << rows_to_undo << unit << " rows to undo";
+                           << rows_to_undo << unit << " rows to undo"; // 打印回滚信息
 
-  que_run_threads(thr);
-  ut_a(roll_node->undo_thr != nullptr);
+  que_run_threads(thr); // 运行查询线程
+  ut_a(roll_node->undo_thr != nullptr); // 断言回滚节点的撤销线程不为空
 
-  que_run_threads(roll_node->undo_thr);
+  que_run_threads(roll_node->undo_thr); // 运行回滚节点的撤销线程
 
-  trx_rollback_finish(thr_get_trx(roll_node->undo_thr));
+  trx_rollback_finish(thr_get_trx(roll_node->undo_thr)); // 完成事务回滚
 
   /* Free the memory reserved by the undo graph */
-  que_graph_free(static_cast<que_t *>(roll_node->undo_thr->common.parent));
+  /* 释放撤销图保留的内存 */
+  que_graph_free(static_cast<que_t *>(roll_node->undo_thr->common.parent)); // 释放查询图
 
-  ut_a(trx->lock.que_state == TRX_QUE_RUNNING);
+  ut_a(trx->lock.que_state == TRX_QUE_RUNNING); // 断言事务的锁查询状态为运行
 
   ib::info(ER_IB_MSG_1187) << "Rollback of trx with id " << trx_id
-                           << " completed";
+                           << " completed"; // 打印回滚完成信息
 
-  mem_heap_free(heap);
+  mem_heap_free(heap); // 释放内存堆
 
-  trx_roll_crash_recv_trx = nullptr;
+  trx_roll_crash_recv_trx = nullptr; // 设置回滚崩溃接收事务为空
 }
 
 /** Rollback or clean up any resurrected incomplete transactions. It assumes
@@ -643,13 +645,15 @@ static void trx_rollback_active(trx_t *trx) /*!< in/out: transaction */
  lock if it does a clean up or rollback.
  @return true if the transaction was cleaned up or rolled back
  and trx_sys->mutex was released. */
+/** 回滚或清理任何恢复的不完整事务。假设调用者持有 trx_sys_t::mutex，如果进行清理或回滚，它将释放锁。
+ @return 如果事务被清理或回滚并且 trx_sys->mutex 被释放，则返回 true。 */
 static bool trx_rollback_or_clean_resurrected(
-    trx_t *trx, /*!< in: transaction to rollback or clean */
+    trx_t *trx, /*!< in: transaction to rollback or clean */ // 事务
     bool all)   /*!< in: false=roll back dictionary transactions;
-                 true=roll back all non-PREPARED transactions */
+                 true=roll back all non-PREPARED transactions */ // 是否回滚所有非预处理事务
 {
-  ut_ad(trx_sys_mutex_own());
-  ut_ad(trx->in_rw_trx_list);
+  ut_ad(trx_sys_mutex_own()); // 断言持有 trx_sys 互斥锁
+  ut_ad(trx->in_rw_trx_list); // 断言事务在读写事务列表中
 
   /* Generally, an HA transaction with is_recovered && state==TRX_STATE_PREPARED
   can be committed or rolled back by a client who knows its XID at any time.
@@ -664,77 +668,89 @@ static bool trx_rollback_or_clean_resurrected(
   rw_trx_list (so trx_rollback_or_clean_resurrected() would not be called for
   this transaction in the first place), and if we latch first, then we will
   leave the trx intact. */
+  /* 通常，具有 is_recovered && state==TRX_STATE_PREPARED 的 HA 事务可以由知道其 XID 的客户端随时提交或回滚。
+  为了证明在我们的线程操作时没有这种状态转换的可能性，请注意我们持有 trx_sys->mutex，
+  这在提交和回滚期间都需要从 trx_sys->rw_trx_list 中注销事务，并且我们看到事务仍在此列表中。
+  因此，如果我们看到 is_recovered==true，那么状态在我们释放 trx_sys->mutex 之前不会改变。
+  此外，对于 TRX_STATE_PREPARED，我们什么都不做，因此我们不会干扰 HA COMMIT 或 ROLLBACK。
+  因此，如果 XA ROLLBACK 或 COMMIT 在我们之前锁定 trx_sys->mutex，那么我们将不会在 rw_trx_list 中看到事务
+  （因此 trx_rollback_or_clean_resurrected() 根本不会被调用），如果我们先锁定，那么我们将保持事务不变。 */
 
-  trx_mutex_enter(trx);
-  const bool is_recovered = trx->is_recovered;
-  const trx_state_t state = trx->state.load(std::memory_order_relaxed);
-  trx_mutex_exit(trx);
+  trx_mutex_enter(trx); // 进入事务互斥锁
+  const bool is_recovered = trx->is_recovered; // 获取事务是否已恢复
+  const trx_state_t state = trx->state.load(std::memory_order_relaxed); // 获取事务状态
+  trx_mutex_exit(trx); // 退出事务互斥锁
 
-  if (!is_recovered) {
-    ut_ad(state != TRX_STATE_COMMITTED_IN_MEMORY);
-    return false;
+  if (!is_recovered) { // 如果事务未恢复
+    ut_ad(state != TRX_STATE_COMMITTED_IN_MEMORY); // 断言事务状态不是内存中已提交
+    return false; // 返回 false
   }
 
   switch (state) {
-    case TRX_STATE_COMMITTED_IN_MEMORY:
-      trx_sys_mutex_exit();
+    case TRX_STATE_COMMITTED_IN_MEMORY: // 内存中已提交状态
+      trx_sys_mutex_exit(); // 退出事务系统互斥锁
       ib::info(ER_IB_MSG_1188)
-          << "Cleaning up trx with id " << trx_get_id_for_print(trx);
+          << "Cleaning up trx with id " << trx_get_id_for_print(trx); // 打印清理事务信息
 
-      trx_cleanup_at_db_startup(trx);
-      trx_free_resurrected(trx);
-      ut_ad(!trx->is_recovered);
-      return true;
-    case TRX_STATE_ACTIVE:
-      if (all || trx->ddl_operation) {
-        trx_sys_mutex_exit();
-        trx_rollback_active(trx);
-        trx_free_for_background(trx);
-        ut_ad(!trx->is_recovered);
-        return true;
+      trx_cleanup_at_db_startup(trx); // 在数据库启动时清理事务
+      trx_free_resurrected(trx); // 释放恢复的事务
+      ut_ad(!trx->is_recovered); // 断言事务未恢复
+      return true; // 返回 true
+    case TRX_STATE_ACTIVE: // 活动状态
+      if (all || trx->ddl_operation) { // 如果回滚所有或事务为 DDL 操作
+        trx_sys_mutex_exit(); // 退出事务系统互斥锁
+        trx_rollback_active(trx); // 回滚活动事务
+        trx_free_for_background(trx); // 释放后台事务
+        ut_ad(!trx->is_recovered); // 断言事务未恢复
+        return true; // 返回 true
       }
-      return false;
-    case TRX_STATE_PREPARED:
-      return false;
-    case TRX_STATE_NOT_STARTED:
-    case TRX_STATE_FORCED_ROLLBACK:
-      break;
+      return false; // 返回 false
+    case TRX_STATE_PREPARED: // 预处理状态
+      return false; // 返回 false
+    case TRX_STATE_NOT_STARTED: // 未开始状态
+    case TRX_STATE_FORCED_ROLLBACK: // 强制回滚状态
+      break; // 跳出 switch 语句
   }
 
-  ut_error;
+  ut_error; // 触发错误
 }
 
 /** Rollback or clean up any incomplete transactions which were
  encountered in crash recovery.  If the transaction already was
  committed, then we clean up a possible insert undo log. If the
  transaction was not yet committed, then we roll it back. */
+/** 回滚或清理在崩溃恢复中遇到的任何不完整事务。如果事务已经提交，则清理可能的插入撤销日志。
+ 如果事务尚未提交，则回滚它。 */
 void trx_rollback_or_clean_recovered(
     bool all) /*!< in: false=roll back dictionary transactions;
-               true=roll back all non-PREPARED transactions */
+               true=roll back all non-PREPARED transactions */ // 是否回滚所有非预处理事务
 {
-  ut_ad(!srv_read_only_mode);
+  ut_ad(!srv_read_only_mode); // 断言不是只读模式
 
-  ut_a(srv_force_recovery < SRV_FORCE_NO_TRX_UNDO);
-  ut_ad(!all || trx_sys_need_rollback());
+  ut_a(srv_force_recovery < SRV_FORCE_NO_TRX_UNDO); // 断言强制恢复级别小于不撤销事务
+  ut_ad(!all || trx_sys_need_rollback()); // 断言需要回滚
 
   if (all) {
     ib::info(ER_IB_MSG_1189) << "Starting in background the rollback"
-                                " of uncommitted transactions";
+                                " of uncommitted transactions"; // 打印开始回滚未提交事务的信息
   }
 
   /* Note: For XA recovered transactions, we rely on MySQL to
   do rollback. They will be in TRX_STATE_PREPARED state. If the server
   is shutdown and they are still lingering in trx_sys_t::trx_list
   then the shutdown will hang. */
+  /* 注意：对于 XA 恢复的事务，我们依赖 MySQL 进行回滚。它们将处于 TRX_STATE_PREPARED 状态。
+  如果服务器关闭并且它们仍然停留在 trx_sys_t::trx_list 中，则关闭将挂起。 */
 
   /* Loop over the transaction list as long as there are
   recovered transactions to clean up or recover. */
+  /* 只要有恢复的事务需要清理或恢复，就循环遍历事务列表。 */
 
-  trx_sys_mutex_enter();
-  for (bool need_one_more_scan = true; need_one_more_scan;) {
-    need_one_more_scan = false;
-    for (auto trx : trx_sys->rw_trx_list) {
-      assert_trx_in_rw_list(trx);
+  trx_sys_mutex_enter(); // 进入事务系统互斥锁
+  for (bool need_one_more_scan = true; need_one_more_scan;) { // 循环遍历事务列表
+    need_one_more_scan = false; // 重置需要再次扫描标志
+    for (auto trx : trx_sys->rw_trx_list) { // 遍历读写事务列表
+      assert_trx_in_rw_list(trx); // 断言事务在读写列表中
 
       /* In case of slow shutdown, we have to wait for the background
       thread (trx_recovery_rollback) which is doing the rollbacks of
@@ -743,35 +759,39 @@ void trx_rollback_or_clean_recovered(
       not rolled back. But still we want to stop the thread, so since
       certain point of shutdown we might be sure there are no changes
       to transactions / undo. */
+      /* 在慢速关闭的情况下，我们必须等待正在回滚恢复事务的后台线程（trx_recovery_rollback）。
+      请注意，它可以将撤销添加到清除中。在快速关闭的情况下，我们不关心是否留下未回滚的事务。
+      但我们仍然希望停止线程，因此从关闭的某个时间点起，我们可以确保事务/撤销没有变化。 */
       if (srv_shutdown_state.load() >= SRV_SHUTDOWN_RECOVERY_ROLLBACK &&
-          srv_fast_shutdown != 0) {
+          srv_fast_shutdown != 0) { // 如果关闭状态大于等于恢复回滚且快速关闭不为 0
         ut_a(srv_shutdown_state_matches([](auto state) {
           return state == SRV_SHUTDOWN_RECOVERY_ROLLBACK ||
                  state == SRV_SHUTDOWN_EXIT_THREADS;
-        }));
+        })); // 断言关闭状态匹配
 
-        trx_sys_mutex_exit();
+        trx_sys_mutex_exit(); // 退出事务系统互斥锁
 
         if (all) {
-          ib::info(ER_IB_MSG_TRX_RECOVERY_ROLLBACK_NOT_COMPLETED);
+          ib::info(ER_IB_MSG_TRX_RECOVERY_ROLLBACK_NOT_COMPLETED); // 打印回滚未完成信息
         }
-        return;
+        return; // 返回
       }
 
       /* If this function does a cleanup or rollback
       then it will release the trx_sys->mutex, therefore
       we need to reacquire it before retrying the loop. */
-      if (trx_rollback_or_clean_resurrected(trx, all)) {
-        trx_sys_mutex_enter();
-        need_one_more_scan = true;
-        break;
+      /* 如果此函数进行清理或回滚，则它将释放 trx_sys->mutex，因此在重试循环之前需要重新获取它。 */
+      if (trx_rollback_or_clean_resurrected(trx, all)) { // 如果回滚或清理恢复的事务
+        trx_sys_mutex_enter(); // 进入事务系统互斥锁
+        need_one_more_scan = true; // 设置需要再次扫描标志
+        break; // 跳出循环
       }
     }
   }
-  trx_sys_mutex_exit();
+  trx_sys_mutex_exit(); // 退出事务系统互斥锁
 
   if (all) {
-    ib::info(ER_IB_MSG_TRX_RECOVERY_ROLLBACK_COMPLETED);
+    ib::info(ER_IB_MSG_TRX_RECOVERY_ROLLBACK_COMPLETED); // 打印回滚完成信息
   }
 }
 
@@ -780,21 +800,24 @@ encountered in crash recovery.  If the transaction already was
 committed, then we clean up a possible insert undo log. If the
 transaction was not yet committed, then we roll it back.
 Note: this is done in a background thread. */
+/** 回滚或清理在崩溃恢复中遇到的任何不完整事务。如果事务已经提交，则清理可能的插入撤销日志。
+ 如果事务尚未提交，则回滚它。
+ 注意：这是在后台线程中完成的。 */
 void trx_recovery_rollback_thread() {
-  THD *thd = create_internal_thd();
+  THD *thd = create_internal_thd(); // 创建内部线程
 
-  ut_ad(!srv_read_only_mode);
+  ut_ad(!srv_read_only_mode); // 断言不是只读模式
 
-  while (DBUG_EVALUATE_IF("pause_rollback_on_recovery", true, false)) {
-    if (srv_shutdown_state.load() >= SRV_SHUTDOWN_RECOVERY_ROLLBACK) {
-      break;
+  while (DBUG_EVALUATE_IF("pause_rollback_on_recovery", true, false)) { // 调试代码，暂停回滚
+    if (srv_shutdown_state.load() >= SRV_SHUTDOWN_RECOVERY_ROLLBACK) { // 如果关闭状态大于等于恢复回滚
+      break; // 跳出循环
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1)); // 休眠 1 毫秒
   }
 
-  trx_rollback_or_clean_recovered(true);
+  trx_rollback_or_clean_recovered(true); // 回滚或清理恢复的事务
 
-  destroy_internal_thd(thd);
+  destroy_internal_thd(thd); // 销毁内部线程
 }
 
 /** Tries truncate the undo logs. */

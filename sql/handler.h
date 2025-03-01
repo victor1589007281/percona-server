@@ -1909,6 +1909,7 @@ typedef bool (*dict_init_t)(dict_init_mode_t dict_init_mode, uint version,
                             List<const Plugin_table> *DDSE_tables,
                             List<const Plugin_tablespace> *DDSE_tablespaces);
 
+//定义了一个函数指针类型ddse_dict_init_t，以及说明了函数的输入跟输出
 typedef bool (*ddse_dict_init_t)(
     dict_init_mode_t dict_init_mode, uint version,
     List<const dd::Object_table> *DDSE_tables,
@@ -2632,16 +2633,47 @@ struct Page_track_t {
 
   savepoint_*, prepare, recover, and *_by_xid pointers can be 0.
 */
+// handlerton 是一个单例结构体，每个存储引擎有一个实例，用于提供存储引擎在“全局”级别上的功能（与处理每个表的 handler 类不同）。
+// 通常，handlerton 实例在 ha_xxx.cc 中静态定义为：
+// static handlerton { ... } xxx_hton;
+// savepoint_*、prepare、recover 和 *_by_xid 指针可以为 0。
+/*
+引擎可以实现的全局接口，但是不是所有都得实现，可以选择性实现
+实现的时候函数名可以不一样，但是在实现时必须使用相同的函数签名（即相同的参数和返回值类型）
+接口函数的定义是分开的，接口结构体内的是声明：
+1. ddse_dict_init 是一个函数指针类型的成员变量
+2. ddse_dict_init_t 是一个函数指针类型，通常会在其他地方定义：
+比如下面就是函数指针的定义，只有输入跟输出参数定义
+不指定函数名，开发者可以开发不同函数名，相同参数的不同实现，然后赋予给函数指针
+typedef bool (*ddse_dict_init_t)(
+    dict_init_mode_t dict_init_mode, uint version,
+    List<const dd::Object_table> *DDSE_tables,
+    List<const Plugin_tablespace> *DDSE_tablespaces);
+好处：
+灵活性：
+      通过函数指针，存储引擎可以在运行时动态地提供不同的实现。例如，不同的存储引擎可以提供不同的ddse_dict_init实现。
+解耦：
+      将接口声明与具体实现分离，使得代码更加模块化和易于维护。MySQL 核心代码不需要知道每个存储引擎的具体实现细节。
+可扩展性：
+      新的存储引擎可以很容易地集成到 MySQL 中，只需要实现 handlerton结构体中定义的接口即可。 
+使用：
+handlerton *innodb_hton  // 定义一个handlerton结构体指针
+innodb_hton.ddse_dict_init = innodb_ddse_dict_init;//赋值函数指针
+//在ha_innodb.cc innodb_init函数中赋值这些函数指针
+ddse->ddse_dict_init(dict_init_mode, version, &ddse_tables,&ddse_tablespaces)) // 调用函数       
+*/
 struct handlerton {
   /**
     Historical marker for if the engine is available or not.
   */
+  // 历史标记，表示引擎是否可用。
   SHOW_COMP_OPTION state;
 
   /**
     Historical number used for frm file to determine the correct storage engine.
     This is going away and new engines will just use "name" for this.
   */
+  // 用于 frm 文件的历史编号，以确定正确的存储引擎。这个字段正在被淘汰，新的引擎将只使用“name”来标识。
   enum legacy_db_type db_type;
   /**
     Each storage engine has it's own memory area (actually a pointer)
@@ -2652,6 +2684,9 @@ struct handlerton {
 
      slot number is initialized by MySQL after xxx_init() is called.
    */
+  // 每个存储引擎在 thd 中都有自己的内存区域（实际上是一个指针），用于存储每个连接的信息。
+  // 通过 thd->ha_data[xxx_hton.slot] 访问。
+  // slot 编号在调用 xxx_init() 后由 MySQL 初始化。
   uint slot;
   /**
     To store per-savepoint data storage engine is provided with an area
@@ -2662,84 +2697,91 @@ struct handlerton {
     area and need not be used by storage engine.
     see binlog_hton and binlog_savepoint_set/rollback for an example.
    */
+  // 为了存储每个保存点的数据，存储引擎被提供一个请求大小的区域（0 也是可以的）。
+  // savepoint_offset 必须静态初始化为存储每个保存点信息所需的内存大小。
+  // 在 xxx_init 之后，它被更改为保存点存储区域的偏移量，存储引擎不需要再使用它。
+  // 参见 binlog_hton 和 binlog_savepoint_set/rollback 的示例。
   uint savepoint_offset;
 
   /* handlerton methods */
 
-  close_connection_t close_connection;
-  kill_connection_t kill_connection;
-  pre_dd_shutdown_t pre_dd_shutdown;
-  savepoint_set_t savepoint_set;
-  savepoint_rollback_t savepoint_rollback;
-  savepoint_rollback_can_release_mdl_t savepoint_rollback_can_release_mdl;
-  savepoint_release_t savepoint_release;
-  commit_t commit;
-  rollback_t rollback;
-  prepare_t prepare;
-  recover_t recover;
-  recover_prepared_in_tc_t recover_prepared_in_tc;
-  commit_by_xid_t commit_by_xid;
-  rollback_by_xid_t rollback_by_xid;
-  set_prepared_in_tc_t set_prepared_in_tc;
-  set_prepared_in_tc_by_xid_t set_prepared_in_tc_by_xid;
-  create_t create;
-  drop_database_t drop_database;
-  panic_t panic;
-  start_consistent_snapshot_t start_consistent_snapshot;
-  clone_consistent_snapshot_t clone_consistent_snapshot;
-  flush_logs_t flush_logs;
-  store_binlog_info_t store_binlog_info;
-  show_status_t show_status;
-  partition_flags_t partition_flags;
-  is_valid_tablespace_name_t is_valid_tablespace_name;
-  get_tablespace_t get_tablespace;
-  alter_tablespace_t alter_tablespace;
-  get_tablespace_filename_ext_t get_tablespace_filename_ext;
-  upgrade_tablespace_t upgrade_tablespace;
-  upgrade_space_version_t upgrade_space_version;
-  get_tablespace_type_t get_tablespace_type;
-  get_tablespace_type_by_name_t get_tablespace_type_by_name;
-  upgrade_logs_t upgrade_logs;
-  finish_upgrade_t finish_upgrade;
-  fill_is_table_t fill_is_table;
-  dict_init_t dict_init;
-  ddse_dict_init_t ddse_dict_init;
-  dict_register_dd_table_id_t dict_register_dd_table_id;
-  dict_cache_reset_t dict_cache_reset;
+  close_connection_t close_connection;  // 关闭连接的方法
+  kill_connection_t kill_connection;  // 终止连接的方法
+  pre_dd_shutdown_t pre_dd_shutdown;  // 数据字典关闭前的方法
+  savepoint_set_t savepoint_set;  // 设置保存点的方法
+  savepoint_rollback_t savepoint_rollback;  // 回滚保存点的方法
+  savepoint_rollback_can_release_mdl_t savepoint_rollback_can_release_mdl;  // 保存点回滚是否可以释放 MDL 锁的方法
+  savepoint_release_t savepoint_release;  // 释放保存点的方法
+  commit_t commit;  // 提交事务的方法
+  rollback_t rollback;  // 回滚事务的方法
+  prepare_t prepare;  // 准备事务的方法
+  recover_t recover;  // 恢复事务的方法
+  recover_prepared_in_tc_t recover_prepared_in_tc;  // 恢复在事务协调器中准备的事务的方法
+  commit_by_xid_t commit_by_xid;  // 通过 XID 提交事务的方法
+  rollback_by_xid_t rollback_by_xid;  // 通过 XID 回滚事务的方法
+  set_prepared_in_tc_t set_prepared_in_tc;  // 在事务协调器中设置准备事务的方法
+  set_prepared_in_tc_by_xid_t set_prepared_in_tc_by_xid;  // 通过 XID 在事务协调器中设置准备事务的方法
+  create_t create;  // 创建表的方法
+  drop_database_t drop_database;  // 删除数据库的方法
+  panic_t panic;  // 紧急处理的方法
+  start_consistent_snapshot_t start_consistent_snapshot;  // 启动一致性快照的方法
+  clone_consistent_snapshot_t clone_consistent_snapshot;  // 克隆一致性快照的方法
+  flush_logs_t flush_logs;  // 刷新日志的方法
+  store_binlog_info_t store_binlog_info;  // 存储 binlog 信息的方法
+  show_status_t show_status;  // 显示状态的方法
+  partition_flags_t partition_flags;  // 分区标志的方法
+  is_valid_tablespace_name_t is_valid_tablespace_name;  // 验证表空间名称是否有效的方法
+  get_tablespace_t get_tablespace;  // 获取表空间的方法
+  alter_tablespace_t alter_tablespace;  // 修改表空间的方法
+  get_tablespace_filename_ext_t get_tablespace_filename_ext;  // 获取表空间文件扩展名的方法
+  upgrade_tablespace_t upgrade_tablespace;  // 升级表空间的方法
+  upgrade_space_version_t upgrade_space_version;  // 升级表空间版本的方法
+  get_tablespace_type_t get_tablespace_type;  // 获取表空间类型的方法
+  get_tablespace_type_by_name_t get_tablespace_type_by_name;  // 通过名称获取表空间类型的方法
+  upgrade_logs_t upgrade_logs;  // 升级日志的方法
+  finish_upgrade_t finish_upgrade;  // 完成升级的方法
+  fill_is_table_t fill_is_table;  // 填充信息模式表的方法
+  dict_init_t dict_init;  // 初始化数据字典的方法
+  ddse_dict_init_t ddse_dict_init;  // 初始化 DDSE 数据字典的方法
+  dict_register_dd_table_id_t dict_register_dd_table_id;  // 注册数据字典表 ID 的方法
+  dict_cache_reset_t dict_cache_reset;  // 重置数据字典缓存的方法
   dict_cache_reset_tables_and_tablespaces_t
-      dict_cache_reset_tables_and_tablespaces;
-  dict_recover_t dict_recover;
-  dict_get_server_version_t dict_get_server_version;
-  dict_set_server_version_t dict_set_server_version;
-  is_reserved_db_name_t is_reserved_db_name;
+      dict_cache_reset_tables_and_tablespaces;  // 重置表和表空间缓存的方法
+  dict_recover_t dict_recover;  // 恢复数据字典的方法
+  dict_get_server_version_t dict_get_server_version;  // 获取服务器版本的方法
+  dict_set_server_version_t dict_set_server_version;  // 设置服务器版本的方法
+  is_reserved_db_name_t is_reserved_db_name;  // 检查数据库名称是否保留的方法
 
   /** Global handler flags. */
+  // 全局处理程序标志
   uint32 flags{0};
 
   /*
     Those handlerton functions below are properly initialized at handler
     init.
   */
+  // 下面的 handlerton 函数在 handler 初始化时被正确初始化。
 
-  binlog_func_t binlog_func;
-  binlog_log_query_t binlog_log_query;
-  acl_notify_t acl_notify;
-  discover_t discover;
-  find_files_t find_files;
-  table_exists_in_engine_t table_exists_in_engine;
-  push_to_engine_t push_to_engine;
-  is_supported_system_table_t is_supported_system_table;
+  binlog_func_t binlog_func;  // binlog 功能的方法
+  binlog_log_query_t binlog_log_query;  // 记录 binlog 查询的方法
+  acl_notify_t acl_notify;  // ACL 通知的方法
+  discover_t discover;  // 发现表的方法
+  find_files_t find_files;  // 查找文件的方法
+  table_exists_in_engine_t table_exists_in_engine;  // 检查表是否存在于引擎中的方法
+  push_to_engine_t push_to_engine;  // 将操作推送到引擎的方法
+  is_supported_system_table_t is_supported_system_table;  // 检查是否支持系统表的方法
 
   /*
     APIs for retrieving Serialized Dictionary Information by tablespace id
   */
+  // 通过表空间 ID 检索序列化字典信息的 API
 
-  sdi_create_t sdi_create;
-  sdi_drop_t sdi_drop;
-  sdi_get_keys_t sdi_get_keys;
-  sdi_get_t sdi_get;
-  sdi_set_t sdi_set;
-  sdi_delete_t sdi_delete;
+  sdi_create_t sdi_create;  // 创建 SDI 的方法
+  sdi_drop_t sdi_drop;  // 删除 SDI 的方法
+  sdi_get_keys_t sdi_get_keys;  // 获取 SDI 键的方法
+  sdi_get_t sdi_get;  // 获取 SDI 的方法
+  sdi_set_t sdi_set;  // 设置 SDI 的方法
+  sdi_delete_t sdi_delete;  // 删除 SDI 的方法
 
   /**
     Null-ended array of file extensions that exist for the storage engine.
@@ -2760,49 +2802,62 @@ struct handlerton {
       - file_extensions[0] != NULL, file_extensions[1] != NULL,
         file_extensions[2] == NULL;
   */
+  // 存储引擎的文件扩展名的以 NULL 结尾的数组。
+  // 用于 frm_error() 和 handler.cc 中的默认 handler::rename_table 和 delete_table 方法。
+  // 对于具有两个文件扩展名（单独的元数据/索引文件和数据文件）的引擎，元素的顺序是相关的。引擎文件扩展名数组的第一个元素应该是元数据/索引文件扩展名，第二个元素是数据文件扩展名。当发出 REPAIR TABLE ... USE_FRM 时，prepare_for_repair() 假定此顺序。
+  // 对于没有文件的引擎，file_extensions 为 NULL。
+  // 目前，使用以下替代方案：
+  // - file_extensions == NULL;
+  // - file_extensions[0] != NULL, file_extensions[1] == NULL;
+  // - file_extensions[0] != NULL, file_extensions[1] != NULL, file_extensions[2] == NULL;
   const char **file_extensions;
 
-  is_dict_readonly_t is_dict_readonly;
-  rm_tmp_tables_t rm_tmp_tables;
-  get_cost_constants_t get_cost_constants;
-  replace_native_transaction_in_thd_t replace_native_transaction_in_thd;
-  notify_exclusive_mdl_t notify_exclusive_mdl;
-  notify_alter_table_t notify_alter_table;
-  notify_rename_table_t notify_rename_table;
-  notify_truncate_table_t notify_truncate_table;
-  rotate_encryption_master_key_t rotate_encryption_master_key;
-  fix_tablespaces_empty_uuid_t fix_tablespaces_empty_uuid;
-  fix_default_table_encryption_t fix_default_table_encryption;
-  upgrade_get_compression_dict_data_t upgrade_get_compression_dict_data;
-  redo_log_set_state_t redo_log_set_state;
+  is_dict_readonly_t is_dict_readonly;  // 检查数据字典是否只读的方法
+  rm_tmp_tables_t rm_tmp_tables;  // 删除临时表的方法
+  get_cost_constants_t get_cost_constants;  // 获取成本常数的方法
+  replace_native_transaction_in_thd_t replace_native_transaction_in_thd;  // 替换 THD 中的本地事务的方法
+  notify_exclusive_mdl_t notify_exclusive_mdl;  // 通知独占 MDL 锁的方法
+  notify_alter_table_t notify_alter_table;  // 通知表修改的方法
+  notify_rename_table_t notify_rename_table;  // 通知表重命名的方法
+  notify_truncate_table_t notify_truncate_table;  // 通知表截断的方法
+  rotate_encryption_master_key_t rotate_encryption_master_key;  // 轮换加密主密钥的方法
+  fix_tablespaces_empty_uuid_t fix_tablespaces_empty_uuid;  // 修复表空间空 UUID 的方法
+  fix_default_table_encryption_t fix_default_table_encryption;  // 修复默认表加密的方法
+  upgrade_get_compression_dict_data_t upgrade_get_compression_dict_data;  // 升级获取压缩字典数据的方法
+  redo_log_set_state_t redo_log_set_state;  // 设置重做日志状态的方法
 
-  get_table_statistics_t get_table_statistics;
-  get_index_column_cardinality_t get_index_column_cardinality;
-  get_tablespace_statistics_t get_tablespace_statistics;
+  get_table_statistics_t get_table_statistics;  // 获取表统计信息的方法
+  get_index_column_cardinality_t get_index_column_cardinality;  // 获取索引列基数的方法
+  get_tablespace_statistics_t get_tablespace_statistics;  // 获取表空间统计信息的方法
 
-  post_ddl_t post_ddl;
-  post_recover_t post_recover;
+  post_ddl_t post_ddl;  // DDL 操作后的方法
+  post_recover_t post_recover;  // 恢复操作后的方法
 
   /** Clone data transfer interfaces */
+  // 克隆数据传输接口
   Clone_interface_t clone_interface;
 
   /** Flag for Engine License. */
+  // 引擎许可证标志
   uint32 license;
   /** Location for engines to keep personal structures. */
+  // 引擎用于存储个人结构的位置
   void *data;
 
   /*
     Log_resource functions that must be supported by storage engines
     with relevant log information to be collected.
   */
-  lock_hton_log_t lock_hton_log;
-  unlock_hton_log_t unlock_hton_log;
-  collect_hton_log_info_t collect_hton_log_info;
+  // 存储引擎必须支持的日志资源函数，用于收集相关日志信息。
+  lock_hton_log_t lock_hton_log;  // 锁定引擎日志的方法
+  unlock_hton_log_t unlock_hton_log;  // 解锁引擎日志的方法
+  collect_hton_log_info_t collect_hton_log_info;  // 收集引擎日志信息的方法
 
   /** Flags describing details of foreign key support by storage engine. */
+  // 描述存储引擎外键支持细节的标志
   uint32 foreign_keys_flags;
 
-  check_fk_column_compat_t check_fk_column_compat;
+  check_fk_column_compat_t check_fk_column_compat;  // 检查外键列兼容性的方法
 
   /**
     Suffix for auto-generated foreign key names for tables using this storage
@@ -2812,6 +2867,9 @@ struct handlerton {
     If no suffix is specified then FK_NAME_DEFAULT_SUFFIX is used as
     default.
   */
+  // 使用此存储引擎的表自动生成的外键名称的后缀。如果 SE 指定了这样的后缀，则其生成的外键名称遵循 (表名)(SE 特定的外键名称后缀)(外键编号) 的模式。
+  // 此类后缀的长度不应超过 MAX_FK_NAME_SUFFIX_LENGTH 字节。
+  // 如果未指定后缀，则使用 FK_NAME_DEFAULT_SUFFIX 作为默认值。
   LEX_CSTRING fk_name_suffix;
 
   /**
@@ -2820,6 +2878,8 @@ struct handlerton {
 
     @see prepare_secondary_engine_t for function signature.
   */
+  // 指向准备辅助引擎以执行语句的函数的指针。
+  // 参见 prepare_secondary_engine_t 的函数签名。
   prepare_secondary_engine_t prepare_secondary_engine;
 
   /**
@@ -2829,6 +2889,8 @@ struct handlerton {
 
     @see optimize_secondary_engine_t for function signature.
   */
+  // 指向优化当前语句以在此 handlerton 表示的辅助存储引擎上执行的函数的指针。
+  // 参见 optimize_secondary_engine_t 的函数签名。
   optimize_secondary_engine_t optimize_secondary_engine;
 
   /**
@@ -2837,26 +2899,32 @@ struct handlerton {
 
     @see compare_secondary_engine_cost_t for function signature.
   */
+  // 指向估计在辅助存储引擎中执行连接成本的函数的指针。
+  // 参见 compare_secondary_engine_cost_t 的函数签名。
   compare_secondary_engine_cost_t compare_secondary_engine_cost;
 
   /// Bitmap which contains the supported join types and other flags
   /// for a secondary storage engine when used with the hypergraph join
   /// optimizer. If it is empty, it means that the secondary engine
   /// does not support the hypergraph join optimizer.
+  // 位图，包含与超图连接优化器一起使用时辅助存储引擎支持的连接类型和其他标志。如果为空，则表示辅助引擎不支持超图连接优化器。
   SecondaryEngineFlags secondary_engine_flags;
 
   /// Pointer to a function that evaluates the cost of executing an access path
   /// in a secondary storage engine.
   ///
   /// @see secondary_engine_modify_access_path_cost_t for function signature.
+  // 指向评估在辅助存储引擎中执行访问路径成本的函数的指针。
+  // 参见 secondary_engine_modify_access_path_cost_t 的函数签名。
   secondary_engine_modify_access_path_cost_t
       secondary_engine_modify_access_path_cost;
 
-  se_before_commit_t se_before_commit;
-  se_after_commit_t se_after_commit;
-  se_before_rollback_t se_before_rollback;
+  se_before_commit_t se_before_commit;  // 提交前的方法
+  se_after_commit_t se_after_commit;  // 提交后的方法
+  se_before_rollback_t se_before_rollback;  // 回滚前的方法
 
   /** Page tracking interface */
+  // 页面跟踪接口
   Page_track_t page_track;
 };
 

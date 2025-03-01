@@ -351,47 +351,53 @@ static void *handle_bootstrap(void *arg) {
 
   @return             False if no errors
 */
+// 创建一个线程来执行提交文件中的所有命令。
+// 通过提供一个显式的bootstrap处理函数，可以自定义从提交文件中读取和执行SQL命令的默认行为。
 bool run_bootstrap_thread(const char *file_name, MYSQL_FILE *file,
                           bootstrap_functor boot_handler,
                           enum_thread_type thread_type) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  THD *thd = new THD;
-  thd->system_thread = thread_type;
-  thd->get_protocol_classic()->init_net(nullptr);
+  THD *thd = new THD;  // 创建一个新的THD对象
+  thd->system_thread = thread_type;  // 设置线程类型
+  thd->get_protocol_classic()->init_net(nullptr);  // 初始化网络协议
   // Skip grants and set the system_user flag in THD.
+  // 跳过权限检查并设置THD中的system_user标志
   thd->security_context()->skip_grants();
 
-  thd->set_new_thread_id();
+  thd->set_new_thread_id();  // 设置新的线程ID
 
-  DBUG_EXECUTE_IF("bootstrap_crash", DBUG_SUICIDE(););
+  DBUG_EXECUTE_IF("bootstrap_crash", DBUG_SUICIDE(););  // 调试：如果设置了bootstrap_crash，则崩溃
   DBUG_EXECUTE_IF("bootstrap_hang", {
-    while (1) my_sleep(1000000);
+    while (1) my_sleep(1000000);  // 调试：如果设置了bootstrap_hang，则挂起
   });
   DBUG_EXECUTE_IF("bootstrap_buffer_overrun", {
-    int *mem = static_cast<int *>(my_malloc(PSI_NOT_INSTRUMENTED, 127, 0));
+    int *mem = static_cast<int *>(my_malloc(PSI_NOT_INSTRUMENTED, 127, 0));  // 分配127字节的内存
     // Allocations are usually aligned, so even if 127 bytes were requested,
     // it's mostly safe to assume there are 128 bytes. Writing into the last
     // byte is safe for the rest of the code, but still enough to trigger
     // AddressSanitizer (ASAN) or Valgrind.
-    *static_cast<volatile int *>(mem + (128 / sizeof(*mem)) - 1) = 1;
-    my_free(mem);
+    // 分配通常是对齐的，因此即使请求了127字节，也可以安全地假设有128字节。写入最后一个字节对代码的其余部分是安全的，但仍然足以触发AddressSanitizer（ASAN）或Valgrind。
+    *static_cast<volatile int *>(mem + (128 / sizeof(*mem)) - 1) = 1;  // 写入最后一个字节
+    my_free(mem);  // 释放内存
   });
 
-  handle_bootstrap_args args;
+  handle_bootstrap_args args;  // 定义bootstrap参数结构体
 
-  args.m_thd = thd;
-  args.m_bootstrap_handler = boot_handler;
-  args.m_file_name = file_name;
-  args.m_file = file;
+  args.m_thd = thd;  // 设置THD对象
+  args.m_bootstrap_handler = boot_handler;  // 设置bootstrap处理函数
+  args.m_file_name = file_name;  // 设置文件名
+  args.m_file = file;  // 设置文件句柄
 
   // Set server default sql_mode irrespective of mysqld server command line
   // argument.
+  // 设置服务器默认的sql_mode，忽略mysqld服务器命令行参数
   thd->variables.sql_mode =
       find_static_system_variable("sql_mode")->get_default();
 
   // Set session server and connection collation irrespective of
   // mysqld server command line argument.
+  // 设置会话服务器和连接字符集，忽略mysqld服务器命令行参数
   thd->variables.collation_server =
       get_charset_by_name(MYSQL_DEFAULT_COLLATION_NAME, MYF(0));
   thd->variables.collation_connection =
@@ -400,6 +406,7 @@ bool run_bootstrap_thread(const char *file_name, MYSQL_FILE *file,
   // Set session transaction completion type to server default to
   // avoid problems due to transactions being active when they are
   // not supposed to.
+  // 设置会话事务完成类型为服务器默认值，以避免事务在不应该激活时激活的问题
   thd->variables.completion_type =
       find_static_system_variable("completion_type")->get_default();
 
@@ -409,6 +416,7 @@ bool run_bootstrap_thread(const char *file_name, MYSQL_FILE *file,
     be independent of the value of explicit_defaults_for_timestamp specified by
     the user.
   */
+  // 设置explicit_defaults_for_timestamp变量的默认值。Bootstrap线程创建字典表。字典表的创建应独立于用户指定的explicit_defaults_for_timestamp值。
   thd->variables.explicit_defaults_for_timestamp =
       find_static_system_variable("explicit_defaults_for_timestamp")
           ->get_default();
@@ -417,41 +425,46 @@ bool run_bootstrap_thread(const char *file_name, MYSQL_FILE *file,
     The global table encryption default setting applies to user threads.
     Setting it false for system threads.
   */
+  // 全局表加密默认设置适用于用户线程。对于系统线程，将其设置为false。
   thd->variables.default_table_encryption = false;
 
-  my_thread_attr_t thr_attr;
-  my_thread_attr_init(&thr_attr);
+  my_thread_attr_t thr_attr;  // 定义线程属性
+  my_thread_attr_init(&thr_attr);  // 初始化线程属性
 #ifndef _WIN32
-  pthread_attr_setscope(&thr_attr, PTHREAD_SCOPE_SYSTEM);
+  pthread_attr_setscope(&thr_attr, PTHREAD_SCOPE_SYSTEM);  // 设置线程范围为系统范围
 #endif
-  my_thread_attr_setdetachstate(&thr_attr, MY_THREAD_CREATE_JOINABLE);
+  my_thread_attr_setdetachstate(&thr_attr, MY_THREAD_CREATE_JOINABLE);  // 设置线程为可连接状态
 
   // Default stack size may be too small.
+  // 默认的栈大小可能太小
   size_t stacksize = 0;
-  my_thread_attr_getstacksize(&thr_attr, &stacksize);
-  if (stacksize < my_thread_stack_size) {
-    if (0 != my_thread_attr_setstacksize(&thr_attr, my_thread_stack_size)) {
-      assert(false);
+  my_thread_attr_getstacksize(&thr_attr, &stacksize);  // 获取当前栈大小
+  if (stacksize < my_thread_stack_size) {  // 如果栈大小小于所需大小
+    if (0 != my_thread_attr_setstacksize(&thr_attr, my_thread_stack_size)) {  // 设置栈大小
+      assert(false);  // 断言失败
     }
   }
 
-  my_thread_handle thread_handle;
+  my_thread_handle thread_handle;  // 定义线程句柄
   // What about setting THD::real_id?
+  // 关于设置THD::real_id的问题
   int error = mysql_thread_create(key_thread_bootstrap, &thread_handle,
-                                  &thr_attr, handle_bootstrap, &args);
+                                  &thr_attr, handle_bootstrap, &args);  // 创建线程
   if (error) {
     /* purecov: begin inspected */
-    LogErr(WARNING_LEVEL, ER_BOOTSTRAP_CANT_THREAD, errno).os_errno(errno);
-    thd->release_resources();
-    delete thd;
-    return true;
+    LogErr(WARNING_LEVEL, ER_BOOTSTRAP_CANT_THREAD, errno).os_errno(errno);  // 记录警告
+    thd->release_resources();  // 释放THD资源
+    delete thd;  // 删除THD对象
+    return true;  // 返回错误
     /* purecov: end */
   }
   /* Wait for thread to die */
+  // 等待线程结束
   my_thread_join(&thread_handle, nullptr);
   // Free Items that were created during this execution.
+  // 释放在此执行期间创建的Items
   thd->free_items();
-  delete thd;
-  return args.m_bootstrap_error;
+  delete thd;  // 删除THD对象
+  return args.m_bootstrap_error;  // 返回bootstrap错误状态
 }
 }  // namespace bootstrap

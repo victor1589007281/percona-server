@@ -237,11 +237,11 @@ int set_prepared_in_tc_one_ht(THD *thd, handlerton *ht) {
 }  // namespace
 
 int TC_LOG_DUMMY::open(const char *) {
-  if (ha_recover()) {
-    LogErr(ERROR_LEVEL, ER_TC_RECOVERY_FAILED_THESE_ARE_YOUR_OPTIONS);
-    return 1;
+  if (ha_recover()) { // 如果存储引擎恢复失败
+    LogErr(ERROR_LEVEL, ER_TC_RECOVERY_FAILED_THESE_ARE_YOUR_OPTIONS); // 记录错误
+    return 1; // 返回错误码 1
   }
-  return 0;
+  return 0; // 返回 0 表示成功
 }
 
 TC_LOG::enum_result TC_LOG_DUMMY::commit(THD *thd, bool all) {
@@ -316,96 +316,96 @@ ulong tc_log_max_pages_used = 0, tc_log_page_size = 0,
 
 int TC_LOG_MMAP::open(const char *opt_name) {
   uint i;
-  bool crashed = false;
-  PAGE *pg;
+  bool crashed = false; // 是否崩溃标志
+  PAGE *pg; // 页面指针
 
-  assert(total_ha_2pc > 1);
-  assert(opt_name && opt_name[0]);
+  assert(total_ha_2pc > 1); // 断言总共 2PC 大于 1
+  assert(opt_name && opt_name[0]); // 断言选项名称不为空
 
-  tc_log_page_size = my_getpagesize();
+  tc_log_page_size = my_getpagesize(); // 获取页面大小
 
-  fn_format(logname, opt_name, mysql_data_home, "", MY_UNPACK_FILENAME);
-  if ((fd = mysql_file_open(key_file_tclog, logname, O_RDWR, MYF(0))) < 0) {
-    if (my_errno() != ENOENT) goto err;
-    if (using_heuristic_recover()) return 1;
+  fn_format(logname, opt_name, mysql_data_home, "", MY_UNPACK_FILENAME); // 格式化日志名称
+  if ((fd = mysql_file_open(key_file_tclog, logname, O_RDWR, MYF(0))) < 0) { // 打开日志文件
+    if (my_errno() != ENOENT) goto err; // 如果错误不是文件不存在，跳转到错误处理
+    if (using_heuristic_recover()) return 1; // 如果使用启发式恢复，返回错误码 1
     if ((fd = mysql_file_create(key_file_tclog, logname, CREATE_MODE, O_RDWR,
-                                MYF(MY_WME))) < 0)
-      goto err;
-    inited = 1;
-    file_length = opt_tc_log_size;
-    if (mysql_file_chsize(fd, file_length, 0, MYF(MY_WME))) goto err;
+                                MYF(MY_WME))) < 0) // 创建日志文件
+      goto err; // 跳转到错误处理
+    inited = 1; // 初始化标志设置为 1
+    file_length = opt_tc_log_size; // 设置文件长度
+    if (mysql_file_chsize(fd, file_length, 0, MYF(MY_WME))) goto err; // 设置文件大小
   } else {
-    inited = 1;
-    crashed = true;
-    LogErr(INFORMATION_LEVEL, ER_TC_RECOVERING_AFTER_CRASH_USING, opt_name);
-    if (tc_heuristic_recover != TC_HEURISTIC_NOT_USED) {
-      LogErr(ERROR_LEVEL, ER_TC_CANT_AUTO_RECOVER_WITH_TC_HEURISTIC_RECOVER);
-      goto err;
+    inited = 1; // 初始化标志设置为 1
+    crashed = true; // 设置崩溃标志
+    LogErr(INFORMATION_LEVEL, ER_TC_RECOVERING_AFTER_CRASH_USING, opt_name); // 记录崩溃恢复信息
+    if (tc_heuristic_recover != TC_HEURISTIC_NOT_USED) { // 如果启发式恢复已使用
+      LogErr(ERROR_LEVEL, ER_TC_CANT_AUTO_RECOVER_WITH_TC_HEURISTIC_RECOVER); // 记录错误
+      goto err; // 跳转到错误处理
     }
-    file_length = mysql_file_seek(fd, 0L, MY_SEEK_END, MYF(MY_WME + MY_FAE));
-    if (file_length == MY_FILEPOS_ERROR || file_length % tc_log_page_size)
-      goto err;
+    file_length = mysql_file_seek(fd, 0L, MY_SEEK_END, MYF(MY_WME + MY_FAE)); // 获取文件长度
+    if (file_length == MY_FILEPOS_ERROR || file_length % tc_log_page_size) // 如果文件长度错误或不是页面大小的整数倍
+      goto err; // 跳转到错误处理
   }
 
   data = (uchar *)my_mmap(nullptr, (size_t)file_length, PROT_READ | PROT_WRITE,
-                          MAP_NOSYNC | MAP_SHARED, fd, 0);
-  if (data == MAP_FAILED) {
-    set_my_errno(errno);
-    goto err;
+                          MAP_NOSYNC | MAP_SHARED, fd, 0); // 映射文件到内存
+  if (data == MAP_FAILED) { // 如果映射失败
+    set_my_errno(errno); // 设置错误码
+    goto err; // 跳转到错误处理
   }
-  inited = 2;
+  inited = 2; // 初始化标志设置为 2
 
-  npages = (uint)file_length / tc_log_page_size;
-  assert(npages >= 3);  // to guarantee non-empty pool
+  npages = (uint)file_length / tc_log_page_size; // 计算页面数量
+  assert(npages >= 3);  // 断言页面数量大于等于 3
   if (!(pages = (PAGE *)my_malloc(key_memory_TC_LOG_MMAP_pages,
                                   npages * sizeof(PAGE),
-                                  MYF(MY_WME | MY_ZEROFILL))))
-    goto err;
-  inited = 3;
-  for (pg = pages, i = 0; i < npages; i++, pg++) {
-    pg->next = pg + 1;
-    pg->waiters = 0;
-    pg->state = PS_POOL;
-    mysql_cond_init(key_PAGE_cond, &pg->cond);
-    pg->size = pg->free = tc_log_page_size / sizeof(my_xid);
-    pg->start = (my_xid *)(data + i * tc_log_page_size);
-    pg->end = pg->start + pg->size;
-    pg->ptr = pg->start;
+                                  MYF(MY_WME | MY_ZEROFILL)))) // 分配页面内存
+    goto err; // 跳转到错误处理
+  inited = 3; // 初始化标志设置为 3
+  for (pg = pages, i = 0; i < npages; i++, pg++) { // 初始化页面
+    pg->next = pg + 1; // 设置下一个页面指针
+    pg->waiters = 0; // 初始化等待者数量
+    pg->state = PS_POOL; // 设置页面状态为池
+    mysql_cond_init(key_PAGE_cond, &pg->cond); // 初始化页面条件变量
+    pg->size = pg->free = tc_log_page_size / sizeof(my_xid); // 设置页面大小和空闲大小
+    pg->start = (my_xid *)(data + i * tc_log_page_size); // 设置页面起始指针
+    pg->end = pg->start + pg->size; // 设置页面结束指针
+    pg->ptr = pg->start; // 设置页面当前指针
   }
   pages[0].size = pages[0].free =
-      (tc_log_page_size - TC_LOG_HEADER_SIZE) / sizeof(my_xid);
-  pages[0].start = pages[0].end - pages[0].size;
-  pages[npages - 1].next = nullptr;
-  inited = 4;
+      (tc_log_page_size - TC_LOG_HEADER_SIZE) / sizeof(my_xid); // 设置第一页大小和空闲大小
+  pages[0].start = pages[0].end - pages[0].size; // 设置第一页起始指针
+  pages[npages - 1].next = nullptr; // 设置最后一页的下一个指针为空
+  inited = 4; // 初始化标志设置为 4
 
-  if (crashed) {
-    if (recover()) goto err;
-  } else if (ha_recover()) {
-    LogErr(ERROR_LEVEL, ER_TC_RECOVERY_FAILED_THESE_ARE_YOUR_OPTIONS);
-    goto err;
+  if (crashed) { // 如果崩溃
+    if (recover()) goto err; // 恢复失败，跳转到错误处理
+  } else if (ha_recover()) { // 如果存储引擎恢复失败
+    LogErr(ERROR_LEVEL, ER_TC_RECOVERY_FAILED_THESE_ARE_YOUR_OPTIONS); // 记录错误
+    goto err; // 跳转到错误处理
   }
 
-  memcpy(data, tc_log_magic, sizeof(tc_log_magic));
-  data[sizeof(tc_log_magic)] = (uchar)total_ha_2pc;
-  my_msync(fd, data, tc_log_page_size, MS_SYNC);
-  inited = 5;
+  memcpy(data, tc_log_magic, sizeof(tc_log_magic)); // 复制日志魔术字
+  data[sizeof(tc_log_magic)] = (uchar)total_ha_2pc; // 设置总共 2PC 数量
+  my_msync(fd, data, tc_log_page_size, MS_SYNC); // 同步内存到文件
+  inited = 5; // 初始化标志设置为 5
 
-  mysql_mutex_init(key_LOCK_tc, &LOCK_tc, MY_MUTEX_INIT_FAST);
-  mysql_cond_init(key_COND_active, &COND_active);
-  mysql_cond_init(key_COND_pool, &COND_pool);
+  mysql_mutex_init(key_LOCK_tc, &LOCK_tc, MY_MUTEX_INIT_FAST); // 初始化互斥锁
+  mysql_cond_init(key_COND_active, &COND_active); // 初始化条件变量
+  mysql_cond_init(key_COND_pool, &COND_pool); // 初始化条件变量
 
-  inited = 6;
+  inited = 6; // 初始化标志设置为 6
 
-  syncing = nullptr;
-  active = pages;
-  pool = pages + 1;
-  pool_last_ptr = &pages[npages - 1].next;
+  syncing = nullptr; // 初始化同步指针
+  active = pages; // 设置活动页面
+  pool = pages + 1; // 设置池页面
+  pool_last_ptr = &pages[npages - 1].next; // 设置池最后一个指针
 
-  return 0;
+  return 0; // 返回 0 表示成功
 
 err:
-  close();
-  return 1;
+  close(); // 关闭日志
+  return 1; // 返回错误码 1
 }
 
 /**

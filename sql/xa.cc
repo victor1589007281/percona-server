@@ -265,39 +265,41 @@ bool Recovered_xa_transactions::recover_prepared_xa_transactions() {
 }
 
 int ha_recover(Xid_commit_list *commit_list, Xa_state_list *xa_list) {
-  xarecover_st info;
-  DBUG_TRACE;
-  info.found_foreign_xids = info.found_my_xids = 0;
-  info.commit_list = commit_list;
+  xarecover_st info; // 恢复信息结构体
+  DBUG_TRACE; // 调试跟踪
+  info.found_foreign_xids = info.found_my_xids = 0; // 初始化找到的外部和内部 XID 数量
+  info.commit_list = commit_list; // 设置提交列表
   info.dry_run = (info.commit_list == nullptr &&
-                  tc_heuristic_recover == TC_HEURISTIC_NOT_USED);
-  info.list = nullptr;
+                  tc_heuristic_recover == TC_HEURISTIC_NOT_USED); // 设置是否为干运行
+  info.list = nullptr; // 初始化列表指针
 
-  std::unique_ptr<MEM_ROOT> mem_root{nullptr};
-  std::unique_ptr<Xa_state_list::allocator> map_alloc{nullptr};
-  std::unique_ptr<Xa_state_list::list> xid_map{nullptr};
-  std::unique_ptr<Xa_state_list> external_xids{nullptr};
-  if (xa_list == nullptr) {
+  std::unique_ptr<MEM_ROOT> mem_root{nullptr}; // 内存根指针
+  std::unique_ptr<Xa_state_list::allocator> map_alloc{nullptr}; // XA 状态列表分配器指针
+  std::unique_ptr<Xa_state_list::list> xid_map{nullptr}; // XID 映射指针
+  std::unique_ptr<Xa_state_list> external_xids{nullptr}; // 外部 XID 列表指针
+  if (xa_list == nullptr) { // 如果 XA 列表为空
     std::tie(mem_root, map_alloc, xid_map, external_xids) =
-        Xa_state_list::new_instance();
-    xa_list = external_xids.get();
+        Xa_state_list::new_instance(); // 创建新的 XA 状态列表实例
+    xa_list = external_xids.get(); // 获取外部 XID 列表指针
   }
-  info.xa_list = xa_list;
+  info.xa_list = xa_list; // 设置 XA 列表
 
   /* commit_list and tc_heuristic_recover cannot be set both */
+  /* 提交列表和启发式恢复不能同时设置 */
   assert(info.commit_list == nullptr ||
-         tc_heuristic_recover == TC_HEURISTIC_NOT_USED);
+         tc_heuristic_recover == TC_HEURISTIC_NOT_USED); // 断言提交列表为空或启发式恢复未使用
   /* if either is set, total_ha_2pc must be set too */
-  assert(info.dry_run || total_ha_2pc > (ulong)opt_bin_log);
+  /* 如果任一设置，总共 2PC 也必须设置 */
+  assert(info.dry_run || total_ha_2pc > (ulong)opt_bin_log); // 断言为干运行或总共 2PC 大于二进制日志选项
 
-  if (total_ha_2pc <= (ulong)opt_bin_log) return 0;
+  if (total_ha_2pc <= (ulong)opt_bin_log) return 0; // 如果总共 2PC 小于等于二进制日志选项，返回 0
 
-  if (info.commit_list) LogErr(SYSTEM_LEVEL, ER_XA_STARTING_RECOVERY);
+  if (info.commit_list) LogErr(SYSTEM_LEVEL, ER_XA_STARTING_RECOVERY); // 如果提交列表不为空，记录恢复开始信息
 
-  if (total_ha_2pc > (ulong)opt_bin_log + 1) {
-    if (tc_heuristic_recover == TC_HEURISTIC_RECOVER_ROLLBACK) {
-      LogErr(ERROR_LEVEL, ER_XA_NO_MULTI_2PC_HEURISTIC_RECOVER);
-      return 1;
+  if (total_ha_2pc > (ulong)opt_bin_log + 1) { // 如果总共 2PC 大于二进制日志选项加 1
+    if (tc_heuristic_recover == TC_HEURISTIC_RECOVER_ROLLBACK) { // 如果启发式恢复为回滚
+      LogErr(ERROR_LEVEL, ER_XA_NO_MULTI_2PC_HEURISTIC_RECOVER); // 记录错误
+      return 1; // 返回错误码 1
     }
   } else {
     /*
@@ -305,39 +307,40 @@ int ha_recover(Xid_commit_list *commit_list, Xa_state_list *xa_list) {
       to rollback. This setting will be ignored if we are in automatic
       recovery mode.
     */
-    tc_heuristic_recover = TC_HEURISTIC_RECOVER_ROLLBACK;  // forcing ROLLBACK
-    info.dry_run = false;
+    /* 如果只有一个支持 2PC 的存储引擎，回滚总是安全的。如果处于自动恢复模式，将忽略此设置。 */
+    tc_heuristic_recover = TC_HEURISTIC_RECOVER_ROLLBACK;  // 强制回滚
+    info.dry_run = false; // 设置为非干运行
   }
 
   for (info.len = MAX_XID_LIST_SIZE;
-       info.list == nullptr && info.len > MIN_XID_LIST_SIZE; info.len /= 2) {
-    info.list = new (std::nothrow) XA_recover_txn[info.len];
+       info.list == nullptr && info.len > MIN_XID_LIST_SIZE; info.len /= 2) { // 从最大 XID 列表大小开始，逐步减小
+    info.list = new (std::nothrow) XA_recover_txn[info.len]; // 分配 XA 恢复事务列表
   }
-  if (!info.list) {
+  if (!info.list) { // 如果列表分配失败
     LogErr(ERROR_LEVEL, ER_SERVER_OUTOFMEMORY,
-           static_cast<int>(info.len * sizeof(XID)));
-    return 1;
+           static_cast<int>(info.len * sizeof(XID))); // 记录内存不足错误
+    return 1; // 返回错误码 1
   }
-  auto clean_up_guard = create_scope_guard([&] { delete[] info.list; });
+  auto clean_up_guard = create_scope_guard([&] { delete[] info.list; }); // 创建清理保护
 
   if (plugin_foreach(nullptr, xa::recovery::recover_prepared_in_tc_one_ht,
-                     MYSQL_STORAGE_ENGINE_PLUGIN, &info)) {
-    return 1;
+                     MYSQL_STORAGE_ENGINE_PLUGIN, &info)) { // 遍历插件，恢复准备好的事务
+    return 1; // 返回错误码 1
   }
   if (plugin_foreach(nullptr, xa::recovery::recover_one_ht,
-                     MYSQL_STORAGE_ENGINE_PLUGIN, &info)) {
-    return 1;
+                     MYSQL_STORAGE_ENGINE_PLUGIN, &info)) { // 遍历插件，恢复事务
+    return 1; // 返回错误码 1
   }
 
-  if (info.found_foreign_xids)
-    LogErr(WARNING_LEVEL, ER_XA_RECOVER_FOUND_XA_TRX, info.found_foreign_xids);
-  if (info.dry_run && info.found_my_xids) {
+  if (info.found_foreign_xids) // 如果找到外部 XID
+    LogErr(WARNING_LEVEL, ER_XA_RECOVER_FOUND_XA_TRX, info.found_foreign_xids); // 记录警告
+  if (info.dry_run && info.found_my_xids) { // 如果为干运行且找到内部 XID
     LogErr(ERROR_LEVEL, ER_XA_RECOVER_EXPLANATION, info.found_my_xids,
-           opt_tc_log_file);
-    return 1;
+           opt_tc_log_file); // 记录错误
+    return 1; // 返回错误码 1
   }
-  if (info.commit_list) LogErr(SYSTEM_LEVEL, ER_XA_RECOVERY_DONE);
-  return 0;
+  if (info.commit_list) LogErr(SYSTEM_LEVEL, ER_XA_RECOVERY_DONE); // 如果提交列表不为空，记录恢复完成信息
+  return 0; // 返回 0 表示成功
 }
 
 bool xa_trans_force_rollback(THD *thd) {

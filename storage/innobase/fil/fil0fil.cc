@@ -2216,12 +2216,19 @@ a file boundary; in aio this must be a block size multiple
 be appropriately aligned
 @return DB_SUCCESS, or DB_TABLESPACE_DELETED if we are trying to do
         I/O on a tablespace which does not exist */
+/** 从缓冲区向表空间写入数据。请记住，文件末尾可能不完整的块会被忽略：它们在计算表空间内的字节偏移量时不会被考虑。
+@param[in]      page_id         页面 ID
+@param[in]      page_size       页面大小
+@param[in]      byte_offset     字节偏移量的余数；在异步 IO 中，这必须是 OS 块大小的倍数
+@param[in]      len             要写入的字节数；这不能跨越文件边界；在异步 IO 中，这必须是块大小的倍数
+@param[in]      buf             要写入的缓冲区；在异步 IO 中，这必须适当对齐
+@return DB_SUCCESS，或如果我们尝试对不存在的表空间进行 I/O，则返回 DB_TABLESPACE_DELETED */
 static dberr_t fil_write(const page_id_t &page_id, const page_size_t &page_size,
                          ulint byte_offset, ulint len, void *buf) {
-  ut_ad(!srv_read_only_mode);
+  ut_ad(!srv_read_only_mode); // 断言不是只读模式
 
   return fil_io(IORequestWrite, true, page_id, page_size, byte_offset, len, buf,
-                nullptr);
+                nullptr); // 调用 fil_io 函数执行写操作
 }
 
 /** Look up a tablespace. The caller should hold an InnoDB table lock or
@@ -2700,19 +2707,20 @@ size_t Fil_system::get_minimum_limit_for_open_files(
 }
 
 bool Fil_shard::open_file(fil_node_t *file) {
-  bool success;
-  fil_space_t *space = file->space;
+  bool success; // 成功标志
+  fil_space_t *space = file->space; // 获取文件所属的表空间
 
-  ut_ad(mutex_owned());
+  ut_ad(mutex_owned()); // 断言持有互斥锁
 
   /* This method is not straightforward. The description is included in comments
   to different parts of this function. They are best read one after another
   in order. */
+  /* 这个方法并不简单。描述包含在函数的不同部分的注释中。最好按顺序逐一阅读它们。 */
 
-  ut_a(!file->is_open);
-  ut_a(file->n_pending_ios == 0);
+  ut_a(!file->is_open); // 断言文件未打开
+  ut_a(file->n_pending_ios == 0); // 断言文件没有挂起的 I/O 操作
 
-  const auto start_time = std::chrono::steady_clock::now();
+  const auto start_time = std::chrono::steady_clock::now(); // 获取当前时间
 
   /* This method first assures we can open a file. This comes down to assuring a
   correct state under locks is present and that opening of this file will not
@@ -2730,61 +2738,78 @@ bool Fil_shard::open_file(fil_node_t *file) {
   returns true. The file opened will naturally count against the limits. After
   this happens, the current values of files for the limits are decreased only in
   `Fil_shard::close_file`. */
+  /* 这个方法首先确保我们可以打开一个文件。这归结为确保在锁定状态下存在正确的状态，并且打开此文件不会超过任何限制。
+  目前我们有两个打开文件的限制：
+  - 打开的文件的最大数量 - fil_system->m_open_files_limit，
+  - 不能按请求关闭的打开文件的最大数量，即不属于打开文件 LRU 列表的一部分。
+  如果文件将成为 LRU 的一部分，我们可以忽略后者。
+  对于每个需要遵守的限制，我们需要增加限制内的当前文件数量。如果增加成功（结果是当前数量不大于限制值），我们有权打开文件。
+  当所有权限都被获取时，`Fil_shard::open_file` 打开文件并返回 true。打开的文件自然会计入限制。
+  在此之后，限制的当前文件数量仅在 `Fil_shard::close_file` 中减少。 */
 
   /* We remember if we have already acquired right to open the file against the
   total open files limit. */
-  bool have_right_for_open = false;
+  /* 我们记住是否已经获得了相对于总打开文件限制打开文件的权利。 */
+  bool have_right_for_open = false; // 是否有权打开文件
   /* As well as the right to open the file against limit for files that do not
   take part in LRU algorithm. If the file takes part in LRU algorithm, this
   is never true. */
-  bool have_right_for_open_non_lru = false;
+  /* 以及相对于不参与 LRU 算法的文件限制打开文件的权利。如果文件参与 LRU 算法，这永远不会为真。 */
+  bool have_right_for_open_non_lru = false; // 是否有权打开非 LRU 文件
 
   /* To acquire a right against a limit, we use this helper function. It
   atomically tries to bump the value of supplied reference to a current value
   as long as it is below the limit set. Returns true if the right to open is
   acquired. */
+  /* 为了获得相对于限制的权利，我们使用这个辅助函数。只要它低于设定的限制，它就会原子地尝试将提供的引用值增加到当前值。
+  如果获得了打开的权利，则返回 true。 */
   const auto acquire_right = [](std::atomic<size_t> &counter,
                                 size_t limit) -> bool {
-    auto current_count = counter.load();
-    while (limit > current_count) {
-      if (counter.compare_exchange_weak(current_count, current_count + 1)) {
-        return true;
+    auto current_count = counter.load(); // 获取当前计数
+    while (limit > current_count) { // 当限制大于当前计数时
+      if (counter.compare_exchange_weak(current_count, current_count + 1)) { // 尝试增加计数
+        return true; // 返回 true
       }
     }
-    return false;
+    return false; // 返回 false
   };
 
   /* At any point we can decide to release any rights that we have acquired so
   far. This will make us unable to open the file now. The
   `Fil_shard::open_file()` when returning `false` must assure no rights are
   left unreleased - this helper function helps to assure that. */
+  /* 在任何时候，我们都可以决定释放到目前为止获得的任何权利。这将使我们现在无法打开文件。
+  `Fil_shard::open_file()` 返回 `false` 时必须确保没有未释放的权利 - 这个辅助函数有助于确保这一点。 */
   const auto release_rights = [&]() {
-    if (have_right_for_open) {
-      fil_n_files_open.fetch_sub(1);
-      have_right_for_open = false;
+    if (have_right_for_open) { // 如果有权打开文件
+      fil_n_files_open.fetch_sub(1); // 减少打开文件计数
+      have_right_for_open = false; // 重置权利标志
     }
-    if (have_right_for_open_non_lru) {
-      ut_ad(fil_system->m_n_files_not_belonging_in_lru.load() > 0);
-      fil_system->m_n_files_not_belonging_in_lru.fetch_sub(1);
-      have_right_for_open_non_lru = false;
+    if (have_right_for_open_non_lru) { // 如果有权打开非 LRU 文件
+      ut_ad(fil_system->m_n_files_not_belonging_in_lru.load() > 0); // 断言非 LRU 文件计数大于 0
+      fil_system->m_n_files_not_belonging_in_lru.fetch_sub(1); // 减少非 LRU 文件计数
+      have_right_for_open_non_lru = false; // 重置权利标志
     }
   };
 
   /* Helper function: In case of repeated errors, we will delay printing of
   any messages to log by PRINT_INTERVAL_SECS after the method processing
   starts and then print one message per PRINT_INTERVAL_SECS. */
+  /* 辅助函数：在重复错误的情况下，我们将在方法处理开始后延迟打印任何消息到日志中 PRINT_INTERVAL_SECS，然后每 PRINT_INTERVAL_SECS 打印一条消息。 */
   const auto should_print_message =
       [&start_time](ib::Throttler &throttler) -> bool {
-    const auto current_time = std::chrono::steady_clock::now();
-    if (current_time - start_time >= PRINT_INTERVAL) {
-      return throttler.apply();
+    const auto current_time = std::chrono::steady_clock::now(); // 获取当前时间
+    if (current_time - start_time >= PRINT_INTERVAL) { // 如果当前时间与开始时间的差值大于等于打印间隔
+      return throttler.apply(); // 返回节流器应用结果
     }
-    return false;
+    return false; // 返回 false
   };
+
   /* If this is `false`, the file to open will count against the limit for
   opened files not taking part in the LRU algorithm. We will need to acquire
   a right to open it. */
-  const bool belongs_to_lru = Fil_system::space_belongs_in_LRU(file->space);
+  /* 如果这是 `false`，要打开的文件将计入不参与 LRU 算法的打开文件限制。我们需要获得打开它的权利。 */
+  const bool belongs_to_lru = Fil_system::space_belongs_in_LRU(file->space); // 判断文件是否属于 LRU
 
   /* We remember the current limit for opened files. If it changes while we are
   acquiring the rights, we must ensure we have not caused it to be bumped higher
@@ -2795,7 +2820,11 @@ bool Fil_shard::open_file(fil_node_t *file) {
 
   The non-LRU files limit can only change when the main limit for open files is
   changed, so we monitor only the main one. */
-  auto last_open_file_limit = fil_system->get_open_files_limit();
+  /* 我们记住当前的打开文件限制。如果在我们获取权限时它发生变化，我们必须确保没有导致它被提升到高于新限制。
+  这种双重检查与 `Fil_system::set_open_files_limit` 中的双重检查一起工作，以确保即使在并行更改限制的情况下，
+  也不会出现超过限制的打开文件数量的竞争条件。
+  非 LRU 文件限制只能在打开文件的主要限制更改时更改，因此我们只监控主要限制。 */
+  auto last_open_file_limit = fil_system->get_open_files_limit(); // 获取当前打开文件限制
 
   /* This is the main loop. It tries to assure all conditions required to open
   the file or causes `open_file` to exit if the file is already opened in
@@ -2832,177 +2861,211 @@ bool Fil_shard::open_file(fil_node_t *file) {
   we just release all rights and retry from the beginning.
 
   7. Only then we can proceed with actually opening the file. */
+  /* 这是主循环。它试图确保打开文件所需的所有条件，或者如果文件已经在不同的线程中打开，则导致 `open_file` 退出。
+  此时，每个循环的开始和循环退出时（无论是 `break` 还是 `return`），分片的互斥锁都由该线程拥有。
+  但是，它可能会在此循环中暂时释放并重新获取。如果我们决定释放互斥锁，我们必须在重新获取后从头开始执行循环。
+  以下是我们必须满足的允许文件打开的条件列表：
+  1. 在任何时候，如果文件变为打开状态，我们只需返回成功。必须在互斥锁下完成。
+  2. 在任何时候，如果空间被删除，我们只需返回失败。必须在互斥锁下完成。
+  3. 如果文件被 `space->prevent_file_open` 锁定，则释放到目前为止获得的任何限制权利，并等待“锁”被释放。
+  检查必须在互斥锁下完成。但等待必须仅在我们不拥有互斥锁时执行 - 其他线程需要释放“锁”。
+  4. 在非 LRU 打开文件限制内保留一个权利。这是有条件的 - 仅当文件不应放置在打开文件 LRU 中时才需要。这是无锁的。
+  5. 无条件地在 fil_system->get_open_files_limit() 内保留一个权利。
+  6. 检查打开文件的限制值是否没有变化。如果确实如此，我们只需释放所有权利并从头开始重试。
+  7. 只有这样我们才能继续实际打开文件。 */
   for (;;) {
     /* 1. If the file becomes open, we just return success. We own the mutex,
     may have some rights already acquired. */
-    ut_ad(mutex_owned());
-    if (file->is_open) {
-      release_rights();
-      return true;
+    /* 1. 如果文件变为打开状态，我们只需返回成功。我们拥有互斥锁，可能已经获得了一些权利。 */
+    ut_ad(mutex_owned()); // 断言持有互斥锁
+    if (file->is_open) { // 如果文件已打开
+      release_rights(); // 释放权利
+      return true; // 返回 true
     }
 
     /* 2. If the space becomes deleted, we just return failure. We own the
     mutex and may have some rights already acquired.*/
-    if (space->is_deleted()) {
-      release_rights();
-      return false;
+    /* 2. 如果空间被删除，我们只需返回失败。我们拥有互斥锁，可能已经获得了一些权利。 */
+    if (space->is_deleted()) { // 如果空间被删除
+      release_rights(); // 释放权利
+      return false; // 返回 false
     }
 
     /* 3. If the file is locked with `space->prevent_file_open`. */
-    if (space->prevent_file_open) {
+    /* 3. 如果文件被 `space->prevent_file_open` 锁定。 */
+    if (space->prevent_file_open) { // 如果空间阻止文件打开
       /* Someone wants to rename the file. We can't have it opened now.
       Give CPU to other thread that renames the file.  Release any
       rights and the mutex before we go to sleep - we will not need it and
       someone else will be able to get these or use the mutex to change the
       `space->prevent_file_open`. */
-      mutex_release();
-      release_rights();
+      /* 有人想重命名文件。我们现在不能打开它。将 CPU 让给重命名文件的其他线程。
+      在我们进入休眠之前释放任何权利和互斥锁 - 我们不需要它，其他人将能够获得这些或使用互斥锁来更改 `space->prevent_file_open`。 */
+      mutex_release(); // 释放互斥锁
+      release_rights(); // 释放权利
 
       if (should_print_message(
-              space->m_prevent_file_open_wait_message_throttler)) {
+              space->m_prevent_file_open_wait_message_throttler)) { // 如果应该打印消息
         ib::warn(ER_IB_MSG_278, space->name,
                  (long long)std::chrono::duration_cast<std::chrono::seconds>(
                      std::chrono::steady_clock::now() - start_time)
-                     .count());
+                     .count()); // 打印警告消息
       }
 
 #ifndef UNIV_HOTBACKUP
-      /* Wake the I/O handler threads to make sure pending I/O's are performed
-       */
+      /* Wake the I/O handler threads to make sure pending I/O's are performed 
+      */
+      /* 唤醒 I/O 处理线程以确保执行挂起的 I/O 操作 */
       os_aio_simulated_wake_handler_threads();
 
 #endif /* UNIV_HOTBACKUP */
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::sleep_for(std::chrono::milliseconds(1)); // 休眠 1 毫秒
 
-      mutex_acquire();
-      continue;
+      mutex_acquire(); // 获取互斥锁
+      continue; // 继续循环
     }
     /* 4. We try to acquire required right for non-LRU file, if it is not taking
     part in the LRU algorithm. */
-    if (!(belongs_to_lru || have_right_for_open_non_lru)) {
+    /* 4. 如果文件不参与 LRU 算法，我们尝试获取非 LRU 文件的必要权利。 */
+    if (!(belongs_to_lru || have_right_for_open_non_lru)) { // 如果文件不属于 LRU 且没有非 LRU 权利
       have_right_for_open_non_lru =
           acquire_right(fil_system->m_n_files_not_belonging_in_lru,
                         Fil_system::get_limit_for_non_lru_files(
-                            fil_system->get_open_files_limit()));
-      if (!have_right_for_open_non_lru) {
-        mutex_release();
+                            fil_system->get_open_files_limit())); // 获取非 LRU 文件的权利
+      if (!have_right_for_open_non_lru) { // 如果没有获取到非 LRU 文件的权利
+        mutex_release(); // 释放互斥锁
         if (should_print_message(
-                fil_system->m_MANY_NON_LRU_FILES_OPENED_throttler)) {
+                fil_system->m_MANY_NON_LRU_FILES_OPENED_throttler)) { // 如果应该打印消息
           ib::warn(ER_IB_WARN_MANY_NON_LRU_FILES_OPENED,
                    fil_system->m_n_files_not_belonging_in_lru.load(),
-                   fil_system->get_open_files_limit());
+                   fil_system->get_open_files_limit()); // 打印警告消息
         }
         /* Give CPU to other threads that keep files opened. */
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        mutex_acquire();
-        continue;
+        /* 将 CPU 让给保持文件打开的其他线程。 */
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // 休眠 1 毫秒
+        mutex_acquire(); // 获取互斥锁
+        continue; // 继续循环
       }
     }
 
     /* 5. We try to acquire required right to open file. */
-    if (!have_right_for_open) {
+    /* 5. 我们尝试获取打开文件的必要权利。 */
+    if (!have_right_for_open) { // 如果没有获取到打开文件的权利
       have_right_for_open =
-          acquire_right(fil_n_files_open, fil_system->get_open_files_limit());
-      if (!have_right_for_open) {
-        mutex_release();
+          acquire_right(fil_n_files_open, fil_system->get_open_files_limit()); // 获取打开文件的权利
+      if (!have_right_for_open) { // 如果没有获取到打开文件的权利
+        mutex_release(); // 释放互斥锁
 
         if (should_print_message(
-                fil_system->m_TRYING_TO_OPEN_FILE_FOR_LONG_TIME_throttler)) {
+                fil_system->m_TRYING_TO_OPEN_FILE_FOR_LONG_TIME_throttler)) { // 如果应该打印消息
           ib::warn warning(
               ER_IB_MSG_TRYING_TO_OPEN_FILE_FOR_LONG_TIME,
               static_cast<long long>(
                   std::chrono::duration_cast<std::chrono::seconds>(
                       std::chrono::steady_clock::now() - start_time)
                       .count()),
-              fil_system->get_open_files_limit());
+              fil_system->get_open_files_limit()); // 打印警告消息
         }
 
         /* Flush tablespaces so that we can close modified files in the LRU
         list. */
+        /* 刷新表空间，以便我们可以关闭 LRU 列表中的修改文件。 */
         fil_system->flush_file_spaces();
 
-        if (!fil_system->close_file_in_all_LRU()) {
-          fil_system->wait_while_ios_in_progress();
+        if (!fil_system->close_file_in_all_LRU()) { // 如果没有关闭所有 LRU 文件
+          fil_system->wait_while_ios_in_progress(); // 等待 I/O 操作完成
         }
-        mutex_acquire();
-        continue;
+        mutex_acquire(); // 获取互斥锁
+        continue; // 继续循环
       }
     }
 
     /* 6. Re-check the open files limit value. This is working in tandem with
-    double checking the limits in the `set_open_files_limit()`. Either this
-    thread or one executing `set_open_files_limit()` will spot the limit is
-    exceeded and rollback to a correct state: either restore limit or release
-    rights. */
-    if (last_open_file_limit != fil_system->get_open_files_limit()) {
-      release_rights();
-      last_open_file_limit = fil_system->get_open_files_limit();
-      continue;
+        double checking the limits in the `set_open_files_limit()`. Either this
+        thread or one executing `set_open_files_limit()` will spot the limit is
+        exceeded and rollback to a correct state: either restore limit or release
+        rights. */
+    /* 6. 重新检查打开文件的限制值。这与 `set_open_files_limit()` 中的双重检查一起工作。
+        无论是这个线程还是执行 `set_open_files_limit()` 的线程都会发现限制被超出并回滚到正确的状态：要么恢复限制，要么释放权利。 */    
+    if (last_open_file_limit != fil_system->get_open_files_limit()) { // 如果最后的打开文件限制与当前的打开文件限制不同
+      release_rights(); // 释放权利
+      last_open_file_limit = fil_system->get_open_files_limit(); // 更新最后的打开文件限制
+      continue; // 继续循环
     }
     /* 7. If we have all required rights, and checked under the mutex the
     file is not open and can be opened, proceed to opening the file. The file
     must be opened before we release the mutex again. */
-    break;
+    /* 7. 如果我们拥有所有必要的权利，并且在互斥锁下检查文件未打开且可以打开，则继续打开文件。
+    文件必须在我们再次释放互斥锁之前打开。 */
+    break; // 跳出循环
   }
 
   /* We have fulfilled all requirements to actually open the file. */
-  ut_ad(mutex_owned());
-  ut_ad(!file->is_open);
-  ut_ad(!space->prevent_file_open);
-  ut_ad(belongs_to_lru || have_right_for_open_non_lru);
-  ut_ad(have_right_for_open);
+  /* 我们已经满足了实际打开文件的所有要求。 */
+  ut_ad(mutex_owned()); // 断言持有互斥锁
+  ut_ad(!file->is_open); // 断言文件未打开
+  ut_ad(!space->prevent_file_open); // 断言空间未阻止文件打开
+  ut_ad(belongs_to_lru || have_right_for_open_non_lru); // 断言文件属于 LRU 或有权打开非 LRU 文件
+  ut_ad(have_right_for_open); // 断言有权打开文件
 
-  bool read_only_mode;
+  bool read_only_mode; // 只读模式标志
 
-  read_only_mode = !fsp_is_system_temporary(space->id) && srv_read_only_mode;
+  read_only_mode = !fsp_is_system_temporary(space->id) && srv_read_only_mode; // 如果不是系统临时表空间且服务器是只读模式，则设置为只读模式
 
-  if (file->size == 0 ||
-      (space->size_in_header == 0 && space->purpose == FIL_TYPE_TABLESPACE &&
-       file == &space->files.front()
+  if (file->size == 0 || // 如果文件大小为 0
+      (space->size_in_header == 0 && space->purpose == FIL_TYPE_TABLESPACE && // 或者空间头部大小为 0 且空间用途为表空间
+       file == &space->files.front() // 且文件是空间的第一个文件
 #ifndef UNIV_HOTBACKUP
-       && undo::is_active(space->id, false) &&
-       srv_startup_is_before_trx_rollback_phase
+       && undo::is_active(space->id, false) && // 且撤销空间是活动的
+       srv_startup_is_before_trx_rollback_phase // 且服务器启动在事务回滚阶段之前
 #endif /* !UNIV_HOTBACKUP */
        )) {
     /* We don't know the file size yet. */
-    dberr_t err = get_file_size(file, read_only_mode);
+    /* 我们还不知道文件大小。 */
+    dberr_t err = get_file_size(file, read_only_mode); // 获取文件大小
 
-    if (err != DB_SUCCESS) {
-      /* Release the rights acquired as we failed to open it in the end.
-       */
-      release_rights();
-      return false;
+    if (err != DB_SUCCESS) { // 如果获取文件大小失败
+      /* Release the rights acquired as we failed to open it in the end. 
+      */
+      /* 释放已获得的权利，因为我们最终未能打开它。 */
+      release_rights(); // 释放权利
+      return false; // 返回 false
     }
   }
 
   /* Open the file for reading and writing, in Windows normally in the
   unbuffered async I/O mode, though global variables may make os_file_create()
   to fall back to the normal file I/O mode. */
+  /* 打开文件进行读写，在 Windows 中通常是无缓冲异步 I/O 模式，尽管全局变量可能会使 os_file_create() 回退到正常文件 I/O 模式。 */
 
-  if (file->is_raw_disk) {
+  if (file->is_raw_disk) { // 如果文件是原始磁盘
     file->handle =
-        os_file_create(innodb_data_file_key, file->name, OS_FILE_OPEN_RAW,
-                       OS_FILE_AIO, OS_DATA_FILE, read_only_mode, &success);
+        os_file_create(innodb_data_file_key, file->name, OS_FILE_OPEN_RAW, // 创建原始磁盘文件
+                       OS_FILE_AIO, OS_DATA_FILE, read_only_mode, &success); // 使用异步 I/O 模式
   } else {
     file->handle =
-        os_file_create(innodb_data_file_key, file->name, OS_FILE_OPEN,
-                       OS_FILE_AIO, OS_DATA_FILE, read_only_mode, &success);
+        os_file_create(innodb_data_file_key, file->name, OS_FILE_OPEN, // 创建普通文件
+                       OS_FILE_AIO, OS_DATA_FILE, read_only_mode, &success); // 使用异步 I/O 模式
   }
 
-  if (success) {
-    add_to_lru_if_needed(file);
+  if (success) { // 如果成功
+    add_to_lru_if_needed(file); // 如果需要，将文件添加到 LRU
     /* The file is ready for IO. */
-    file->is_open = true;
+    /* 文件已准备好进行 I/O。 */
+    file->is_open = true; // 设置文件为打开状态
   } else {
     /* Release the rights acquired as we failed to open it in the end. */
-    release_rights();
+    /* 释放已获得的权利，因为我们最终未能打开它。 */
+    release_rights(); // 释放权利
   }
 
   /* We exit with the mutex acquired. The file is assured to remain open only as
   long as the mutex is held. Calls, like to `prepare_file_for_io()` are
   required to continue to use the file with the mutex released. */
-  return success;
+  /* 我们在持有互斥锁的情况下退出。文件确保在持有互斥锁的情况下保持打开状态。
+  调用 `prepare_file_for_io()` 等需要在释放互斥锁的情况下继续使用文件。 */
+  return success; // 返回成功标志
 }
 
 void Fil_shard::close_file(fil_node_t *file) {
@@ -3726,43 +3789,48 @@ bool Fil_system::set_open_files_limit(size_t &new_max_open_files) {
 /** Open all the system files.
 @param[in]      max_n_open      Maximum number of open files allowed
 @param[in,out]  n_open          Current number of open files */
+/** 打开所有系统文件。
+@param[in]      max_n_open      允许打开的最大文件数
+@param[in,out]  n_open          当前打开的文件数 */
 void Fil_shard::open_system_tablespaces(size_t max_n_open, size_t *n_open) {
-  mutex_acquire();
+  mutex_acquire(); // 获取互斥锁
 
-  for (auto elem : m_spaces) {
+  for (auto elem : m_spaces) { // 遍历所有表空间
     auto space = elem.second;
 
-    if (Fil_system::space_belongs_in_LRU(space)) {
+    if (Fil_system::space_belongs_in_LRU(space)) { // 如果空间属于 LRU，则跳过
       continue;
     }
 
-    for (auto &file : space->files) {
-      if (!file.is_open) {
-        if (!open_file(&file)) {
+    for (auto &file : space->files) { // 遍历空间中的所有文件
+      if (!file.is_open) { // 如果文件未打开
+        if (!open_file(&file)) { // 打开文件
           /* This func is called during server's startup. If some file of log
           or system tablespace is missing, the server can't start
           successfully. So we should assert for it. */
-          ut_error;
+          /* 此函数在服务器启动期间调用。如果日志或系统表空间的某些文件丢失，服务器将无法成功启动。因此我们应该断言它。 */
+          ut_error; // 触发错误
         }
 
-        ++*n_open;
+        ++*n_open; // 增加已打开的文件数
       }
 
-      if (max_n_open < 10 + *n_open) {
-        ib::warn(ER_IB_MSG_284, *n_open, max_n_open);
+      if (max_n_open < 10 + *n_open) { // 如果已打开的文件数接近最大文件数
+        ib::warn(ER_IB_MSG_284, *n_open, max_n_open); // 打印警告信息
       }
     }
   }
 
-  mutex_release();
+  mutex_release(); // 释放互斥锁
 }
 
 /** Opens all system tablespace data files in all shards. */
+/** 打开所有分片中的系统表空间数据文件。 */
 void Fil_system::open_all_system_tablespaces() {
-  size_t n_open = 0;
+  size_t n_open = 0; // 已打开的文件数量
 
-  for (auto shard : m_shards) {
-    shard->open_system_tablespaces(get_open_files_limit(), &n_open);
+  for (auto shard : m_shards) { // 遍历所有分片
+    shard->open_system_tablespaces(get_open_files_limit(), &n_open); // 打开分片中的系统表空间数据文件
   }
 }
 
@@ -3772,6 +3840,9 @@ after the space objects for the log and the system tablespace have
 been created. The purpose of this operation is to make sure we never
 run out of file descriptors if we need to read from the insert buffer
 or to write to the log. */
+/** 打开所有系统表空间数据文件。它们会一直保持打开状态，直到数据库服务器关闭。
+ 这应该在服务器启动时调用，在为日志和系统表空间创建空间对象之后。
+ 这样做的目的是确保在需要从插入缓冲区读取或写入日志时，我们不会耗尽文件描述符。 */
 void fil_open_system_tablespace_files() {
   fil_system->open_all_system_tablespaces();
 }
@@ -3984,27 +4055,30 @@ void fil_set_max_space_id_if_bigger(space_id_t max_id) {
 system tablespace.
 @param[in]      lsn             Flushed LSN
 @return DB_SUCCESS or error number */
+/** 将 flushed LSN 写入系统表空间第一页的页头。
+@param[in]      lsn             Flushed LSN
+@return DB_SUCCESS 或错误码 */
 dberr_t fil_write_flushed_lsn(lsn_t lsn) {
-  dberr_t err;
+  dberr_t err; // 错误码
 
   auto buf =
-      static_cast<byte *>(ut::aligned_alloc(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE));
+      static_cast<byte *>(ut::aligned_alloc(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE)); // 分配对齐的缓冲区
 
-  const page_id_t page_id(TRX_SYS_SPACE, 0);
+  const page_id_t page_id(TRX_SYS_SPACE, 0); // 创建页面 ID，表示系统表空间的第一页
 
-  err = fil_read(page_id, univ_page_size, 0, univ_page_size.physical(), buf);
+  err = fil_read(page_id, univ_page_size, 0, univ_page_size.physical(), buf); // 读取页面内容到缓冲区
 
-  if (err == DB_SUCCESS) {
-    mach_write_to_8(buf + FIL_PAGE_FILE_FLUSH_LSN, lsn);
+  if (err == DB_SUCCESS) { // 如果读取成功
+    mach_write_to_8(buf + FIL_PAGE_FILE_FLUSH_LSN, lsn); // 将 LSN 写入缓冲区
 
-    err = fil_write(page_id, univ_page_size, 0, univ_page_size.physical(), buf);
+    err = fil_write(page_id, univ_page_size, 0, univ_page_size.physical(), buf); // 将缓冲区内容写回页面
 
-    fil_system->flush_file_spaces();
+    fil_system->flush_file_spaces(); // 刷新文件空间
   }
 
-  ut::aligned_free(buf);
+  ut::aligned_free(buf); // 释放对齐的缓冲区
 
-  return err;
+  return err; // 返回错误码
 }
 
 /** Acquire a tablespace when it could be dropped concurrently.
@@ -7652,118 +7726,124 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
   IORequest req_type(type);
 
   // 验证IO请求的有效性
-  ut_ad(req_type.validate());
-  ut_ad(!req_type.is_log());
+  ut_ad(req_type.validate()); // 断言IO请求有效
+  ut_ad(!req_type.is_log()); // 断言IO请求不是日志
 
   // 验证基本参数
-  ut_ad(len > 0);
-  ut_ad(byte_offset < UNIV_PAGE_SIZE);
-  ut_ad(!page_size.is_compressed() || byte_offset == 0);
-  ut_ad(UNIV_PAGE_SIZE == (ulong)(1 << UNIV_PAGE_SIZE_SHIFT));
+  ut_ad(len > 0); // 断言长度大于0
+  ut_ad(byte_offset < UNIV_PAGE_SIZE); // 断言字节偏移量小于页面大小
+  ut_ad(!page_size.is_compressed() || byte_offset == 0); // 断言页面大小未压缩或字节偏移量为0
+  ut_ad(UNIV_PAGE_SIZE == (ulong)(1 << UNIV_PAGE_SIZE_SHIFT)); // 断言页面大小等于UNIV_PAGE_SIZE
 
-  ut_ad(fil_validate_skip());
+  ut_ad(fil_validate_skip()); // 断言跳过验证
 
 #ifndef UNIV_HOTBACKUP
   /* ibuf bitmap pages must be read in the sync AIO mode: */
+  /* ibuf 位图页面必须在同步 AIO 模式下读取： */
   ut_ad(recv_no_ibuf_operations || req_type.is_write() ||
-        !ibuf_bitmap_page(page_id, page_size) || sync);
+        !ibuf_bitmap_page(page_id, page_size) || sync); // 断言ibuf位图页面在同步AIO模式下读取
 
   // 获取AIO模式
-  auto aio_mode = get_AIO_mode(req_type, sync);
+  auto aio_mode = get_AIO_mode(req_type, sync); // 获取AIO模式
 
   // 处理读请求
-  if (req_type.is_read()) {
-    ut_ad(type.get_original_size() == 0);
+  if (req_type.is_read()) { // 如果是读请求
+    ut_ad(type.get_original_size() == 0); // 断言原始大小为0
     // 更新读取的数据统计
-    srv_stats.data_read.add(len);
+    srv_stats.data_read.add(len); // 更新读取的数据统计
 
     // 如果是ibuf页面,调整AIO模式以避免死锁
     if (aio_mode == AIO_mode::NORMAL && !recv_no_ibuf_operations &&
-        ibuf_page(page_id, page_size, UT_LOCATION_HERE, nullptr)) {
+        ibuf_page(page_id, page_size, UT_LOCATION_HERE, nullptr)) { // 如果是ibuf页面，调整AIO模式以避免死锁
       /* Reduce probability of deadlock bugs
       in connection with ibuf: do not let the
       ibuf I/O handler sleep */
+      /* 减少与 ibuf 相关的死锁错误的概率：不要让 ibuf I/O 处理程序休眠 */
 
-      req_type.clear_do_not_wake();
+      req_type.clear_do_not_wake(); // 清除不唤醒标志
 
-      aio_mode = AIO_mode::IBUF;
+      aio_mode = AIO_mode::IBUF; // 设置AIO模式为IBUF
     }
 
 #ifdef UNIV_DEBUG
     // 检查是否在已删除的表空间上进行读取
-    mutex_acquire();
+    mutex_acquire(); // 获取互斥锁
     /* Should never attempt to read from a deleted tablespace, unless we
     are also importing the tablespace. By the time we get here in the final
     phase of import the state has changed. Therefore we check if there is
     an active fil_space_t instance with the same ID. */
-    for (auto pair : m_deleted_spaces) {
-      if (pair.first == page_id.space()) {
-        auto space = get_space_by_id(page_id.space());
-        if (space != nullptr) {
-          ut_a(pair.second != space);
+    /* 不应尝试从已删除的表空间读取，除非我们也在导入表空间。当我们到达导入的最后阶段时，状态已经改变。因此，我们检查是否有具有相同 ID 的活动 fil_space_t 实例。 */
+    for (auto pair : m_deleted_spaces) { // 遍历已删除的表空间
+      if (pair.first == page_id.space()) { // 如果表空间ID匹配
+        auto space = get_space_by_id(page_id.space()); // 获取表空间
+        if (space != nullptr) { // 如果表空间不为空
+          ut_a(pair.second != space); // 断言表空间不匹配
         }
       }
     }
-    mutex_release();
+    mutex_release(); // 释放互斥锁
 #endif /* UNIV_DEBUG && !UNIV_HOTBACKUP */
 
   // 处理写请求  
-  } else if (req_type.is_write()) {
-    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(page_id.space()));
+  } else if (req_type.is_write()) { // 如果是写请求
+    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(page_id.space())); // 断言不是只读模式或是系统临时表空间
 
     // 更新写入的数据统计
-    srv_stats.data_written.add(len);
+    srv_stats.data_written.add(len); // 更新写入的数据统计
   }
 #else  /* !UNIV_HOTBACKUP */
-  ut_a(sync);
-  auto aio_mode = AIO_mode::SYNC;
+  ut_a(sync); // 断言同步
+  auto aio_mode = AIO_mode::SYNC; // 设置AIO模式为同步
 #endif /* !UNIV_HOTBACKUP */
 
   /* Reserve the mutex and make sure that we can open at
   least one file while holding it, if the file is not already open */
+  /* 保留互斥锁并确保我们可以在持有它时打开至少一个文件，如果文件尚未打开 */
 
-  auto bpage = static_cast<buf_page_t *>(message);
+  auto bpage = static_cast<buf_page_t *>(message); // 将消息转换为缓冲页面
 
   // 获取互斥锁并检查表空间
-  mutex_acquire();
-  auto space = get_space_by_id(page_id.space());
+  mutex_acquire(); // 获取互斥锁
+  auto space = get_space_by_id(page_id.space()); // 获取表空间
 
   /* If we are deleting a tablespace we don't allow async read
   operations on that. However, we do allow write operations and
   sync read operations. */
+  /* 如果我们正在删除表空间，我们不允许异步读取操作。但是，我们允许写操作和同步读取操作。 */
   // 检查表空间是否可用于IO操作
   if (space == nullptr ||
-      (req_type.is_read() && !sync && space->stop_new_ops)) {
+      (req_type.is_read() && !sync && space->stop_new_ops)) { // 如果表空间为空或是异步读取操作且表空间停止新操作
 #ifndef UNIV_HOTBACKUP
-    const auto is_page_stale = bpage != nullptr && bpage->is_stale();
+    const auto is_page_stale = bpage != nullptr && bpage->is_stale(); // 检查页面是否过时
 #endif /* !UNIV_HOTBACKUP */
 
-    mutex_release();
+    mutex_release(); // 释放互斥锁
 
-    if (space == nullptr) {
+    if (space == nullptr) { // 如果表空间为空
 #ifndef UNIV_HOTBACKUP
-      if (req_type.is_write() && is_page_stale) {
-        ut_a(bpage->get_space()->id == page_id.space());
-        return DB_PAGE_IS_STALE;
+      if (req_type.is_write() && is_page_stale) { // 如果是写请求且页面过时
+        ut_a(bpage->get_space()->id == page_id.space()); // 断言页面空间ID匹配
+        return DB_PAGE_IS_STALE; // 返回页面过时错误
       }
 #endif /* !UNIV_HOTBACKUP */
 
-      if (!req_type.ignore_missing()) {
+      if (!req_type.ignore_missing()) { // 如果不忽略缺失
 #ifndef UNIV_HOTBACKUP
         /* Don't have any record of this tablespace. print a warning. */
-        if (!Fil_shard::is_deleted(page_id.space())) {
+        /* 没有此表空间的任何记录。打印警告。 */
+        if (!Fil_shard::is_deleted(page_id.space())) { // 如果表空间未删除
 #endif /* !UNIV_HOTBACKUP */
-          if (space == nullptr) {
+          if (space == nullptr) { // 如果表空间为空
             ib::error(ER_IB_MSG_330)
                 << "Trying to do I/O on a tablespace"
                 << " which does not exist. I/O type: "
                 << (req_type.is_read() ? "read" : "write")
-                << ", page: " << page_id << ", I/O length: " << len << " bytes";
-          } else {
+                << ", page: " << page_id << ", I/O length: " << len << " bytes"; // 打印错误信息
+          } else { // 否则
             ib::error(ER_IB_MSG_331)
                 << "Trying to do async read on a tablespace which is being"
                 << " deleted. Tablespace name: \"" << space->name << "\","
-                << " page: " << page_id << ", read length: " << len << " bytes";
+                << " page: " << page_id << ", read length: " << len << " bytes"; // 打印错误信息
           }
 #ifndef UNIV_HOTBACKUP
         }
@@ -7771,95 +7851,97 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
       }
     }
 
-    return DB_TABLESPACE_DELETED;
+    return DB_TABLESPACE_DELETED; // 返回表空间已删除错误
   }
 
 #ifndef UNIV_HOTBACKUP
-  if (bpage != nullptr) {
-    ut_a(bpage->get_space()->id == page_id.space());
+  if (bpage != nullptr) { // 如果缓冲页面不为空
+    ut_a(bpage->get_space()->id == page_id.space()); // 断言缓冲页面空间ID匹配
 
-    if (req_type.is_write() && bpage->is_stale()) {
-      mutex_release();
-      return DB_PAGE_IS_STALE;
+    if (req_type.is_write() && bpage->is_stale()) { // 如果是写请求且缓冲页面过时
+      mutex_release(); // 释放互斥锁
+      return DB_PAGE_IS_STALE; // 返回页面过时错误
     }
-    ut_a(bpage->get_space() == space);
+    ut_a(bpage->get_space() == space); // 断言缓冲页面空间匹配
   }
 #endif /* !UNIV_HOTBACKUP */
 
   // 获取文件节点并准备IO
-  fil_node_t *file;
-  auto page_no = page_id.page_no();
-  auto err = get_file_for_io(space, &page_no, file);
+  fil_node_t *file; // 文件节点
+  auto page_no = page_id.page_no(); // 页面号
+  auto err = get_file_for_io(space, &page_no, file); // 获取文件节点并准备IO
 
-  if (file == nullptr) {
-    ut_ad(err == DB_ERROR);
+  if (file == nullptr) { // 如果文件节点为空
+    ut_ad(err == DB_ERROR); // 断言错误码为DB_ERROR
 
-    if (req_type.ignore_missing()) {
-      mutex_release();
+    if (req_type.ignore_missing()) { // 如果忽略缺失
+      mutex_release(); // 释放互斥锁
 
-      return DB_ERROR;
+      return DB_ERROR; // 返回错误
     }
 
 #ifndef UNIV_HOTBACKUP
-    if (req_type.is_write() && bpage != nullptr && bpage->is_stale()) {
-      ut_a(bpage->get_space()->id == page_id.space());
+    if (req_type.is_write() && bpage != nullptr && bpage->is_stale()) { // 如果是写请求且缓冲页面不为空且缓冲页面过时
+      ut_a(bpage->get_space()->id == page_id.space()); // 断言缓冲页面空间ID匹配
 
-      mutex_release();
-      return DB_PAGE_IS_STALE;
+      mutex_release(); // 释放互斥锁
+      return DB_PAGE_IS_STALE; // 返回页面过时错误
     }
 #endif /* !UNIV_HOTBACKUP */
 
     /* This is a hard error. */
+    /* 这是一个严重错误。 */
     fil_report_invalid_page_access(page_id.page_no(), page_id.space(),
                                    space->name, byte_offset, len,
-                                   req_type.is_read());
+                                   req_type.is_read()); // 报告无效页面访问
   }
 
 #ifndef UNIV_HOTBACKUP
-  if (UNIV_UNLIKELY(space->is_corrupt && srv_pass_corrupt_table)) {
+  if (UNIV_UNLIKELY(space->is_corrupt && srv_pass_corrupt_table)) { // 如果表空间损坏且允许通过损坏表
     /* should ignore i/o for the crashed space */
-    if (srv_pass_corrupt_table == 1 || req_type.is_write()) {
-      complete_io(file, type);
-      if (aio_mode == AIO_mode::NORMAL) {
-        ut_a(space->purpose == FIL_TYPE_TABLESPACE);
-        buf_page_io_complete(static_cast<buf_page_t *>(message), false);
+    /* 应忽略崩溃空间的I/O */
+    if (srv_pass_corrupt_table == 1 || req_type.is_write()) { // 如果允许通过损坏表或是写请求
+      complete_io(file, type); // 完成IO
+      if (aio_mode == AIO_mode::NORMAL) { // 如果AIO模式为正常
+        ut_a(space->purpose == FIL_TYPE_TABLESPACE); // 断言表空间类型为表空间
+        buf_page_io_complete(static_cast<buf_page_t *>(message), false); // 完成缓冲页面IO
       }
     }
 
-    if (srv_pass_corrupt_table == 1 && req_type.is_read())
-      return (DB_TABLESPACE_DELETED);
-    else if (req_type.is_write())
-      return (DB_SUCCESS);
+    if (srv_pass_corrupt_table == 1 && req_type.is_read()) // 如果允许通过损坏表且是读请求
+      return (DB_TABLESPACE_DELETED); // 返回表空间已删除错误
+    else if (req_type.is_write()) // 否则如果是写请求
+      return (DB_SUCCESS); // 返回成功
   }
 #endif
 
-  if (!prepare_file_for_io(file)) {
+  if (!prepare_file_for_io(file)) { // 如果准备文件IO失败
 #ifndef UNIV_HOTBACKUP
-    if (space->is_deleted()) {
-      mutex_release();
+    if (space->is_deleted()) { // 如果表空间已删除
+      mutex_release(); // 释放互斥锁
 
-      if (!sync) {
-        ut_d(bpage->take_io_responsibility());
-        buf_page_io_complete(bpage, false);
+      if (!sync) { // 如果不是同步
+        ut_d(bpage->take_io_responsibility()); // 获取IO责任
+        buf_page_io_complete(bpage, false); // 完成缓冲页面IO
       }
 
-      return DB_TABLESPACE_DELETED;
+      return DB_TABLESPACE_DELETED; // 返回表空间已删除错误
     }
 #endif /* !UNIV_HOTBACKUP */
 
-    if (fsp_is_ibd_tablespace(space->id)) {
-      mutex_release();
+    if (fsp_is_ibd_tablespace(space->id)) { // 如果是IBD表空间
+      mutex_release(); // 释放互斥锁
 
-      if (!req_type.ignore_missing()) {
+      if (!req_type.ignore_missing()) { // 如果不忽略缺失
         ib::error(ER_IB_MSG_332)
             << "Trying to do I/O to a tablespace"
                " which exists without an .ibd data"
             << " file. I/O type: " << (req_type.is_read() ? "read" : "write")
             << ", page: " << page_id_t(page_id.space(), page_no)
-            << ", I/O length: " << len << " bytes";
+            << ", I/O length: " << len << " bytes"; // 打印错误信息
       }
 
-      return DB_TABLESPACE_DELETED;
+      return DB_TABLESPACE_DELETED; // 返回表空间已删除错误
     }
 
     /* Could not open a file to perform IO and this is not a IBD file,
@@ -7867,102 +7949,114 @@ dberr_t Fil_shard::do_io(const IORequest &type, bool sync,
     Note: any log information should be emitted inside prepare_file_for_io()
     called few lines earlier. That's because the specific reason for this
     problem is known only inside there. */
-    ut_error;
+    /* 无法打开文件执行IO，这不是IBD文件，可能已被删除。这是一个致命错误。
+    注意：任何日志信息都应在prepare_file_for_io()内部发出
+    几行前调用的。因为这个问题的具体原因只有在里面才知道。 */
+    ut_error; // 断言错误
   }
 
   /* Check that at least the start offset is within the bounds of a
   single-table tablespace, including rollback tablespaces. */
-  if (file->size <= page_no && space->id != TRX_SYS_SPACE) {
+  /* 检查至少起始偏移量在单表表空间的范围内，包括回滚表空间。 */
+  if (file->size <= page_no && space->id != TRX_SYS_SPACE) { // 如果文件大小小于页面号且表空间ID不等于TRX_SYS_SPACE
 #ifndef UNIV_HOTBACKUP
-    if (req_type.is_write() && bpage != nullptr && bpage->is_stale()) {
-      ut_a(bpage->get_space()->id == page_id.space());
-      return DB_PAGE_IS_STALE;
+    if (req_type.is_write() && bpage != nullptr && bpage->is_stale()) { // 如果是写请求且缓冲页面不为空且缓冲页面过时
+      ut_a(bpage->get_space()->id == page_id.space()); // 断言缓冲页面空间ID匹配
+      return DB_PAGE_IS_STALE; // 返回页面过时错误
     }
 #endif /* !UNIV_HOTBACKUP */
 
-    if (req_type.ignore_missing()) {
+    if (req_type.ignore_missing()) { // 如果忽略缺失
       /* If we can tolerate the non-existent pages, we
       should return with DB_ERROR and let caller decide
       what to do. */
+      /* 如果我们可以容忍不存在的页面，我们
+      应该返回DB_ERROR并让调用者决定
+      该怎么办。 */
 
-      complete_io(file, req_type);
+      complete_io(file, req_type); // 完成IO
 
-      mutex_release();
+      mutex_release(); // 释放互斥锁
 
-      return DB_ERROR;
+      return DB_ERROR; // 返回错误
     }
 
     /* This is a hard error. */
+    /* 这是一个严重错误。 */
     fil_report_invalid_page_access(page_id.page_no(), page_id.space(),
                                    space->name, byte_offset, len,
-                                   req_type.is_read());
+                                   req_type.is_read()); // 报告无效页面访问
   }
 
   /* Set encryption information. */
-  fil_io_set_encryption(req_type, page_id, space);
+  /* 设置加密信息。 */
+  fil_io_set_encryption(req_type, page_id, space); // 设置IO加密信息
 
-  mutex_release();
+  mutex_release(); // 释放互斥锁
 
-  DEBUG_SYNC_C("innodb_fil_do_io_prepared_io_with_no_mutex");
+  DEBUG_SYNC_C("innodb_fil_do_io_prepared_io_with_no_mutex"); // 调试同步
 
   ut_a(page_size.is_compressed() ||
-       page_size.physical() == page_size.logical());
+       page_size.physical() == page_size.logical()); // 断言页面大小已压缩或物理大小等于逻辑大小
 
   // 计算文件偏移量
-  auto offset = (os_offset_t)page_no * page_size.physical();
+  auto offset = (os_offset_t)page_no * page_size.physical(); // 计算文件偏移量
 
-  offset += byte_offset;
+  offset += byte_offset; // 加上字节偏移量
 
   ut_a(file->size - page_no >=
        (byte_offset +
         std::max(static_cast<uint32_t>(len), type.get_original_size()) +
         (page_size.physical() - 1)) /
-           page_size.physical());
+           page_size.physical()); // 断言文件大小减去页面号大于等于计算的偏移量
 
-  ut_a(len % OS_FILE_LOG_BLOCK_SIZE == 0);
-  ut_a(byte_offset % OS_FILE_LOG_BLOCK_SIZE == 0);
+  ut_a(len % OS_FILE_LOG_BLOCK_SIZE == 0); // 断言长度是OS文件日志块大小的倍数
+  ut_a(byte_offset % OS_FILE_LOG_BLOCK_SIZE == 0); // 断言字节偏移量是OS文件日志块大小的倍数
 
   /* Don't compress the log, page 0 of all tablespaces, tables compressed with
    the old compression scheme and all pages from the system tablespace. */
+  /* 不要压缩日志，所有表空间的第0页，使用旧压缩方案压缩的表和系统表空间的所有页面。 */
   // 处理压缩和打孔操作
   if (req_type.is_write() && !page_size.is_compressed() &&
       page_id.page_no() > 0 && IORequest::is_punch_hole_supported() &&
-      file->punch_hole) {
-    req_type.set_punch_hole();
+      file->punch_hole) { // 如果是写请求且页面大小未压缩且页面号大于0且支持打孔且文件支持打孔
+    req_type.set_punch_hole(); // 设置打孔
 
-    req_type.compression_algorithm(space->compression_type);
+    req_type.compression_algorithm(space->compression_type); // 设置压缩算法
 
-  } else {
-    req_type.clear_compressed();
+  } else { // 否则
+    req_type.clear_compressed(); // 清除压缩
   }
 
-  if (page_size.is_compressed()) {
-    ut_ad(page_size.physical() > 0);
+  if (page_size.is_compressed()) { // 如果页面大小已压缩
+    ut_ad(page_size.physical() > 0); // 断言物理大小大于0
   }
 
-  req_type.block_size(file->block_size);
+  req_type.block_size(file->block_size); // 设置块大小
 
   // 执行实际的IO操作
 #ifdef UNIV_HOTBACKUP
   /* In mysqlbackup do normal I/O, not AIO */
+  /* 在mysqlbackup中执行正常的I/O，而不是AIO */
   // 在备份模式下执行同步IO
-  if (req_type.is_read()) {
-    err = os_file_read(req_type, file->name, file->handle, buf, offset, len);
+  if (req_type.is_read()) { // 如果是读请求
+    err = os_file_read(req_type, file->name, file->handle, buf, offset, len); // 执行文件读取
 
-  } else {
-    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(page_id.space()));
+  } else { // 否则
+    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(page_id.space())); // 断言不是只读模式或是系统临时表空间
 
-    err = os_file_write(req_type, file->name, file->handle, buf, offset, len);
+    err = os_file_write(req_type, file->name, file->handle, buf, offset, len); // 执行文件写入
   }
 
   // 处理同步IO的完成操作
-  if (sync) {
+  if (sync) { // 如果是同步
     /* The i/o operation is already completed when we return from
     os_aio: */
+    /* 当我们从os_aio返回时，I/O操作已经完成： */
 
-    mutex_acquire();
+    mutex_acquire(); // 获取互斥锁
 
-    complete_io(file, req_type);
+    complete_io(file, req_type); // 完成IO
 
     mutex_release();
 
@@ -8294,8 +8388,8 @@ void Fil_shard::flush_file_spaces() {
 }
 
 void Fil_system::flush_file_spaces() {
-  for (auto shard : m_shards) {
-    shard->flush_file_spaces();
+  for (auto shard : m_shards) { // 遍历所有分片
+    shard->flush_file_spaces(); // 刷新每个分片的文件空间
   }
 }
 
@@ -11104,115 +11198,125 @@ static bool fil_op_replay_rename(const page_id_t &page_id,
 on the first page then try finding the ID with Datafile::find_space_id().
 @param[in]      filename        File name to check
 @return s_invalid_space_id if not found, otherwise the space ID */
+/** 从 .ibd 文件和/或撤销表空间中获取表空间 ID。如果第一页上的 ID 为 0，则尝试使用 Datafile::find_space_id() 查找 ID。
+@param[in]      filename        要检查的文件名
+@return 如果未找到则返回 s_invalid_space_id，否则返回空间 ID */
 space_id_t Fil_system::get_tablespace_id(const std::string &filename) {
-  FILE *fp = fopen(filename.c_str(), "rb");
+  FILE *fp = fopen(filename.c_str(), "rb"); // 以只读方式打开文件
 
-  if (fp == nullptr) {
-    ib::warn(ER_IB_MSG_372) << "Unable to open '" << filename << "'";
-    return dict_sys_t::s_invalid_space_id;
+  if (fp == nullptr) { // 如果文件打开失败
+    ib::warn(ER_IB_MSG_372) << "Unable to open '" << filename << "'"; // 打印警告信息
+    return dict_sys_t::s_invalid_space_id; // 返回无效的空间 ID
   }
 
-  std::vector<space_id_t> space_ids;
-  auto page_size = srv_page_size;
+  std::vector<space_id_t> space_ids; // 存储空间 ID 的向量
+  auto page_size = srv_page_size; // 获取页面大小
 
-  space_ids.reserve(MAX_PAGES_TO_READ);
+  space_ids.reserve(MAX_PAGES_TO_READ); // 预留空间 ID 向量的空间
 
-  const auto n_bytes = page_size * MAX_PAGES_TO_READ;
+  const auto n_bytes = page_size * MAX_PAGES_TO_READ; // 计算要读取的字节数
 
-  std::unique_ptr<byte[]> buf(new byte[n_bytes]);
+  std::unique_ptr<byte[]> buf(new byte[n_bytes]); // 分配缓冲区
 
-  if (!buf) {
-    return dict_sys_t::s_invalid_space_id;
+  if (!buf) { // 如果缓冲区分配失败
+    return dict_sys_t::s_invalid_space_id; // 返回无效的空间 ID
   }
 
-  auto pages_read = fread(buf.get(), page_size, MAX_PAGES_TO_READ, fp);
+  auto pages_read = fread(buf.get(), page_size, MAX_PAGES_TO_READ, fp); // 读取页面
 
-  DBUG_EXECUTE_IF("invalid_header", pages_read = 0;);
+  DBUG_EXECUTE_IF("invalid_header", pages_read = 0;); // 调试代码：模拟读取失败
 
   /* Find the space id from the pages read if enough pages could be read.
   Fall back to the more heavier method of finding the space id from
   Datafile::find_space_id() if pages cannot be read properly. */
-  if (pages_read >= MAX_PAGES_TO_READ) {
-    auto bytes_read = pages_read * page_size;
+  /* 如果读取了足够的页面，则从读取的页面中查找空间 ID。
+  如果页面无法正确读取，则退回到使用 Datafile::find_space_id() 查找空间 ID 的更重的方法。 */
+  if (pages_read >= MAX_PAGES_TO_READ) { // 如果读取的页面数大于等于最大读取页面数
+    auto bytes_read = pages_read * page_size; // 计算读取的字节数
 
 #ifdef POSIX_FADV_DONTNEED
-    posix_fadvise(fileno(fp), 0, bytes_read, POSIX_FADV_DONTNEED);
+    posix_fadvise(fileno(fp), 0, bytes_read, POSIX_FADV_DONTNEED); // 提示操作系统不需要这些数据
 #endif /* POSIX_FADV_DONTNEED */
 
-    for (page_no_t i = 0; i < MAX_PAGES_TO_READ; ++i) {
-      const auto off = i * page_size + FIL_PAGE_SPACE_ID;
+    for (page_no_t i = 0; i < MAX_PAGES_TO_READ; ++i) { // 遍历读取的页面
+      const auto off = i * page_size + FIL_PAGE_SPACE_ID; // 计算空间 ID 的偏移量
 
-      if (off == FIL_PAGE_SPACE_ID) {
+      if (off == FIL_PAGE_SPACE_ID) { // 如果是第一页
         /* Find out the page size of the tablespace from the first page.
         In case of compressed pages, the subsequent pages can be of different
         sizes. If MAX_PAGES_TO_READ is changed to a different value, then the
         page size of subsequent pages is needed to find out the offset for
         space ID. */
+        /* 从第一页中查找表空间的页面大小。
+        如果是压缩页面，则后续页面的大小可能不同。如果 MAX_PAGES_TO_READ 更改为不同的值，则需要后续页面的大小来查找空间 ID 的偏移量。 */
 
-        auto space_flags_offset = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS;
+        auto space_flags_offset = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS; // 计算空间标志的偏移量
 
-        ut_a(space_flags_offset + 4 < n_bytes);
+        ut_a(space_flags_offset + 4 < n_bytes); // 断言空间标志的偏移量在读取的字节数范围内
 
-        const auto flags = mach_read_from_4(buf.get() + space_flags_offset);
+        const auto flags = mach_read_from_4(buf.get() + space_flags_offset); // 读取空间标志
 
-        page_size_t space_page_size(flags);
+        page_size_t space_page_size(flags); // 获取空间页面大小
 
-        page_size = space_page_size.physical();
+        page_size = space_page_size.physical(); // 更新页面大小
       }
 
-      space_ids.push_back(mach_read_from_4(buf.get() + off));
+      space_ids.push_back(mach_read_from_4(buf.get() + off)); // 读取空间 ID 并添加到向量中
 
-      if ((i + 1) * page_size >= bytes_read) {
-        break;
+      if ((i + 1) * page_size >= bytes_read) { // 如果读取的字节数大于等于页面大小
+        break; // 退出循环
       }
     }
   }
 
-  fclose(fp);
+  fclose(fp); // 关闭文件
 
-  space_id_t space_id;
+  space_id_t space_id; // 空间 ID
 
-  if (!space_ids.empty()) {
-    space_id = space_ids.front();
+  if (!space_ids.empty()) { // 如果空间 ID 向量不为空
+    space_id = space_ids.front(); // 获取第一个空间 ID
 
-    for (auto id : space_ids) {
-      if (id == 0 || space_id != id) {
-        space_id = UINT32_UNDEFINED;
+    for (auto id : space_ids) { // 遍历空间 ID 向量
+      if (id == 0 || space_id != id) { // 如果空间 ID 为 0 或与第一个空间 ID 不同
+        space_id = UINT32_UNDEFINED; // 设置空间 ID 为未定义
 
-        break;
+        break; // 退出循环
       }
     }
   } else {
-    space_id = UINT32_UNDEFINED;
+    space_id = UINT32_UNDEFINED; // 设置空间 ID 为未定义
   }
 
   /* Try the more heavy duty method, as a last resort. */
-  if (space_id == UINT32_UNDEFINED) {
+  /* 尝试更重的方法，作为最后的手段。 */
+  if (space_id == UINT32_UNDEFINED) { // 如果空间 ID 未定义
     /* If the first page cannot be read properly, then for compressed
     tablespaces we don't know where the page boundary starts because
     we don't know the page size. */
+    /* 如果第一页无法正确读取，则对于压缩表空间，我们不知道页面边界从哪里开始，因为我们不知道页面大小。 */
 
-    Datafile file;
+    Datafile file; // 创建 Datafile 对象
 
-    file.set_filepath(filename.c_str());
+    file.set_filepath(filename.c_str()); // 设置文件路径
 
-    dberr_t err = file.open_read_only(false);
+    dberr_t err = file.open_read_only(false); // 以只读方式打开文件
 
-    ut_a(file.is_open());
-    ut_a(err == DB_SUCCESS);
+    ut_a(file.is_open()); // 断言文件已打开
+    ut_a(err == DB_SUCCESS); // 断言打开文件成功
 
     /* Use the heavier Datafile::find_space_id() method to
     find the space id. */
-    err = file.find_space_id();
+    /* 使用更重的 Datafile::find_space_id() 方法查找空间 ID。 */
+    err = file.find_space_id(); // 查找空间 ID
 
-    if (err == DB_SUCCESS) {
-      space_id = file.space_id();
+    if (err == DB_SUCCESS) { // 如果查找成功
+      space_id = file.space_id(); // 获取空间 ID
     }
 
-    file.close();
+    file.close(); // 关闭文件
   }
 
-  return space_id;
+  return space_id; // 返回空间 ID
 }
 
 void Fil_system::rename_partition_files(bool revert) {
@@ -11239,57 +11343,57 @@ void Tablespace_dirs::duplicate_check(const Const_iter &start,
                                       const Const_iter &end, size_t thread_id,
                                       std::mutex *mutex, Space_id_set *unique,
                                       Space_id_set *duplicates) {
-  size_t count = 0;
-  bool printed_msg = false;
-  auto start_time = std::chrono::steady_clock::now();
+  size_t count = 0; // 计数器
+  bool printed_msg = false; // 是否打印消息
+  auto start_time = std::chrono::steady_clock::now(); // 记录开始时间
 
-  for (auto it = start; it != end; ++it, ++m_checked) {
-    const std::string filename = it->second;
-    auto &files = m_dirs[it->first];
-    const std::string phy_filename = files.path() + filename;
+  for (auto it = start; it != end; ++it, ++m_checked) { // 遍历文件
+    const std::string filename = it->second; // 获取文件名
+    auto &files = m_dirs[it->first]; // 获取目录
+    const std::string phy_filename = files.path() + filename; // 获取物理文件名
 
-    space_id_t space_id;
+    space_id_t space_id; // 空间 ID
 
-    space_id = Fil_system::get_tablespace_id(phy_filename);
+    space_id = Fil_system::get_tablespace_id(phy_filename); // 获取表空间 ID
 
-    if (space_id != 0 && space_id != dict_sys_t::s_invalid_space_id) {
-      std::lock_guard<std::mutex> guard(*mutex);
+    if (space_id != 0 && space_id != dict_sys_t::s_invalid_space_id) { // 如果空间 ID 有效
+      std::lock_guard<std::mutex> guard(*mutex); // 加锁
 
-      auto ret = unique->insert(space_id);
+      auto ret = unique->insert(space_id); // 插入唯一空间 ID 集合
 
-      size_t n_files;
+      size_t n_files; // 文件数量
 
-      n_files = files.add(space_id, filename);
+      n_files = files.add(space_id, filename); // 添加文件
 
-      if (n_files > 1 || !ret.second) {
-        duplicates->insert(space_id);
+      if (n_files > 1 || !ret.second) { // 如果文件数量大于 1 或插入失败
+        duplicates->insert(space_id); // 插入重复空间 ID 集合
       }
 
     } else if (space_id != 0 &&
-               Fil_path::is_undo_tablespace_name(phy_filename)) {
+               Fil_path::is_undo_tablespace_name(phy_filename)) { // 如果是撤销表空间文件
       ib::info(ER_IB_MSG_373) << "Can't determine the undo file tablespace"
                               << " ID for '" << phy_filename << "', could be"
-                              << " an undo truncate in progress";
+                              << " an undo truncate in progress"; // 打印信息
 
-    } else {
+    } else { // 如果空间 ID 无效
       ib::info(ER_IB_MSG_374) << "Ignoring '" << phy_filename << "' invalid"
-                              << " tablespace ID in the header";
+                              << " tablespace ID in the header"; // 打印信息
     }
 
-    ++count;
+    ++count; // 增加计数
 
-    if (std::chrono::steady_clock::now() - start_time >= PRINT_INTERVAL) {
+    if (std::chrono::steady_clock::now() - start_time >= PRINT_INTERVAL) { // 如果当前时间与开始时间的差大于等于打印间隔
       ib::info(ER_IB_MSG_375) << "Thread# " << thread_id << " - Checked "
-                              << count << "/" << (end - start) << " files";
+                              << count << "/" << (end - start) << " files"; // 打印检查的文件数量
 
-      start_time = std::chrono::steady_clock::now();
+      start_time = std::chrono::steady_clock::now(); // 更新开始时间
 
-      printed_msg = true;
+      printed_msg = true; // 设置打印消息标志
     }
   }
 
-  if (printed_msg) {
-    ib::info(ER_IB_MSG_376) << "Checked " << count << " files";
+  if (printed_msg) { // 如果打印了消息
+    ib::info(ER_IB_MSG_376) << "Checked " << count << " files"; // 打印检查的文件数量
   }
 }
 
@@ -11470,93 +11574,102 @@ void Tablespace_dirs::set_scan_dirs(const std::string &in_directories) {
 
 /** Discover tablespaces by reading the header from .ibd files.
 @return DB_SUCCESS if all goes well */
+/** 通过读取 .ibd 文件的头部来发现表空间。
+@return 如果一切顺利则返回 DB_SUCCESS */
 dberr_t Tablespace_dirs::scan() {
-  Scanned_files ibd_files;
-  Scanned_files undo_files;
-  uint16_t count = 0;
-  bool print_msg = false;
-  auto start_time = std::chrono::steady_clock::now();
+  Scanned_files ibd_files; // 存储 .ibd 文件的扫描结果
+  Scanned_files undo_files; // 存储撤销文件的扫描结果
+  uint16_t count = 0; // 目录计数
+  bool print_msg = false; // 是否打印消息
+  auto start_time = std::chrono::steady_clock::now(); // 记录开始时间
 
   /* Should be trivial to parallelize the scan and ID check. */
-  for (const auto &dir : m_dirs) {
-    const auto real_path_dir = dir.root().abs_path();
+  /* 应该很容易并行化扫描和 ID 检查。 */
+  for (const auto &dir : m_dirs) { // 遍历所有目录
+    const auto real_path_dir = dir.root().abs_path(); // 获取目录的绝对路径
 
-    ut_a(Fil_path::is_separator(dir.path().back()));
+    ut_a(Fil_path::is_separator(dir.path().back())); // 断言路径的最后一个字符是分隔符
 
-    ib::info(ER_IB_MSG_379) << "Scanning '" << dir.path() << "'";
+    ib::info(ER_IB_MSG_379) << "Scanning '" << dir.path() << "'"; // 打印扫描目录信息
 
     /* Walk the sub-tree of dir. */
-
+    /* 遍历目录的子树。 */
     Dir_Walker::walk(real_path_dir, true, [&](const std::string &path) {
       /* If it is a file and the suffix matches ".ibd"
       or the undo file name format then store it for
       determining the space ID. */
+      /* 如果是文件且后缀匹配 ".ibd" 或撤销文件名格式，则存储它以确定空间 ID。 */
 
-      ut_a(path.length() > real_path_dir.length());
-      ut_a(Fil_path::get_file_type(path) != OS_FILE_TYPE_DIR);
+      ut_a(path.length() > real_path_dir.length()); // 断言路径长度大于目录路径长度
+      ut_a(Fil_path::get_file_type(path) != OS_FILE_TYPE_DIR); // 断言路径不是目录
 
       /* Check if need to alter partition file names to lower case. */
-      std::string new_path;
+      /* 检查是否需要将分区文件名改为小写。 */
+      std::string new_path; // 新路径
 
-      if (fil_get_partition_file(path, IBD, new_path)) {
+      if (fil_get_partition_file(path, IBD, new_path)) { // 如果需要更改分区文件名
         /* Note all old file names to be renamed. */
-        ut_ad(!new_path.empty());
-        fil_system->add_old_file(path);
+        /* 记录所有需要重命名的旧文件名。 */
+        ut_ad(!new_path.empty()); // 断言新路径不为空
+        fil_system->add_old_file(path); // 添加旧文件路径
 
       } else {
-        new_path.assign(path);
+        new_path.assign(path); // 否则使用原路径
       }
 
       /* Make the filename relative to the directory that was scanned. */
-      std::string file = new_path.substr(real_path_dir.length());
+      /* 将文件名相对于扫描的目录。 */
+      std::string file = new_path.substr(real_path_dir.length()); // 获取相对路径
 
-      if (file.size() <= 4) {
-        return;
+      if (file.size() <= 4) { // 如果文件名长度小于等于 4
+        return; // 跳过该文件
       }
 
-      using Value = Scanned_files::value_type;
+      using Value = Scanned_files::value_type; // 定义 Scanned_files 的值类型
 
-      if (Fil_path::has_suffix(IBD, file.c_str())) {
-        ibd_files.push_back(Value{count, file});
+      if (Fil_path::has_suffix(IBD, file.c_str())) { // 如果文件后缀是 .ibd
+        ibd_files.push_back(Value{count, file}); // 添加到 ibd_files
 
-      } else if (Fil_path::is_undo_tablespace_name(file)) {
-        undo_files.push_back(Value{count, file});
+      } else if (Fil_path::is_undo_tablespace_name(file)) { // 如果是撤销表空间文件
+        undo_files.push_back(Value{count, file}); // 添加到 undo_files
       }
 
-      if (std::chrono::steady_clock::now() - start_time >= PRINT_INTERVAL) {
+      if (std::chrono::steady_clock::now() - start_time >= PRINT_INTERVAL) { // 如果当前时间与开始时间的差大于等于打印间隔
         ib::info(ER_IB_MSG_380)
             << "Files found so far: " << ibd_files.size() << " data files"
-            << " and " << undo_files.size() << " undo files";
+            << " and " << undo_files.size() << " undo files"; // 打印找到的文件数量
 
-        start_time = std::chrono::steady_clock::now();
-        print_msg = true;
+        start_time = std::chrono::steady_clock::now(); // 更新开始时间
+        print_msg = true; // 设置打印消息标志
       }
     });
 
-    ++count;
+    ++count; // 增加目录计数
   }
 
   /* Rename all old partition files. */
-  fil_system->rename_partition_files(false);
+  /* 重命名所有旧的分区文件。 */
+  fil_system->rename_partition_files(false); // 重命名分区文件
 
-  if (print_msg) {
+  if (print_msg) { // 如果需要打印消息
     ib::info(ER_IB_MSG_381) << "Found " << ibd_files.size() << " '.ibd' and "
-                            << undo_files.size() << " undo files";
+                            << undo_files.size() << " undo files"; // 打印找到的文件数量
   }
 
-  Space_id_set unique;
-  Space_id_set duplicates;
+  Space_id_set unique; // 存储唯一的空间 ID
+  Space_id_set duplicates; // 存储重复的空间 ID
 
   /* Get the number of additional threads needed to scan the files. */
-  size_t n_threads = fil_get_scan_threads(ibd_files.size());
+  /* 获取扫描文件所需的额外线程数。 */
+  size_t n_threads = fil_get_scan_threads(ibd_files.size()); // 获取扫描线程数
 
-  if (n_threads > 0) {
+  if (n_threads > 0) { // 如果需要额外线程
     ib::info(ER_IB_MSG_382)
         << "Using " << (n_threads + 1) << " threads to"
-        << " scan " << ibd_files.size() << " tablespace files";
+        << " scan " << ibd_files.size() << " tablespace files"; // 打印使用的线程数
   }
 
-  std::mutex m;
+  std::mutex m; // 互斥锁
 
   using std::placeholders::_1;
   using std::placeholders::_2;
@@ -11568,33 +11681,33 @@ dberr_t Tablespace_dirs::scan() {
   std::function<void(const Const_iter &, const Const_iter &, size_t,
                      std::mutex *, Space_id_set *, Space_id_set *)>
       check = std::bind(&Tablespace_dirs::duplicate_check, this, _1, _2, _3, _4,
-                        _5, _6);
+                        _5, _6); // 绑定重复检查函数
 
   par_for(PFS_NOT_INSTRUMENTED, ibd_files, n_threads, check, &m, &unique,
-          &duplicates);
+          &duplicates); // 并行执行重复检查
 
   duplicate_check(undo_files.begin(), undo_files.end(), n_threads, &m, &unique,
-                  &duplicates);
+                  &duplicates); // 检查撤销文件的重复
 
-  ut_a(m_checked == ibd_files.size() + undo_files.size());
+  ut_a(m_checked == ibd_files.size() + undo_files.size()); // 断言检查的文件数量等于找到的文件数量
 
   ib::info(ER_IB_MSG_383) << "Completed space ID check of " << m_checked.load()
-                          << " files.";
+                          << " files."; // 打印完成的空间 ID 检查文件数量
 
-  dberr_t err;
+  dberr_t err; // 错误码
 
-  if (!duplicates.empty()) {
+  if (!duplicates.empty()) { // 如果有重复的空间 ID
     ib::error(ER_IB_MSG_384)
-        << "Multiple files found for the same tablespace ID:";
+        << "Multiple files found for the same tablespace ID:"; // 打印错误信息
 
-    print_duplicates(duplicates);
+    print_duplicates(duplicates); // 打印重复的空间 ID
 
-    err = DB_FAIL;
+    err = DB_FAIL; // 设置错误码为 DB_FAIL
   } else {
-    err = DB_SUCCESS;
+    err = DB_SUCCESS; // 设置错误码为 DB_SUCCESS
   }
 
-  return err;
+  return err; // 返回错误码
 }
 
 void fil_set_scan_dir(const std::string &directory, bool is_undo_dir) {

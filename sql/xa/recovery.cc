@@ -177,64 +177,67 @@ enum xa_status_code generate_xa_recovery_error();
 
 bool xa::recovery::recover_prepared_in_tc_one_ht(THD *, plugin_ref plugin,
                                                  void *arg) {
-  handlerton *ht = plugin_data<handlerton *>(plugin);
-  xarecover_st *info = static_cast<struct xarecover_st *>(arg);
+  handlerton *ht = plugin_data<handlerton *>(plugin); // 获取存储引擎插件数据
+  xarecover_st *info = static_cast<struct xarecover_st *>(arg); // 将参数转换为 xarecover_st 结构体指针
 
-  if (ht->state == SHOW_OPTION_YES && ht->recover_prepared_in_tc) {
-    assert(info->xa_list != nullptr);
-    return ht->recover_prepared_in_tc(ht, *info->xa_list);
+  if (ht->state == SHOW_OPTION_YES && ht->recover_prepared_in_tc) { // 如果存储引擎状态为 YES 且支持恢复预处理事务
+    assert(info->xa_list != nullptr); // 断言 XA 列表不为空
+    return ht->recover_prepared_in_tc(ht, *info->xa_list); // 恢复预处理事务
   }
-  return false;
+  return false; // 返回 false 表示未恢复任何事务
 }
 
 bool xa::recovery::recover_one_ht(THD *, plugin_ref plugin, void *arg) {
-  handlerton *ht = plugin_data<handlerton *>(plugin);
-  xarecover_st *info = static_cast<struct xarecover_st *>(arg);
-  int got;
+  handlerton *ht = plugin_data<handlerton *>(plugin); // 获取存储引擎插件数据
+  xarecover_st *info = static_cast<struct xarecover_st *>(arg); // 将参数转换为 xarecover_st 结构体指针
+  int got; // 获取的事务数量
 
-  if (ht->state == SHOW_OPTION_YES && ht->recover) {
-    ::recovery_statistics external_stats{{0, 0, 0}, {0, 0, 0}};
-    ::recovery_statistics internal_stats{{0, 0, 0}, {0, 0, 0}};
+  if (ht->state == SHOW_OPTION_YES && ht->recover) { // 如果存储引擎状态为 YES 且支持恢复
+    ::recovery_statistics external_stats{{0, 0, 0}, {0, 0, 0}}; // 外部恢复统计
+    ::recovery_statistics internal_stats{{0, 0, 0}, {0, 0, 0}}; // 内部恢复统计
     while (
         (got = ht->recover(
              ht, info->list, info->len,
              Recovered_xa_transactions::instance().get_allocated_memroot())) >
-        0) {
-      assert(got <= info->len);
+        0) { // 恢复事务
+      assert(got <= info->len); // 断言获取的事务数量小于等于列表长度
       LogErr(INFORMATION_LEVEL, ER_XA_RECOVER_FOUND_TRX_IN_SE, got,
-             ha_resolve_storage_engine_name(ht));
+             ha_resolve_storage_engine_name(ht)); // 记录找到的事务信息
 
-      for (int i = 0; i < got; ++i) {
-        auto &xa_trx = info->list[i];
-        my_xid xid = xa_trx.id.get_my_xid();
+      for (int i = 0; i < got; ++i) { // 遍历获取的事务
+        auto &xa_trx = info->list[i]; // 获取事务
+        my_xid xid = xa_trx.id.get_my_xid(); // 获取事务 ID
 
         if (!xid) {  // Externally coordinated transaction
-          ::recover_one_external_trx(*info, *ht, xa_trx, external_stats);
-          ++info->found_foreign_xids;
+          // 外部协调的事务
+          ::recover_one_external_trx(*info, *ht, xa_trx, external_stats); // 恢复外部事务
+          ++info->found_foreign_xids; // 增加找到的外部 XID 数量
           continue;
         }
 
         if (info->dry_run) {  // No information provided w.r.t TC state so,
                               // nothing to do in regards to internally
                               // coordinated transactions
-          ++info->found_my_xids;
+          // 干运行，没有提供 TC 状态信息，因此不处理内部协调的事务
+          ++info->found_my_xids; // 增加找到的内部 XID 数量
           continue;
         }
 
         // Internally coordinated transaction
-        ::recover_one_internal_trx(*info, *ht, xa_trx, xid, internal_stats);
+        // 内部协调的事务
+        ::recover_one_internal_trx(*info, *ht, xa_trx, xid, internal_stats); // 恢复内部事务
       }
-      if (got < info->len) break;
+      if (got < info->len) break; // 如果获取的事务数量小于列表长度，跳出循环
     }
     bool has_failures =
-        ::has_failures(internal_stats) || ::has_failures(external_stats);
+        ::has_failures(internal_stats) || ::has_failures(external_stats); // 检查是否有失败
     LogErr(has_failures ? ERROR_LEVEL : INFORMATION_LEVEL,
            ER_BINLOG_CRASH_RECOVERY_ENGINE_RESULTS,
            ha_resolve_storage_engine_name(ht),
-           ::print_stats(internal_stats, external_stats).data());
-    DBUG_EXECUTE_IF("xa_recovery_error_reporting", return has_failures;);
+           ::print_stats(internal_stats, external_stats).data()); // 记录恢复结果
+    DBUG_EXECUTE_IF("xa_recovery_error_reporting", return has_failures;); // 调试代码，返回是否有失败
   }
-  return false;
+  return false; // 返回 false 表示未恢复任何事务
 }
 
 namespace {

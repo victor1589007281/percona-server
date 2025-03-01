@@ -81,21 +81,23 @@ using namespace dd;
 namespace {
 
 // Initialize recovery in the DDSE.
+// 在 DDSE（数据字典存储引擎）中初始化恢复
 bool DDSE_dict_recover(THD *thd, dict_recovery_mode_t dict_recovery_mode,
                        uint version) {
-  handlerton *ddse = ha_resolve_by_legacy_type(thd, DB_TYPE_INNODB);
-  if (ddse->dict_recover == nullptr) return true;
+  handlerton *ddse = ha_resolve_by_legacy_type(thd, DB_TYPE_INNODB);  // 解析 InnoDB 存储引擎的 handlerton 结构
+  if (ddse->dict_recover == nullptr) return true;  // 如果 dict_recover 函数指针为空，返回 true 表示失败
 
-  bool error = ddse->dict_recover(dict_recovery_mode, version);
+  bool error = ddse->dict_recover(dict_recovery_mode, version);  // 调用 DDSE 的 dict_recover 函数进行恢复
 
   /*
     Commit when tablespaces have been initialized, since in that
     case, tablespace meta data is added.
   */
+  // 当表空间初始化完成时提交事务，因为在这种情况下会添加表空间元数据
   if (dict_recovery_mode == DICT_RECOVERY_INITIALIZE_TABLESPACES)
-    return dd::end_transaction(thd, error);
+    return dd::end_transaction(thd, error);  // 结束事务并返回错误状态
 
-  return error;
+  return error;  // 返回错误状态
 }
 
 /*
@@ -728,37 +730,41 @@ namespace bootstrap {
   Do the necessary DD-related initialization in the DDSE, and get the
   predefined tables and tablespaces.
 */
+// 在DDSE（数据字典存储引擎）中执行必要的DD相关初始化，并获取预定义的表和表空间。
 bool DDSE_dict_init(THD *thd, dict_init_mode_t dict_init_mode, uint version) {
-  handlerton *ddse = ha_resolve_by_legacy_type(thd, DB_TYPE_INNODB);
+  handlerton *ddse = ha_resolve_by_legacy_type(thd, DB_TYPE_INNODB);  // 解析InnoDB存储引擎的handlerton结构
 
   /*
     The lists with element wrappers are mem root allocated. The wrapped
     instances are allocated dynamically in the DDSE. These instances will be
     owned by the System_tables registry by the end of this function.
   */
-  List<const Object_table> ddse_tables;
-  List<const Plugin_tablespace> ddse_tablespaces;
+  // 元素包装器的列表是mem root分配的。包装的实例在DDSE中动态分配。这些实例将在函数结束时由System_tables注册表拥有。
+  List<const Object_table> ddse_tables;  // 存储DDSE表的列表
+  List<const Plugin_tablespace> ddse_tablespaces;  // 存储DDSE表空间的列表
   if (ddse->ddse_dict_init == nullptr ||
       ddse->ddse_dict_init(dict_init_mode, version, &ddse_tables,
-                           &ddse_tablespaces))
-    return true;
+                           &ddse_tablespaces))  // 调用DDSE的初始化函数
+    return true;  // 如果初始化失败，返回true
 
   // first table in ddse_tablespaces is mysql.ibd
+  // ddse_tablespaces中的第一个表是mysql.ibd
   std::unique_ptr<dd::Properties> p{dd::Properties_impl::parse_properties(
-      ddse_tablespaces.begin()->get_options())};
+      ddse_tablespaces.begin()->get_options())};  // 解析表空间的属性
 
-  assert(p != nullptr);
+  assert(p != nullptr);  // 断言属性解析成功
 
   assert(memcmp(ddse_tablespaces.begin()->get_name(), MYSQL_TABLESPACE_NAME.str,
-                MYSQL_TABLESPACE_NAME.length) == 0);
+                MYSQL_TABLESPACE_NAME.length) == 0);  // 断言表空间名称为mysql
 
-  if (p->exists("encryption")) {
+  if (p->exists("encryption")) {  // 如果表空间属性中存在加密选项
     dd::String_type tablespace_encryption;
-    p->get("encryption", &tablespace_encryption);
+    p->get("encryption", &tablespace_encryption);  // 获取加密选项的值
     if (my_strcasecmp(system_charset_info, tablespace_encryption.c_str(),
-                      "y") == 0) {
-      bootstrap::DD_bootstrap_ctx::instance().set_dd_encrypted();
+                      "y") == 0) {  // 如果加密选项为'y'
+      bootstrap::DD_bootstrap_ctx::instance().set_dd_encrypted();  // 设置数据字典为加密状态
       // From now on all DD tables will be created with encryption='y'
+      // 从现在开始，所有DD表都将以encryption='y'创建
     }
   }
 
@@ -771,15 +777,17 @@ bool DDSE_dict_init(THD *thd, dict_init_mode_t dict_init_mode, uint version) {
     (not available neither for DDL nor DML), otherwise, we add them as type
     DDSE_PROTECTED (available for DML, not for DDL).
   */
-  List_iterator<const Object_table> table_it(ddse_tables);
+  // 遍历表定义并将它们添加到System_tables注册表中。Object_table实例稍后将用于执行CREATE TABLE语句以实际创建表。
+  // 如果Object_table::is_hidden()，则将表添加为DDSE_PRIVATE类型（既不用于DDL也不用于DML），否则将它们添加为DDSE_PROTECTED类型（可用于DML，不用于DDL）。
+  List_iterator<const Object_table> table_it(ddse_tables);  // 创建表迭代器
   const Object_table *ddse_table = nullptr;
-  while ((ddse_table = table_it++)) {
-    System_tables::Types table_type = System_tables::Types::DDSE_PROTECTED;
-    if (ddse_table->is_hidden()) {
-      table_type = System_tables::Types::DDSE_PRIVATE;
+  while ((ddse_table = table_it++)) {  // 遍历所有表
+    System_tables::Types table_type = System_tables::Types::DDSE_PROTECTED;  // 默认表类型为DDSE_PROTECTED
+    if (ddse_table->is_hidden()) {  // 如果表是隐藏的
+      table_type = System_tables::Types::DDSE_PRIVATE;  // 设置表类型为DDSE_PRIVATE
     }
     System_tables::instance()->add(MYSQL_SCHEMA_NAME.str, ddse_table->name(),
-                                   table_type, ddse_table);
+                                   table_type, ddse_table);  // 将表添加到System_tables注册表
   }
 
   /*
@@ -787,24 +795,25 @@ bool DDSE_dict_init(THD *thd, dict_init_mode_t dict_init_mode, uint version) {
     that we are allowed to upgrade from that version. The error handling is done
     after adding the ddse tables into the system registry to avoid memory leaks.
   */
-  if (!opt_initialize) {
+  // 从DD表空间头中获取服务器版本号，并验证我们是否允许从该版本升级。错误处理在将ddse表添加到系统注册表之后进行，以避免内存泄漏。
+  if (!opt_initialize) {  // 如果不是初始化模式
     uint server_version = 0;
     if (ddse->dict_get_server_version == nullptr ||
-        ddse->dict_get_server_version(&server_version)) {
-      LogErr(ERROR_LEVEL, ER_CANNOT_GET_SERVER_VERSION_FROM_TABLESPACE_HEADER);
-      return true;
+        ddse->dict_get_server_version(&server_version)) {  // 获取服务器版本号
+      LogErr(ERROR_LEVEL, ER_CANNOT_GET_SERVER_VERSION_FROM_TABLESPACE_HEADER);  // 记录错误
+      return true;  // 返回true
     }
 
-    if (server_version != MYSQL_VERSION_ID) {
-      if (opt_upgrade_mode == UPGRADE_NONE) {
-        LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_OFF);
-        return true;
+    if (server_version != MYSQL_VERSION_ID) {  // 如果服务器版本号与当前版本号不匹配
+      if (opt_upgrade_mode == UPGRADE_NONE) {  // 如果未启用升级模式
+        LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_OFF);  // 记录错误
+        return true;  // 返回true
       }
       if (!DD_bootstrap_ctx::instance().supported_server_version(
-              server_version)) {
+              server_version)) {  // 如果服务器版本不受支持
         LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_VERSION_NOT_SUPPORTED,
-               server_version);
-        return true;
+               server_version);  // 记录错误
+        return true;  // 返回true
       }
     }
   }
@@ -814,7 +823,8 @@ bool DDSE_dict_init(THD *thd, dict_init_mode_t dict_init_mode, uint version) {
     and the DDSE tables. Before we continue, we must add the remaining
     DD tables.
   */
-  System_tables::instance()->add_remaining_dd_tables();
+  // 此时，System_tables注册表包含INERT DD表和DDSE表。在继续之前，我们必须添加剩余的DD表。
+  System_tables::instance()->add_remaining_dd_tables();  // 添加剩余的DD表
 
   /*
     Iterate over the tablespace definitions, add the names and the
@@ -822,22 +832,24 @@ bool DDSE_dict_init(THD *thd, dict_init_mode_t dict_init_mode, uint version) {
     meta data will be used later to create dd::Tablespace objects.
     The Plugin_tablespace instances are owned by the DDSE.
   */
-  List_iterator<const Plugin_tablespace> tablespace_it(ddse_tablespaces);
+  // 遍历表空间定义，将名称和表空间元数据添加到System_tablespaces注册表中。元数据稍后将用于创建dd::Tablespace对象。Plugin_tablespace实例由DDSE拥有。
+  List_iterator<const Plugin_tablespace> tablespace_it(ddse_tablespaces);  // 创建表空间迭代器
   const Plugin_tablespace *tablespace = nullptr;
-  while ((tablespace = tablespace_it++)) {
+  while ((tablespace = tablespace_it++)) {  // 遍历所有表空间
     // Add the name and the object instance to the registry with the
     // appropriate property.
+    // 将名称和对象实例添加到注册表中，并设置适当的属性。
     if (my_strcasecmp(system_charset_info, MYSQL_TABLESPACE_NAME.str,
-                      tablespace->get_name()) == 0)
+                      tablespace->get_name()) == 0)  // 如果表空间名称为mysql
       System_tablespaces::instance()->add(
-          tablespace->get_name(), System_tablespaces::Types::DD, tablespace);
+          tablespace->get_name(), System_tablespaces::Types::DD, tablespace);  // 添加为DD类型
     else
       System_tablespaces::instance()->add(
           tablespace->get_name(), System_tablespaces::Types::PREDEFINED_DDSE,
-          tablespace);
+          tablespace);  // 添加为PREDEFINED_DDSE类型
   }
 
-  return false;
+  return false;  // 返回false表示成功
 }
 
 // Initialize the data dictionary.
@@ -983,51 +995,59 @@ static bool check_and_create_compression_dict_tables(THD *thd) {
 }
 
 // Normal server restart.
+// 正常服务器重启
 bool restart(THD *thd) {
-  bootstrap::DD_bootstrap_ctx::instance().set_stage(bootstrap::Stage::STARTED);
+  bootstrap::DD_bootstrap_ctx::instance().set_stage(bootstrap::Stage::STARTED);  // 设置启动阶段为 STARTED
 
   /*
     Set tx_read_only to false to allow installing DD tables even
     if the server is started with --transaction-read-only=true.
   */
+  // 设置 tx_read_only 为 false，以允许安装数据字典表，即使服务器以 --transaction-read-only=true 启动
   thd->variables.transaction_read_only = false;
   thd->tx_read_only = false;
 
   // Set explicit_defaults_for_timestamp variable for dictionary creation
+  // 设置 explicit_defaults_for_timestamp 变量以用于数据字典的创建
   thd->variables.explicit_defaults_for_timestamp = true;
 
-  Disable_autocommit_guard autocommit_guard(thd);
+  Disable_autocommit_guard autocommit_guard(thd);  // 禁用自动提交
 
-  Dictionary_impl *d = dd::Dictionary_impl::instance();
-  assert(d);
-  cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+  Dictionary_impl *d = dd::Dictionary_impl::instance();  // 获取数据字典实例
+  assert(d);  // 断言数据字典实例存在
+  cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());  // 自动释放字典客户端
 
-  store_predefined_tablespace_metadata(thd);
+  store_predefined_tablespace_metadata(thd);  // 存储预定义的表空间元数据
 
-  if (create_dd_schema(thd) || initialize_dd_properties(thd) ||
-      create_tables(thd, nullptr) || sync_meta_data(thd) ||
+  // 执行一系列操作来重启数据字典
+  if (create_dd_schema(thd) ||  // 创建数据字典 schema
+      initialize_dd_properties(thd) ||  // 初始化数据字典属性
+      create_tables(thd, nullptr) ||  // 创建表
+      sync_meta_data(thd) ||  // 同步元数据
       DDSE_dict_recover(thd, DICT_RECOVERY_RESTART_SERVER,
-                        d->get_actual_dd_version(thd)) ||
-      upgrade::do_server_upgrade_checks(thd) || upgrade::upgrade_tables(thd) ||
-      check_and_create_compression_dict_tables(thd) ||
-      repopulate_charsets_and_collations(thd) || verify_contents(thd) ||
-      update_versions(thd, false)) {
-    return true;
+                        d->get_actual_dd_version(thd)) ||  // 恢复数据字典
+      upgrade::do_server_upgrade_checks(thd) ||  // 执行服务器升级检查
+      upgrade::upgrade_tables(thd) ||  // 升级表
+      check_and_create_compression_dict_tables(thd) ||  // 检查并创建压缩字典表
+      repopulate_charsets_and_collations(thd) ||  // 重新填充字符集和排序规则
+      verify_contents(thd) ||  // 验证内容
+      update_versions(thd, false)) {  // 更新版本
+    return true;  // 如果任何操作失败，返回 true
   }
 
   DBUG_EXECUTE_IF(
       "schema_read_only",
-      if (dd::execute_query(thd, "CREATE SCHEMA schema_read_only") ||
-          dd::execute_query(thd, "ALTER SCHEMA schema_read_only READ ONLY=1") ||
-          dd::execute_query(thd, "CREATE TABLE schema_read_only.t(i INT)") ||
-          dd::execute_query(thd, "DROP SCHEMA schema_read_only") ||
-          dd::execute_query(thd, "CREATE TABLE IF NOT EXISTS S.restart(i INT)"))
-          assert(false););
+      if (dd::execute_query(thd, "CREATE SCHEMA schema_read_only") ||  // 创建 schema_read_only schema
+          dd::execute_query(thd, "ALTER SCHEMA schema_read_only READ ONLY=1") ||  // 设置 schema_read_only 为只读
+          dd::execute_query(thd, "CREATE TABLE schema_read_only.t(i INT)") ||  // 在 schema_read_only 中创建表
+          dd::execute_query(thd, "DROP SCHEMA schema_read_only") ||  // 删除 schema_read_only schema
+          dd::execute_query(thd, "CREATE TABLE IF NOT EXISTS S.restart(i INT)"))  // 创建表 S.restart
+          assert(false););  // 如果任何操作失败，断言失败
 
-  bootstrap::DD_bootstrap_ctx::instance().set_stage(bootstrap::Stage::FINISHED);
-  LogErr(INFORMATION_LEVEL, ER_DD_VERSION_FOUND, d->get_actual_dd_version(thd));
+  bootstrap::DD_bootstrap_ctx::instance().set_stage(bootstrap::Stage::FINISHED);  // 设置启动阶段为 FINISHED
+  LogErr(INFORMATION_LEVEL, ER_DD_VERSION_FOUND, d->get_actual_dd_version(thd));  // 记录信息，显示找到的数据字典版本
 
-  return false;
+  return false;  // 返回 false 表示成功
 }
 
 // Initialize dictionary in case of server restart.

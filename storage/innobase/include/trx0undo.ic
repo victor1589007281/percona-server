@@ -293,6 +293,7 @@ inline void trx_undo_t::set_prepared_in_tc() {
 }
 
 inline bool trx_undo_t::is_prepared() const {
+  // 判断事务撤销日志的状态是否为已准备状态
   return state == TRX_UNDO_PREPARED_80028 || state == TRX_UNDO_PREPARED ||
          state == TRX_UNDO_PREPARED_IN_TC;
 }

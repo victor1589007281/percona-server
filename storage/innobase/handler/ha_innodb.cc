@@ -401,11 +401,24 @@ static void release_plugin_services() {
 }
 
 /** Acquire required services from mysql server. */
+// 从 MySQL 服务器获取所需的服务
+/*
+为什么需要这个函数？
+插件依赖服务：
+    InnoDB 存储引擎作为 MySQL 的一个插件，依赖于 MySQL 服务器提供的某些核心服务。
+    这些服务不是 InnoDB 自己实现的，而是由 MySQL 服务器提供的。
+动态获取服务：
+   插件在初始化时需要通过 MySQL 的插件注册表服务动态获取这些依赖服务，而不是硬编码或静态链接。
+错误处理：
+   如果某些服务获取失败，函数会记录警告信息，但不会导致插件初始化失败（除非这些服务是必需的）。
+*/
 static void acquire_plugin_services() {
   /* Acquire mysql_server's registry service */
+  // 获取 MySQL 服务器的注册表服务
   reg_svc = mysql_plugin_registry_acquire();
 
   if (reg_svc == nullptr) {
+    // 如果获取注册表服务失败，记录警告
     ib::warn(ER_IB_WRN_FAILED_TO_ACQUIRE_SERVICE, "plugin registry");
     return;
   }
@@ -413,19 +426,25 @@ static void acquire_plugin_services() {
   my_h_service service;
 
   /* Acquire system_variable_source service */
+  // 获取系统变量源服务
   if (reg_svc->acquire("system_variable_source", &service)) {
+    // 如果获取系统变量源服务失败，记录警告
     ib::warn(ER_IB_WRN_FAILED_TO_ACQUIRE_SERVICE, "system_variable_source");
 
   } else {
+    // 如果成功获取服务，将其转换为系统变量源服务类型
     sysvar_source_svc =
         reinterpret_cast<SERVICE_TYPE(system_variable_source) *>(service);
   }
 
   /* Acquire clone protocol service handle. */
+  // 获取克隆协议服务句柄
   if (reg_svc->acquire("clone_protocol", &service)) {
+    // 如果获取克隆协议服务失败，记录警告
     ib::warn(ER_IB_WRN_FAILED_TO_ACQUIRE_SERVICE, "clone_protocol");
 
   } else {
+    // 如果成功获取服务，将其转换为克隆协议服务类型
     clone_protocol_svc =
         reinterpret_cast<SERVICE_TYPE(clone_protocol) *>(service);
   }
@@ -4296,38 +4315,38 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
       if (dict_sys->dynamic_metadata == nullptr) {
         dict_sys->dynamic_metadata =
             dd_table_open_on_name(thd, nullptr, "mysql/innodb_dynamic_metadata",
-                                  false, DICT_ERR_IGNORE_NONE);
+                                  false, DICT_ERR_IGNORE_NONE); // 打开 innodb_dynamic_metadata 表
         dict_persist->table_buffer =
-            ut::new_withkey<DDTableBuffer>(UT_NEW_THIS_FILE_PSI_KEY);
+            ut::new_withkey<DDTableBuffer>(UT_NEW_THIS_FILE_PSI_KEY); // 创建 DDTableBuffer
       }
 
       dict_sys->table_stats =
           dd_table_open_on_name(thd, nullptr, "mysql/innodb_table_stats", false,
-                                DICT_ERR_IGNORE_NONE);
+                                DICT_ERR_IGNORE_NONE); // 打开 innodb_table_stats 表
       dict_sys->index_stats =
           dd_table_open_on_name(thd, nullptr, "mysql/innodb_index_stats", false,
-                                DICT_ERR_IGNORE_NONE);
+                                DICT_ERR_IGNORE_NONE); // 打开 innodb_index_stats 表
       dict_sys->ddl_log = dd_table_open_on_name(
-          thd, nullptr, "mysql/innodb_ddl_log", false, DICT_ERR_IGNORE_NONE);
-      log_ddl = ut::new_withkey<Log_DDL>(UT_NEW_THIS_FILE_PSI_KEY);
+          thd, nullptr, "mysql/innodb_ddl_log", false, DICT_ERR_IGNORE_NONE); // 打开 innodb_ddl_log 表
+      log_ddl = ut::new_withkey<Log_DDL>(UT_NEW_THIS_FILE_PSI_KEY); // 创建 Log_DDL
   }
 
   switch (dict_recovery_mode) {
     case DICT_RECOVERY_INITIALIZE_SERVER:
       return (false);
     case DICT_RECOVERY_INITIALIZE_TABLESPACES: {
-      dd::cache::Dictionary_client *client = dd::get_dd_client(thd);
-      dd::cache::Dictionary_client::Auto_releaser releaser(client);
+      dd::cache::Dictionary_client *client = dd::get_dd_client(thd); // 获取字典客户端
+      dd::cache::Dictionary_client::Auto_releaser releaser(client); // 自动释放字典客户端
 
       if (predefine_tablespace(client, dict_sys_t::s_temp_space_id,
                                srv_tmp_space.flags(),
                                dict_sys_t::s_temp_space_name,
                                dict_sys_t::s_temp_space_file_name)) {
-        return (DD_FAILURE);
+        return (DD_FAILURE); // 预定义临时表空间失败
       }
 
       if (predefine_undo_tablespaces(client)) {
-        return (DD_FAILURE);
+        return (DD_FAILURE); // 预定义撤销表空间失败
       }
 
       break;
@@ -4335,34 +4354,34 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
     case DICT_RECOVERY_RESTART_SERVER:
       /* Traverse dd::tablespaces and apply/validate this metadata. */
       if (boot_tablespaces(thd)) {
-        return (true);
+        return (true); // 引导表空间失败
       }
 
 #ifndef UNIV_HOTBACKUP
       /* For all tablespaces for which tablespace key is to be reencrypt,
       do it now. */
-      fil_encryption_reencrypt(Encryption::s_tablespaces_to_reencrypt);
+      fil_encryption_reencrypt(Encryption::s_tablespaces_to_reencrypt); // 重新加密表空间
 #endif /* !UNIV_HOTBACKUP */
 
       /* We might need to fix tables for CSV and MyISAM SE */
       if (fix_cloned_tables(thd)) {
-        return (true);
+        return (true); // 修复克隆表失败
       }
 
-      srv_dict_recover_on_restart();
+      srv_dict_recover_on_restart(); // 在重启时恢复字典
   }
 
-  srv_start_threads(dict_recovery_mode != DICT_RECOVERY_RESTART_SERVER);
+  srv_start_threads(dict_recovery_mode != DICT_RECOVERY_RESTART_SERVER); // 启动线程
 
 #ifndef UNIV_HOTBACKUP
   /* Update the metadata for innodb_temporary tablespace to reflect
   the correct filename. */
   if (update_innodb_temporary_metadata(thd)) {
-    return true;
+    return true; // 更新 innodb_temporary 表空间元数据失败
   }
 #endif /* !UNIV_HOTBACKUP */
 
-  return (fil_open_for_business(srv_read_only_mode) != DB_SUCCESS);
+  return (fil_open_for_business(srv_read_only_mode) != DB_SUCCESS); // 打开文件系统
 }
 
 /** DDL crash recovery: process the records recovered from "log_ddl" table */
@@ -5492,229 +5511,233 @@ static void innobase_post_ddl(THD *thd) {
 @param[in,out]  p       InnoDB handlerton
 @return error code
 @retval 0 on success */
+// 初始化 InnoDB 存储引擎插件
 static int innodb_init(void *p) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  acquire_plugin_services();
+  acquire_plugin_services();  // 获取插件服务
 
-  handlerton *innobase_hton = (handlerton *)p;
-  innodb_hton_ptr = innobase_hton;
+  handlerton *innobase_hton = (handlerton *)p;  // 获取 InnoDB 的 handlerton 结构体
+  innodb_hton_ptr = innobase_hton;  // 设置全局的 InnoDB handlerton 指针
 
-  innobase_hton->state = SHOW_OPTION_YES;
-  innobase_hton->db_type = DB_TYPE_INNODB;
-  innobase_hton->savepoint_offset = sizeof(trx_named_savept_t);
-  innobase_hton->close_connection = innobase_close_connection;
-  innobase_hton->kill_connection = innobase_kill_connection;
-  innobase_hton->savepoint_set = innobase_savepoint;
-  innobase_hton->savepoint_rollback = innobase_rollback_to_savepoint;
+  innobase_hton->state = SHOW_OPTION_YES;  // 设置引擎状态为可用
+  innobase_hton->db_type = DB_TYPE_INNODB;  // 设置数据库类型为 InnoDB
+  innobase_hton->savepoint_offset = sizeof(trx_named_savept_t);  // 设置保存点的偏移量
+  innobase_hton->close_connection = innobase_close_connection;  // 设置关闭连接的回调函数
+  innobase_hton->kill_connection = innobase_kill_connection;  // 设置终止连接的回调函数
+  innobase_hton->savepoint_set = innobase_savepoint;  // 设置保存点的回调函数
+  innobase_hton->savepoint_rollback = innobase_rollback_to_savepoint;  // 设置回滚到保存点的回调函数
 
   innobase_hton->savepoint_rollback_can_release_mdl =
-      innobase_rollback_to_savepoint_can_release_mdl;
+      innobase_rollback_to_savepoint_can_release_mdl;  // 设置回滚保存点是否可以释放 MDL 锁的回调函数
 
-  innobase_hton->savepoint_release = innobase_release_savepoint;
-  innobase_hton->commit = innobase_commit;
-  innobase_hton->rollback = innobase_rollback;
-  innobase_hton->prepare = innobase_xa_prepare;
-  innobase_hton->recover = innobase_xa_recover;
-  innobase_hton->recover_prepared_in_tc = innobase_xa_recover_prepared_in_tc;
-  innobase_hton->commit_by_xid = innobase_commit_by_xid;
-  innobase_hton->rollback_by_xid = innobase_rollback_by_xid;
-  innobase_hton->set_prepared_in_tc = innobase_set_prepared_in_tc;
-  innobase_hton->set_prepared_in_tc_by_xid = innobase_set_prepared_in_tc_by_xid;
-  innobase_hton->create = innobase_create_handler;
-  innobase_hton->is_valid_tablespace_name = innobase_is_valid_tablespace_name;
-  innobase_hton->alter_tablespace = innobase_alter_tablespace;
+  innobase_hton->savepoint_release = innobase_release_savepoint;  // 设置释放保存点的回调函数
+  innobase_hton->commit = innobase_commit;  // 设置提交事务的回调函数
+  innobase_hton->rollback = innobase_rollback;  // 设置回滚事务的回调函数
+  innobase_hton->prepare = innobase_xa_prepare;  // 设置准备 XA 事务的回调函数
+  innobase_hton->recover = innobase_xa_recover;  // 设置恢复 XA 事务的回调函数
+  innobase_hton->recover_prepared_in_tc = innobase_xa_recover_prepared_in_tc;  // 设置恢复在事务协调器中准备的 XA 事务的回调函数
+  innobase_hton->commit_by_xid = innobase_commit_by_xid;  // 设置通过 XID 提交事务的回调函数
+  innobase_hton->rollback_by_xid = innobase_rollback_by_xid;  // 设置通过 XID 回滚事务的回调函数
+  innobase_hton->set_prepared_in_tc = innobase_set_prepared_in_tc;  // 设置在事务协调器中设置准备事务的回调函数
+  innobase_hton->set_prepared_in_tc_by_xid = innobase_set_prepared_in_tc_by_xid;  // 设置通过 XID 在事务协调器中设置准备事务的回调函数
+  innobase_hton->create = innobase_create_handler;  // 设置创建表的回调函数
+  innobase_hton->is_valid_tablespace_name = innobase_is_valid_tablespace_name;  // 设置验证表空间名称是否有效的回调函数
+  innobase_hton->alter_tablespace = innobase_alter_tablespace;  // 设置修改表空间结构的回调函数
   innobase_hton->get_tablespace_filename_ext =
-      innobase_get_tablespace_filename_ext;
-  innobase_hton->upgrade_tablespace = dd_upgrade_tablespace;
-  innobase_hton->upgrade_space_version = upgrade_space_version;
-  innobase_hton->upgrade_logs = dd_upgrade_logs;
-  innobase_hton->finish_upgrade = dd_upgrade_finish;
-  innobase_hton->pre_dd_shutdown = innodb_pre_dd_shutdown;
-  innobase_hton->panic = innodb_shutdown;
-  innobase_hton->partition_flags = innobase_partition_flags;
+      innobase_get_tablespace_filename_ext;  // 设置获取表空间文件扩展名的回调函数
+  innobase_hton->upgrade_tablespace = dd_upgrade_tablespace;  // 设置升级表空间结构的回调函数
+  innobase_hton->upgrade_space_version = upgrade_space_version;  // 设置升级表空间版本的回调函数
+  innobase_hton->upgrade_logs = dd_upgrade_logs;  // 设置升级日志的回调函数
+  innobase_hton->finish_upgrade = dd_upgrade_finish;  // 设置完成升级的回调函数
+  innobase_hton->pre_dd_shutdown = innodb_pre_dd_shutdown;  // 设置数据字典关闭前的回调函数
+  innobase_hton->panic = innodb_shutdown;  // 设置紧急关闭的回调函数
+  innobase_hton->partition_flags = innobase_partition_flags;  // 设置分区标志的回调函数
 
   innobase_hton->start_consistent_snapshot =
-      innobase_start_trx_and_assign_read_view;
+      innobase_start_trx_and_assign_read_view;  // 设置启动一致性快照的回调函数
   innobase_hton->clone_consistent_snapshot =
-      innobase_start_trx_and_clone_read_view;
+      innobase_start_trx_and_clone_read_view;  // 设置克隆一致性快照的回调函数
 
-  innobase_hton->store_binlog_info = innobase_store_binlog_info;
+  innobase_hton->store_binlog_info = innobase_store_binlog_info;  // 设置存储 binlog 信息的回调函数
 
-  innobase_hton->flush_logs = innobase_flush_logs;
-  innobase_hton->show_status = innobase_show_status;
-  innobase_hton->lock_hton_log = innobase_lock_hton_log;
-  innobase_hton->unlock_hton_log = innobase_unlock_hton_log;
-  innobase_hton->collect_hton_log_info = innobase_collect_hton_log_info;
-  innobase_hton->fill_is_table = innobase_fill_i_s_table;
+  innobase_hton->flush_logs = innobase_flush_logs;  // 设置刷新日志的回调函数
+  innobase_hton->show_status = innobase_show_status;  // 设置显示引擎状态的回调函数
+  innobase_hton->lock_hton_log = innobase_lock_hton_log;  // 设置锁定引擎日志的回调函数
+  innobase_hton->unlock_hton_log = innobase_unlock_hton_log;  // 设置解锁引擎日志的回调函数
+  innobase_hton->collect_hton_log_info = innobase_collect_hton_log_info;  // 设置收集引擎日志信息的回调函数
+  innobase_hton->fill_is_table = innobase_fill_i_s_table;  // 设置填充信息模式表的回调函数
   innobase_hton->flags =
       HTON_SUPPORTS_EXTENDED_KEYS | HTON_SUPPORTS_FOREIGN_KEYS |
       HTON_SUPPORTS_ATOMIC_DDL | HTON_CAN_RECREATE |
       HTON_SUPPORTS_SECONDARY_ENGINE | HTON_SUPPORTS_TABLE_ENCRYPTION |
       HTON_SUPPORTS_ONLINE_BACKUPS | HTON_SUPPORTS_COMPRESSED_COLUMNS |
-      HTON_SUPPORTS_GENERATED_INVISIBLE_PK;
+      HTON_SUPPORTS_GENERATED_INVISIBLE_PK;  // 设置引擎的标志位
 
-  innobase_hton->replace_native_transaction_in_thd = innodb_replace_trx_in_thd;
-  innobase_hton->file_extensions = ha_innobase_exts;
-  innobase_hton->data = &innodb_api_cb;
-  innobase_hton->ddse_dict_init = innobase_ddse_dict_init;
+  innobase_hton->replace_native_transaction_in_thd = innodb_replace_trx_in_thd;  // 设置替换 THD 中的本地事务的回调函数
+  innobase_hton->file_extensions = ha_innobase_exts;  // 设置文件扩展名
+  innobase_hton->data = &innodb_api_cb;  // 设置引擎的私有数据
+  innobase_hton->ddse_dict_init = innobase_ddse_dict_init;  // 设置初始化 DDSE 数据字典的回调函数
 
-  innobase_hton->dict_register_dd_table_id = innobase_dict_register_dd_table_id;
+  innobase_hton->dict_register_dd_table_id = innobase_dict_register_dd_table_id;  // 设置注册数据字典表 ID 的回调函数
 
-  innobase_hton->dict_cache_reset = innobase_dict_cache_reset;
+  innobase_hton->dict_cache_reset = innobase_dict_cache_reset;  // 设置重置数据字典缓存的回调函数
   innobase_hton->dict_cache_reset_tables_and_tablespaces =
-      innobase_dict_cache_reset_tables_and_tablespaces;
+      innobase_dict_cache_reset_tables_and_tablespaces;  // 设置重置表和表空间缓存的回调函数
 
-  innobase_hton->dict_recover = innobase_dict_recover;
-  innobase_hton->dict_get_server_version = innobase_dict_get_server_version;
-  innobase_hton->dict_set_server_version = innobase_dict_set_server_version;
+  innobase_hton->dict_recover = innobase_dict_recover;  // 设置恢复数据字典的回调函数
+  innobase_hton->dict_get_server_version = innobase_dict_get_server_version;  // 设置获取服务器版本的回调函数
+  innobase_hton->dict_set_server_version = innobase_dict_set_server_version;  // 设置设置服务器版本的回调函数
 
-  innobase_hton->post_recover = innobase_post_recover;
+  innobase_hton->post_recover = innobase_post_recover;  // 设置恢复后的回调函数
 
-  innobase_hton->is_supported_system_table = innobase_is_supported_system_table;
+  innobase_hton->is_supported_system_table = innobase_is_supported_system_table;  // 设置检查是否支持系统表的回调函数
 
-  innobase_hton->get_table_statistics = innobase_get_table_statistics;
+  innobase_hton->get_table_statistics = innobase_get_table_statistics;  // 设置获取表统计信息的回调函数
 
   innobase_hton->get_index_column_cardinality =
-      innobase_get_index_column_cardinality;
+      innobase_get_index_column_cardinality;  // 设置获取索引列基数的回调函数
 
-  innobase_hton->get_tablespace_statistics = innobase_get_tablespace_statistics;
-  innobase_hton->get_tablespace_type = innobase_get_tablespace_type;
+  innobase_hton->get_tablespace_statistics = innobase_get_tablespace_statistics;  // 设置获取表空间统计信息的回调函数
+  innobase_hton->get_tablespace_type = innobase_get_tablespace_type;  // 设置获取表空间类型的回调函数
   innobase_hton->get_tablespace_type_by_name =
-      innobase_get_tablespace_type_by_name;
+      innobase_get_tablespace_type_by_name;  // 设置通过名称获取表空间类型的回调函数
 
-  innobase_hton->is_dict_readonly = innobase_is_dict_readonly;
+  innobase_hton->is_dict_readonly = innobase_is_dict_readonly;  // 设置检查数据字典是否只读的回调函数
 
-  innobase_hton->sdi_create = dict_sdi_create;
-  innobase_hton->sdi_drop = dict_sdi_drop;
-  innobase_hton->sdi_get_keys = dict_sdi_get_keys;
-  innobase_hton->sdi_get = dict_sdi_get;
-  innobase_hton->sdi_set = dict_sdi_set;
-  innobase_hton->sdi_delete = dict_sdi_delete;
+  innobase_hton->sdi_create = dict_sdi_create;  // 设置创建 SDI 的回调函数
+  innobase_hton->sdi_drop = dict_sdi_drop;  // 设置删除 SDI 的回调函数
+  innobase_hton->sdi_get_keys = dict_sdi_get_keys;  // 设置获取 SDI 键的回调函数
+  innobase_hton->sdi_get = dict_sdi_get;  // 设置获取 SDI 的回调函数
+  innobase_hton->sdi_set = dict_sdi_set;  // 设置设置 SDI 的回调函数
+  innobase_hton->sdi_delete = dict_sdi_delete;  // 设置删除 SDI 的回调函数
 
   innobase_hton->rotate_encryption_master_key =
-      innobase_encryption_key_rotation;
+      innobase_encryption_key_rotation;  // 设置轮换加密主密钥的回调函数
 
   innobase_hton->fix_tablespaces_empty_uuid =
-      innobase_fix_tablespaces_empty_uuid;
+      innobase_fix_tablespaces_empty_uuid;  // 设置修复表空间空 UUID 的回调函数
 
   innobase_hton->fix_default_table_encryption =
-      innobase_fix_default_table_encryption;
+      innobase_fix_default_table_encryption;  // 设置修复默认表加密的回调函数
 
-  innobase_hton->redo_log_set_state = innobase_redo_set_state;
+  innobase_hton->redo_log_set_state = innobase_redo_set_state;  // 设置重做日志状态的回调函数
 
-  innobase_hton->post_ddl = innobase_post_ddl;
+  innobase_hton->post_ddl = innobase_post_ddl;  // 设置 DDL 操作后的回调函数
 
   /* Initialize handler clone interfaces for. */
+  // 初始化克隆接口
+  innobase_hton->clone_interface.clone_capability = innodb_clone_get_capability;  // 设置获取克隆能力的回调函数
+  innobase_hton->clone_interface.clone_begin = innodb_clone_begin;  // 设置开始克隆的回调函数
+  innobase_hton->clone_interface.clone_copy = innodb_clone_copy;  // 设置克隆数据的回调函数
+  innobase_hton->clone_interface.clone_ack = innodb_clone_ack;  // 设置确认克隆的回调函数
+  innobase_hton->clone_interface.clone_end = innodb_clone_end;  // 设置结束克隆的回调函数
 
-  innobase_hton->clone_interface.clone_capability = innodb_clone_get_capability;
-  innobase_hton->clone_interface.clone_begin = innodb_clone_begin;
-  innobase_hton->clone_interface.clone_copy = innodb_clone_copy;
-  innobase_hton->clone_interface.clone_ack = innodb_clone_ack;
-  innobase_hton->clone_interface.clone_end = innodb_clone_end;
-
-  innobase_hton->clone_interface.clone_apply_begin = innodb_clone_apply_begin;
-  innobase_hton->clone_interface.clone_apply = innodb_clone_apply;
-  innobase_hton->clone_interface.clone_apply_end = innodb_clone_apply_end;
+  innobase_hton->clone_interface.clone_apply_begin = innodb_clone_apply_begin;  // 设置开始应用克隆的回调函数
+  innobase_hton->clone_interface.clone_apply = innodb_clone_apply;  // 设置应用克隆的回调函数
+  innobase_hton->clone_interface.clone_apply_end = innodb_clone_apply_end;  // 设置结束应用克隆的回调函数
 
   innobase_hton->foreign_keys_flags =
       HTON_FKS_WITH_PREFIX_PARENT_KEYS |
       HTON_FKS_NEED_DIFFERENT_PARENT_AND_SUPPORTING_KEYS |
-      HTON_FKS_WITH_EXTENDED_PARENT_KEYS;
+      HTON_FKS_WITH_EXTENDED_PARENT_KEYS;  // 设置外键支持的标志位
 
-  innobase_hton->check_fk_column_compat = innodb_check_fk_column_compat;
-  innobase_hton->fk_name_suffix = {STRING_WITH_LEN("_ibfk_")};
+  innobase_hton->check_fk_column_compat = innodb_check_fk_column_compat;  // 设置检查外键列兼容性的回调函数
+  innobase_hton->fk_name_suffix = {STRING_WITH_LEN("_ibfk_")};  // 设置外键名称的后缀
 
-  innobase_hton->is_reserved_db_name = innobase_check_reserved_file_name;
+  innobase_hton->is_reserved_db_name = innobase_check_reserved_file_name;  // 设置检查数据库名称是否保留的回调函数
 
-  innobase_hton->page_track.start = innobase_page_track_start;
-  innobase_hton->page_track.stop = innobase_page_track_stop;
-  innobase_hton->page_track.purge = innobase_page_track_purge;
-  innobase_hton->page_track.get_page_ids = innobase_page_track_get_page_ids;
+  innobase_hton->page_track.start = innobase_page_track_start;  // 设置开始页面跟踪的回调函数
+  innobase_hton->page_track.stop = innobase_page_track_stop;  // 设置停止页面跟踪的回调函数
+  innobase_hton->page_track.purge = innobase_page_track_purge;  // 设置清除页面跟踪的回调函数
+  innobase_hton->page_track.get_page_ids = innobase_page_track_get_page_ids;  // 设置获取页面 ID 的回调函数
   innobase_hton->page_track.get_num_page_ids =
-      innobase_page_track_get_num_page_ids;
-  innobase_hton->page_track.get_status = innobase_page_track_get_status;
+      innobase_page_track_get_num_page_ids;  // 设置获取页面 ID 数量的回调函数
+  innobase_hton->page_track.get_status = innobase_page_track_get_status;  // 设置获取页面跟踪状态的回调函数
 
   innobase_hton->upgrade_get_compression_dict_data =
-      dd_upgrade_get_compression_dict_data;
+      dd_upgrade_get_compression_dict_data;  // 设置升级获取压缩字典数据的回调函数
 
-  static_assert(DATA_MYSQL_TRUE_VARCHAR == (ulint)MYSQL_TYPE_VARCHAR);
+  static_assert(DATA_MYSQL_TRUE_VARCHAR == (ulint)MYSQL_TYPE_VARCHAR);  // 静态断言，确保数据类型一致
 
-  os_file_set_umask(my_umask);
+  os_file_set_umask(my_umask);  // 设置文件创建的 umask
 
   /* Setup the memory alloc/free tracing mechanisms before calling
   any functions that could possibly allocate memory. */
-  ut_new_boot();
+  // 在调用任何可能分配内存的函数之前，设置内存分配/释放跟踪机制
+  ut_new_boot();  // 初始化内存分配器
 
 #ifdef HAVE_PSI_INTERFACE
   /* Register keys with MySQL performance schema */
+  // 向 MySQL 性能模式注册键
   int count;
 
 #ifdef UNIV_DEBUG
   /** Count of Performance Schema keys that have been registered. */
+  // 已注册的性能模式键的数量
   int global_count = 0;
 #endif /* UNIV_DEBUG */
 
-  count = static_cast<int>(array_elements(all_pthread_mutexes));
-  mysql_mutex_register("innodb", all_pthread_mutexes, count);
+  count = static_cast<int>(array_elements(all_pthread_mutexes));  // 获取互斥锁的数量
+  mysql_mutex_register("innodb", all_pthread_mutexes, count);  // 注册互斥锁
 
 #ifdef UNIV_DEBUG
-  global_count += count;
+  global_count += count;  // 更新全局计数
 #endif /* UNIV_DEBUG */
 
 #ifdef UNIV_PFS_MEMORY
-  count = static_cast<int>(array_elements(pfs_instrumented_innodb_memory));
-  mysql_memory_register("innodb", pfs_instrumented_innodb_memory, count);
+  count = static_cast<int>(array_elements(pfs_instrumented_innodb_memory));  // 获取内存分配器的数量
+  mysql_memory_register("innodb", pfs_instrumented_innodb_memory, count);  // 注册内存分配器
 #endif /* UNIV_PFS_MEMORY */
 
 #ifdef UNIV_PFS_MUTEX
-  count = static_cast<int>(array_elements(all_innodb_mutexes));
-  mysql_mutex_register("innodb", all_innodb_mutexes, count);
+  count = static_cast<int>(array_elements(all_innodb_mutexes));  // 获取 InnoDB 互斥锁的数量
+  mysql_mutex_register("innodb", all_innodb_mutexes, count);  // 注册 InnoDB 互斥锁
 
 #ifdef UNIV_DEBUG
-  global_count += count;
+  global_count += count;  // 更新全局计数
 #endif /* UNIV_DEBUG */
 
 #endif /* UNIV_PFS_MUTEX */
 
 #ifdef UNIV_PFS_RWLOCK
-  count = static_cast<int>(array_elements(all_innodb_rwlocks));
-  mysql_rwlock_register("innodb", all_innodb_rwlocks, count);
+  count = static_cast<int>(array_elements(all_innodb_rwlocks));  // 获取 InnoDB 读写锁的数量
+  mysql_rwlock_register("innodb", all_innodb_rwlocks, count);  // 注册 InnoDB 读写锁
 
 #ifdef UNIV_DEBUG
-  global_count += count;
+  global_count += count;  // 更新全局计数
 #endif /* UNIV_DEBUG */
 
 #endif /* UNIV_PFS_MUTEX */
 
 #ifdef UNIV_PFS_THREAD
-  count = static_cast<int>(array_elements(all_innodb_threads));
-  mysql_thread_register("innodb", all_innodb_threads, count);
+  count = static_cast<int>(array_elements(all_innodb_threads));  // 获取 InnoDB 线程的数量
+  mysql_thread_register("innodb", all_innodb_threads, count);  // 注册 InnoDB 线程
 
 #ifdef UNIV_DEBUG
-  global_count += count;
+  global_count += count;  // 更新全局计数
 #endif /* UNIV_DEBUG */
 
 #endif /* UNIV_PFS_THREAD */
 
 #ifdef UNIV_PFS_IO
-  count = static_cast<int>(array_elements(all_innodb_files));
-  mysql_file_register("innodb", all_innodb_files, count);
+  count = static_cast<int>(array_elements(all_innodb_files));  // 获取 InnoDB 文件的数量
+  mysql_file_register("innodb", all_innodb_files, count);  // 注册 InnoDB 文件
 
 #ifdef UNIV_DEBUG
-  global_count += count;
+  global_count += count;  // 更新全局计数
 #endif /* UNIV_DEBUG */
 
 #endif /* UNIV_PFS_IO */
 
-  count = static_cast<int>(array_elements(all_innodb_conds));
-  mysql_cond_register("innodb", all_innodb_conds, count);
+  count = static_cast<int>(array_elements(all_innodb_conds));  // 获取 InnoDB 条件的数量
+  mysql_cond_register("innodb", all_innodb_conds, count);  // 注册 InnoDB 条件
 
 #ifdef UNIV_DEBUG
-  global_count += count;
+  global_count += count;  // 更新全局计数
 #endif /* UNIV_DEBUG */
 
-  mysql_data_lock_register(&innodb_data_lock_inspector);
+  mysql_data_lock_register(&innodb_data_lock_inspector);  // 注册数据锁检查器
 
 #ifdef UNIV_DEBUG
   if (mysql_pfs_key_t::get_count() != global_count) {
@@ -5724,53 +5747,57 @@ static int innodb_init(void *p) {
                              << " register the keys in PFS arrays in"
                              << " ha_innodb.cc.";
 
-    return HA_ERR_INITIALIZATION;
+    return HA_ERR_INITIALIZATION;  // 返回初始化错误
   }
 #endif /* UNIV_DEBUG */
 
 #endif /* HAVE_PSI_INTERFACE */
 
-  os_event_global_init();
+  os_event_global_init();  // 初始化全局事件系统
 
-  if (innodb_init_params()) {
-    return innodb_init_abort();
+  if (innodb_init_params()) {  // 初始化 InnoDB 参数
+    return innodb_init_abort();  // 如果初始化失败，返回错误
   }
 
   /* After this point, error handling has to use
   innodb_init_abort(). */
+  // 在此之后，错误处理必须使用 innodb_init_abort()
 
   /* Initialize component service handles */
+  // 初始化组件服务句柄
   if (innobase::component_services::intitialize_service_handles() == false) {
-    return innodb_init_abort();
+    return innodb_init_abort();  // 如果初始化失败，返回错误
   }
 
-  if (!srv_sys_space.parse_params(innobase_data_file_path, true)) {
+  if (!srv_sys_space.parse_params(innobase_data_file_path, true)) {  // 解析系统表空间参数
     ib::error(ER_IB_MSG_545)
         << "Unable to parse innodb_data_file_path=" << innobase_data_file_path;
-    return innodb_init_abort();
+    return innodb_init_abort();  // 如果解析失败，返回错误
   }
 
-  if (!srv_tmp_space.parse_params(innobase_temp_data_file_path, false)) {
+  if (!srv_tmp_space.parse_params(innobase_temp_data_file_path, false)) {  // 解析临时表空间参数
     ib::error(ER_IB_MSG_546) << "Unable to parse innodb_temp_data_file_path="
                              << innobase_temp_data_file_path;
-    return innodb_init_abort();
+    return innodb_init_abort();  // 如果解析失败，返回错误
   }
 
   /* Perform all sanity check before we take action of deleting files*/
-  if (srv_sys_space.intersection(&srv_tmp_space)) {
+  // 在执行删除文件操作之前，执行所有健全性检查
+  if (srv_sys_space.intersection(&srv_tmp_space)) {  // 检查系统表空间和临时表空间是否有交集
     log_errlog(ERROR_LEVEL, ER_INNODB_FILES_SAME, srv_tmp_space.name(),
                srv_sys_space.name());
-    return innodb_init_abort();
+    return innodb_init_abort();  // 如果有交集，返回错误
   }
 
   /* Check for keyring plugin if UNDO/REDO logs are intended to be encrypted */
+  // 如果 UNDO/REDO 日志需要加密，检查 keyring 插件
   if ((srv_undo_log_encrypt || srv_redo_log_encrypt) &&
-      Encryption::check_keyring() == false) {
-    return innodb_init_abort();
+      Encryption::check_keyring() == false) {  // 检查 keyring 插件是否可用
+    return innodb_init_abort();  // 如果 keyring 插件不可用，返回错误
   }
 
-  return 0;
-}
+  return 0;  // 返回成功
+}   
 
 /** De initialize the InnoDB storage engine plugin. */
 static int innodb_deinit(MYSQL_PLUGIN plugin_info [[maybe_unused]]) {
@@ -5856,18 +5883,24 @@ static bool dd_open_hardcoded(space_id_t space_id, const char *filename,
 @param[in]      dict_init_mode  whether to create or open the files
 @param[in,out]  tablespaces     predefined tablespaces created by the DDSE
 @return 0 on success, 1 on failure */
+// 打开或创建 InnoDB 数据文件。
+// @param[in]      dict_init_mode  是创建还是打开文件
+// @param[in,out]  tablespaces     由 DDSE 创建的预定义表空间
+// @return 成功返回 0，失败返回 1
 static int innobase_init_files(dict_init_mode_t dict_init_mode,
                                List<const Plugin_tablespace> *tablespaces,
                                bool &is_dd_encrypted) {
   DBUG_TRACE;
 
+  // 检查初始化模式是否有效
   ut_ad(dict_init_mode == DICT_INIT_CREATE_FILES ||
         dict_init_mode == DICT_INIT_CHECK_FILES ||
         dict_init_mode == DICT_INIT_UPGRADE_57_FILES);
 
-  bool create = (dict_init_mode == DICT_INIT_CREATE_FILES);
+  bool create = (dict_init_mode == DICT_INIT_CREATE_FILES); // 判断是否需要创建文件
 
   /* Check if the data files exist or not. */
+  // 检查数据文件是否存在
   dberr_t err =
       srv_sys_space.check_file_spec(create, MIN_EXPECTED_TABLESPACE_SIZE);
 
@@ -5875,22 +5908,27 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
     return innodb_init_abort();
   }
 
+  // 设置是否为升级模式
   srv_is_upgrade_mode = (dict_init_mode == DICT_INIT_UPGRADE_57_FILES);
 
   /* Start the InnoDB server. */
+  // 启动 InnoDB 服务器
   err = srv_start(create);
 
   if (err != DB_SUCCESS) {
     return innodb_init_abort();
   }
 
+  // 用于升级时存储 mysql/plugin 表空间 ID
   space_id_t upgrade_mysql_plugin_space = SPACE_UNKNOWN;
 
+  // 如果是升级模式，执行额外的升级操作
   if (srv_is_upgrade_mode) {
     if (!dict_sys_table_id_build()) {
       return innodb_init_abort();
     }
 
+    // 检查是否存在准备好的事务
     if (trx_sys->found_prepared_trx) {
       ib::error(ER_DD_UPGRADE_FOUND_PREPARED_XA_TRANSACTION);
       return innodb_init_abort();
@@ -5898,12 +5936,14 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
 
     /* Disable AHI when we start loading tables for purge.
     These tables are evicted anyway after purge. */
+    // 当开始加载表进行清除时禁用 AHI，因为这些表在清除后会被驱逐
 
     bool old_btr_search_value = btr_search_enabled;
     btr_search_enabled = false;
 
     /* Load all tablespaces upfront from InnoDB Dictionary.
     This is needed for applying purge and ibuf from 5.7 */
+    // 从 InnoDB 字典中预先加载所有表空间，这是应用 5.7 的清除和 ibuf 所必需的
     dict_load_tablespaces_for_upgrade();
 
     /* Start purge threads immediately and wait for purge to
@@ -5912,8 +5952,10 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
     table_id later. Also InnoDB dictionary will be dropped
     during the process of upgrade. So apply all the purge
     now. */
+    // 启动清除线程并等待清除完成
     srv_start_purge_threads();
 
+    // 等待历史列表清空
     uint64_t rseg_history_len;
     while ((rseg_history_len = trx_sys->rseg_history_len.load()) != 0) {
       ib::info(ER_IB_MSG_547)
@@ -5924,10 +5966,12 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
 
     srv_upgrade_old_undo_found = false;
 
+    // 刷新所有缓冲池
     buf_flush_sync_all_buf_pools();
 
     /* We have to find the space_id of "mysql/plugin" here. i.e. before we evict
     the tables from cache. */
+    // 在驱逐表缓存之前，需要找到 "mysql/plugin" 的 space_id
     dict_table_t *table = dict_table_open_on_name("mysql/plugin", false, true,
                                                   DICT_ERR_IGNORE_NONE);
     if (table != nullptr) {
@@ -5935,13 +5979,16 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
       dict_table_close(table, false, false);
     }
 
+    // 驱逐表缓存和表空间统计信息
     dict_upgrade_evict_tables_cache();
 
     dict_stats_evict_tablespaces();
 
+    // 恢复 AHI 设置
     btr_search_enabled = old_btr_search_value;
   }
 
+  // 检测 mysql.ibd 是否加密
   bool do_encrypt = false;
   bool ret = dict_detect_encryption_of_mysql_ibd(
       dict_init_mode, upgrade_mysql_plugin_space, do_encrypt);
@@ -5952,6 +5999,7 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
     return innodb_init_abort();
   }
 
+  // 如果需要加密但找不到密钥，则报错
   if (do_encrypt && !Encryption::check_keyring()) {
     my_error(ER_CANNOT_FIND_KEY_IN_KEYRING, MYF(0));
     return innodb_init_abort();
@@ -5959,11 +6007,13 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
 
   is_dd_encrypted = do_encrypt;
 
+  // 设置数据字典空间标志
   const ulint dd_space_flags =
       do_encrypt ? predefined_flags | FSP_FLAGS_MASK_ENCRYPTION
                  : predefined_flags;
 
   // For upgrade from 5.7, create mysql.ibd
+  // 从 5.7 升级时创建 mysql.ibd
   create |= (dict_init_mode == DICT_INIT_UPGRADE_57_FILES);
   ret = create ? dd_create_hardcoded(dict_sys_t::s_dict_space_id,
                                      dict_sys_t::s_dd_space_file_name,
@@ -5975,7 +6025,10 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
   /* Once hardcoded tablespace mysql is created or opened,
   prepare it along with innodb system tablespace for server.
   Tell server that these two hardcoded tablespaces exist.  */
+  // 一旦创建或打开了硬编码的 mysql 表空间，就为服务器准备它和 innodb 系统表空间
+  // 告诉服务器这两个硬编码的表空间存在
   if (!ret) {
+    // 创建表空间私有数据字符串
     const size_t len =
         30 + sizeof("id=;flags=;server_version=;space_version=;state=normal");
     const char *fmt =
@@ -5990,8 +6043,10 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
              dd_space_flags, DD_SPACE_CURRENT_SRV_VERSION,
              DD_SPACE_CURRENT_SPACE_VERSION);
 
+    // 设置表空间选项
     const char *dd_space_options = do_encrypt ? "encryption=y" : "";
 
+    // 创建数据字典表空间并添加到列表
     static Plugin_tablespace dd_space(dict_sys_t::s_dd_space_name,
                                       dd_space_options, se_private_data_dd, "",
                                       innobase_hton_name);
@@ -6000,6 +6055,7 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
     dd_space.add_file(&dd_file);
     tablespaces->push_back(&dd_space);
 
+    // 创建系统表空间并添加到列表
     const char *options = srv_sys_space.is_encrypted() ? "encryption=y" : "";
 
     static Plugin_tablespace innodb(dict_sys_t::s_sys_space_name, options,
@@ -6019,11 +6075,13 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
     return innodb_init_abort();
   }
 
+  // 更新 LRU 旧块比例和变更缓冲区大小
   innobase_old_blocks_pct = static_cast<uint>(
       buf_LRU_old_ratio_update(innobase_old_blocks_pct, true));
 
   ibuf_max_size_update(srv_change_buffer_max_size);
 
+  // 初始化各种互斥锁和条件变量
   innobase_open_tables = ut::new_<hash_table_t>(200);
   mysql_mutex_init(innobase_share_mutex_key.m_value, &innobase_share_mutex,
                    MY_MUTEX_INIT_FAST);
@@ -6034,6 +6092,8 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
                    &resume_encryption_cond_m, MY_MUTEX_INIT_FAST);
   mysql_cond_init(resume_encryption_cond_key.m_value, &resume_encryption_cond);
   innodb_inited = true;
+
+  // 如果是动态插件，更新 handlerton
 #ifdef MYSQL_DYNAMIC_PLUGIN
   if (innobase_hton != p) {
     innobase_hton = reinterpret_cast<handlerton *>(p);
@@ -6044,14 +6104,17 @@ static int innobase_init_files(dict_init_mode_t dict_init_mode,
   /* Do this as late as possible so server is fully starts up,
   since  we might get some initial stats if user choose to turn
   on some counters from start up */
+  // 启用监控计数器
   if (innobase_enable_monitor_counter) {
     innodb_enable_monitor_at_startup(innobase_enable_monitor_counter);
   }
 
   /* Turn on monitor counters that are default on */
+  // 启用默认的监控计数器
   srv_mon_default_on();
 
   /* Unit Tests */
+  // 运行单元测试
 #ifdef UNIV_ENABLE_UNIT_TEST_GET_PARENT_DIR
   unit_test_os_file_get_parent_dir();
 #endif /* UNIV_ENABLE_UNIT_TEST_GET_PARENT_DIR */
@@ -13568,16 +13631,29 @@ bool innobase_fts_load_stopword(
                             THDVAR(thd, ft_enable_stopword), false));
 }
 
+/** 初始化 InnoDB 数据字典
+初始化包括:
+1. 设置双写目录
+2. 初始化系统文件 
+3. 创建内部系统表定义
+@param[in] dict_init_mode 字典初始化模式(创建/检查/升级)
+@param[in] uint 未使用参数
+@param[in,out] tables 用于存储创建的数据字典表定义
+@param[in,out] tablespaces 用于存储预定义表空间
+@return 成功返回 false,失败返回 true */
 static bool innobase_ddse_dict_init(
     dict_init_mode_t dict_init_mode, uint, List<const dd::Object_table> *tables,
     List<const Plugin_tablespace> *tablespaces) {
   DBUG_TRACE;
 
+  // 记录初始化开始
   LogErr(SYSTEM_LEVEL, ER_IB_MSG_INNODB_START_INITIALIZE);
 
+  // 验证输入参数
   assert(tables && tables->is_empty());
   assert(tablespaces && tablespaces->is_empty());
 
+  // 配置双写目录
   if (dblwr::is_enabled()) {
     if (innobase_doublewrite_dir != nullptr && *innobase_doublewrite_dir != 0) {
       dblwr::dir.assign(innobase_doublewrite_dir);
@@ -13600,12 +13676,14 @@ static bool innobase_ddse_dict_init(
     ib::info(ER_IB_MSG_DBLWR_1305) << "Atomic write disabled";
   }
 
+  // 初始化文件,并检查是否需要加密
   bool is_dd_encrypted{false};
   if (innobase_init_files(dict_init_mode, tablespaces, is_dd_encrypted)) {
     return true;
   }
 
   /* Instantiate table defs only if we are successful so far. */
+  // 创建系统表定义 - innodb_dynamic_metadata
   dd::Object_table *innodb_dynamic_metadata =
       dd::Object_table::create_object_table();
   innodb_dynamic_metadata->set_hidden(true);
@@ -13620,9 +13698,11 @@ static bool innobase_ddse_dict_init(
 
   /* Changing these values would change the specification of innodb statistics
   tables. */
+  // 定义数据库名和表名的字段长度
   static constexpr size_t DB_NAME_FIELD_SIZE = 64;
   static constexpr size_t TABLE_NAME_FIELD_SIZE = 199;
 
+  // 验证字段长度与系统定义一致
   static_assert(DB_NAME_FIELD_SIZE == dict_name::MAX_DB_CHAR_LEN,
                 "dict_name::MAX_DB_CHAR_LEN mismatch with db column");
 
@@ -13630,17 +13710,20 @@ static bool innobase_ddse_dict_init(
                 "dict_name::MAX_TABLE_CHAR_LEN mismatch with table column");
 
   /* Set length for database name field. */
+  // 构造数据库名字段定义
   std::ostringstream db_name_field;
   db_name_field << "database_name VARCHAR(" << DB_NAME_FIELD_SIZE
                 << ") NOT NULL";
   std::string db_field = db_name_field.str();
 
   /* Set length for table name field. */
+  // 构造表名字段定义
   std::ostringstream table_name_field;
   table_name_field << "table_name VARCHAR(" << TABLE_NAME_FIELD_SIZE
                    << ") NOT NULL";
   std::string table_field = table_name_field.str();
 
+  // 创建系统表定义 - innodb_table_stats
   dd::Object_table *innodb_table_stats =
       dd::Object_table::create_object_table();
   innodb_table_stats->set_hidden(false);
@@ -13660,6 +13743,7 @@ static bool innobase_ddse_dict_init(
   def->add_index(0, "index_pk", "PRIMARY KEY (database_name, table_name)");
   /* Options and tablespace are set at the SQL layer. */
 
+  // 创建系统表定义 - innodb_index_stats
   dd::Object_table *innodb_index_stats =
       dd::Object_table::create_object_table();
   innodb_index_stats->set_hidden(false);
@@ -13687,6 +13771,7 @@ static bool innobase_ddse_dict_init(
                  "index_name, stat_name)");
   /* Options and tablespace are set at the SQL layer. */
 
+  // 创建系统表定义 - innodb_ddl_log
   dd::Object_table *innodb_ddl_log = dd::Object_table::create_object_table();
   innodb_ddl_log->set_hidden(true);
   def = innodb_ddl_log->target_table_definition();
@@ -13706,6 +13791,7 @@ static bool innobase_ddse_dict_init(
   def->add_index(1, "index_k_thread_id", "KEY(thread_id)");
   /* Options and tablespace are set at the SQL layer. */
 
+  // 如果需要加密,设置所有系统表为加密表
   if (is_dd_encrypted) {
     innodb_dynamic_metadata->set_target_encrypted();
     innodb_table_stats->set_target_encrypted();
@@ -13713,11 +13799,13 @@ static bool innobase_ddse_dict_init(
     innodb_ddl_log->set_target_encrypted();
   }
 
+  // 将所有系统表添加到输出列表
   tables->push_back(innodb_dynamic_metadata);
   tables->push_back(innodb_table_stats);
   tables->push_back(innodb_index_stats);
   tables->push_back(innodb_ddl_log);
 
+  // 记录初始化完成
   LogErr(SYSTEM_LEVEL, ER_IB_MSG_INNODB_END_INITIALIZE);
 
   return false;

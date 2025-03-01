@@ -524,97 +524,109 @@ dberr_t Datafile::validate_for_recovery(space_id_t space_id) {
 
 dberr_t Datafile::validate_first_page(space_id_t space_id, lsn_t *flush_lsn,
                                       bool for_import) {
-  char *prev_name;
-  char *prev_filepath;
-  const char *error_txt = nullptr;
+  char *prev_name; // 之前的表空间名称
+  char *prev_filepath; // 之前的文件路径
+  const char *error_txt = nullptr; // 错误信息
 
-  m_is_valid = true;
+  m_is_valid = true; // 标记文件有效
 
   /* fil_space_read_name_and_filepath will acquire the fil shard mutex. If there
   is any other thread that tries to open this file, it will have the fil
   mutex and will wait for this file to open. It will not succeed on Windows
   as we don't open the file for shared write. */
-  auto guard = create_scope_guard([this]() { close(); });
+  /* fil_space_read_name_and_filepath 将获取 fil 分片互斥锁。
+  如果有其他线程尝试打开此文件，它将拥有 fil 互斥锁并等待此文件打开。
+  在 Windows 上不会成功，因为我们不会以共享写入方式打开文件。 */
+  auto guard = create_scope_guard([this]() { close(); }); // 创建作用域守卫，在作用域结束时关闭文件
 
   if (m_first_page == nullptr &&
-      read_first_page(srv_read_only_mode) != DB_SUCCESS) {
-    error_txt = "Cannot read first page";
+      read_first_page(srv_read_only_mode) != DB_SUCCESS) { // 如果第一页为空且读取第一页失败
+    error_txt = "Cannot read first page"; // 设置错误信息
   } else {
-    ut_ad(m_first_page);
+    ut_ad(m_first_page); // 断言第一页存在
 
     if (flush_lsn != nullptr) {
-      *flush_lsn = mach_read_from_8(m_first_page + FIL_PAGE_FILE_FLUSH_LSN);
+      *flush_lsn = mach_read_from_8(m_first_page + FIL_PAGE_FILE_FLUSH_LSN); // 从第一页读取 flush_lsn
     }
   }
 
   if (error_txt == nullptr && m_space_id == TRX_SYS_SPACE && !m_flags) {
     /* Check if the whole page is blank. */
+    /* 检查整个页面是否为空。 */
 
-    const byte *b = m_first_page;
-    ulint nonzero_bytes = UNIV_PAGE_SIZE;
+    const byte *b = m_first_page; // 获取第一页指针
+    ulint nonzero_bytes = UNIV_PAGE_SIZE; // 非零字节数
 
-    while (*b == '\0' && --nonzero_bytes != 0) {
+    while (*b == '\0' && --nonzero_bytes != 0) { // 检查页面是否全为零
       b++;
     }
 
     if (nonzero_bytes == 0) {
-      error_txt = "Header page consists of zero bytes";
+      error_txt = "Header page consists of zero bytes"; // 设置错误信息
     }
   }
 
-  const page_size_t page_size(m_flags);
+  const page_size_t page_size(m_flags); // 获取页面大小
 
   if (error_txt != nullptr) {
     /* skip the next few tests */
+    /* 跳过接下来的测试 */
   } else if (univ_page_size.logical() != page_size.logical()) {
     /* Page size must be univ_page_size. */
+    /* 页面大小必须是 univ_page_size。 */
 
     ib::error(ER_IB_MSG_397) << "Data file '" << m_filepath
                              << "' uses page size " << page_size.logical()
                              << ", but the innodb_page_size"
                                 " start-up parameter is "
-                             << univ_page_size.logical();
+                             << univ_page_size.logical(); // 打印错误信息
 
-    free_first_page();
+    free_first_page(); // 释放第一页
 
-    return (DB_ERROR);
+    return (DB_ERROR); // 返回错误码
   } else if (!fsp_flags_is_valid(m_flags) || FSP_FLAGS_GET_TEMPORARY(m_flags)) {
     /* Tablespace flags must be valid. */
-    error_txt = "Tablespace flags are invalid";
+    /* 表空间标志必须有效。 */
+    error_txt = "Tablespace flags are invalid"; // 设置错误信息
   } else if (page_get_page_no(m_first_page) != 0) {
     /* First page must be number 0 */
-    error_txt = "Header page contains inconsistent data";
+    /* 第一页必须是第0页 */
+    error_txt = "Header page contains inconsistent data"; // 设置错误信息
 
   } else if (m_space_id == SPACE_UNKNOWN) {
     /* The space_id can be most anything, except -1. */
-    error_txt = "A bad Space ID was found";
+    /* space_id 可以是任何值，除了 -1。 */
+    error_txt = "A bad Space ID was found"; // 设置错误信息
 
   } else if (m_space_id != 0 && space_id != m_space_id) {
     /* Tablespace ID mismatch. The file could be in use
     by another tablespace. */
+    /* 表空间 ID 不匹配。该文件可能正在被另一个表空间使用。 */
 
 #ifndef UNIV_HOTBACKUP
     ut_d(ib::info(ER_IB_MSG_398)
          << "Tablespace file '" << filepath() << "' ID mismatch"
-         << ", expected " << space_id << " but found " << m_space_id);
+         << ", expected " << space_id << " but found " << m_space_id); // 打印信息
 #else  /* !UNIV_HOTBACKUP */
     ib::trace_2() << "Tablespace file '" << filepath() << "' ID mismatch"
-                  << ", expected " << space_id << " but found " << m_space_id;
+                  << ", expected " << space_id << " but found " << m_space_id; // 打印跟踪信息
 #endif /* !UNIV_HOTBACKUP */
 
-    return (DB_WRONG_FILE_NAME);
+    return (DB_WRONG_FILE_NAME); // 返回错误码
 
   } else {
     BlockReporter reporter(false, m_first_page, page_size,
-                           fsp_is_checksum_disabled(m_space_id));
+                           fsp_is_checksum_disabled(m_space_id)); // 创建块报告器
 
     if (reporter.is_corrupted()) {
       /* Look for checksum and other corruptions. */
-      error_txt = "Checksum mismatch";
+      /* 检查校验和和其他损坏。 */
+      error_txt = "Checksum mismatch"; // 设置错误信息
     }
 
     /** TODO: Enable following after WL#11063: Update
     server version information in InnoDB tablespaces:
+    TODO: 在 WL#11063 完成后启用以下内容：更新 InnoDB 表空间中的服务器版本信息：
 
     else if (!for_import
                && (fsp_header_get_server_version(m_first_page)
@@ -631,91 +643,95 @@ dberr_t Datafile::validate_first_page(space_id_t space_id, lsn_t *flush_lsn,
     ib::error(ER_IB_MSG_399)
         << error_txt << " in datafile: " << m_filepath
         << ", Space ID:" << m_space_id << ", Flags: " << m_flags << ". "
-        << TROUBLESHOOT_DATADICT_MSG;
-    m_is_valid = false;
+        << TROUBLESHOOT_DATADICT_MSG; // 打印错误信息
+    m_is_valid = false; // 标记文件无效
 
-    free_first_page();
+    free_first_page(); // 释放第一页
 
-    return (DB_CORRUPTION);
+    return (DB_CORRUPTION); // 返回数据损坏错误
   }
 
   /* For encrypted tablespace, check the encryption info in the
   first page can be decrypt by master key, otherwise, this table
   can't be open. And for importing, we skip checking it. */
+  /* 对于加密表空间，检查第一页中的加密信息是否可以通过主密钥解密，否则无法打开该表。
+  对于导入，我们跳过检查。 */
   if (FSP_FLAGS_GET_ENCRYPTION(m_flags) && !for_import) {
     m_encryption_key = static_cast<byte *>(
-        ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, Encryption::KEY_LEN));
+        ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, Encryption::KEY_LEN)); // 分配加密密钥
     m_encryption_iv = static_cast<byte *>(
-        ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, Encryption::KEY_LEN));
+        ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, Encryption::KEY_LEN)); // 分配加密 IV
 #ifdef UNIV_ENCRYPT_DEBUG
-    fprintf(stderr, "Got from file %u:", m_space_id);
+    fprintf(stderr, "Got from file %u:", m_space_id); // 打印调试信息
 #endif
 
-    Encryption_key e_key{m_encryption_key, m_encryption_iv};
+    Encryption_key e_key{m_encryption_key, m_encryption_iv}; // 创建加密密钥对象
     if (!fsp_header_get_encryption_key(m_flags, e_key, m_first_page)) {
       ib::error(ER_IB_MSG_401)
           << "Encryption information in datafile: " << m_filepath
           << " can't be decrypted, please confirm that"
-          << " keyring is loaded.";
+          << " keyring is loaded."; // 打印错误信息
 
-      m_is_valid = false;
-      free_first_page();
-      ut::free(m_encryption_key);
-      ut::free(m_encryption_iv);
-      m_encryption_key = nullptr;
-      m_encryption_iv = nullptr;
-      return (DB_INVALID_ENCRYPTION_META);
+      m_is_valid = false; // 标记文件无效
+      free_first_page(); // 释放第一页
+      ut::free(m_encryption_key); // 释放加密密钥
+      ut::free(m_encryption_iv); // 释放加密 IV
+      m_encryption_key = nullptr; // 置空加密密钥指针
+      m_encryption_iv = nullptr; // 置空加密 IV 指针
+      return (DB_INVALID_ENCRYPTION_META); // 返回加密元数据无效错误
     } else {
 #ifdef UNIV_DEBUG
       ib::info(ER_IB_MSG_402) << "Read encryption metadata from " << m_filepath
                               << " successfully, encryption"
-                              << " of this tablespace enabled.";
+                              << " of this tablespace enabled."; // 打印信息
 #endif
-      m_encryption_master_key_id = e_key.m_master_key_id;
+      m_encryption_master_key_id = e_key.m_master_key_id; // 设置加密主密钥 ID
     }
 
     if (recv_recovery_is_on() &&
         memcmp(m_encryption_key, m_encryption_iv, Encryption::KEY_LEN) == 0) {
-      ut::free(m_encryption_key);
-      ut::free(m_encryption_iv);
-      m_encryption_key = nullptr;
-      m_encryption_iv = nullptr;
+      ut::free(m_encryption_key); // 释放加密密钥
+      ut::free(m_encryption_iv); // 释放加密 IV
+      m_encryption_key = nullptr; // 置空加密密钥指针
+      m_encryption_iv = nullptr; // 置空加密 IV 指针
     }
   }
 #ifndef UNIV_HOTBACKUP
   /* Set encryption operation in progress based on operation type
   at page 0. */
+  /* 根据第0页的操作类型设置正在进行的加密操作。 */
   m_encryption_op_in_progress =
-      fsp_header_encryption_op_type_in_progress(m_first_page, page_size);
+      fsp_header_encryption_op_type_in_progress(m_first_page, page_size); // 设置正在进行的加密操作类型
 #endif /* UNIV_HOTBACKUP */
 
   if (fil_space_read_name_and_filepath(m_space_id, &prev_name,
                                        &prev_filepath)) {
     if (0 == strcmp(m_filepath, prev_filepath)) {
-      ut::free(prev_name);
-      ut::free(prev_filepath);
-      return (DB_SUCCESS);
+      ut::free(prev_name); // 释放之前的表空间名称
+      ut::free(prev_filepath); // 释放之前的文件路径
+      return (DB_SUCCESS); // 返回成功
     }
 
     /* Make sure the space_id has not already been opened. */
+    /* 确保 space_id 尚未被打开。 */
     ib::error(ER_IB_MSG_403) << "Attempted to open a previously opened"
                                 " tablespace. Previous tablespace "
                              << prev_name << " at filepath: " << prev_filepath
                              << " uses space ID: " << m_space_id
                              << ". Cannot open filepath: " << m_filepath
-                             << " which uses the same space ID.";
+                             << " which uses the same space ID."; // 打印错误信息
 
-    ut::free(prev_name);
-    ut::free(prev_filepath);
+    ut::free(prev_name); // 释放之前的表空间名称
+    ut::free(prev_filepath); // 释放之前的文件路径
 
-    m_is_valid = false;
+    m_is_valid = false; // 标记文件无效
 
-    free_first_page();
+    free_first_page(); // 释放第一页
 
-    return (DB_TABLESPACE_EXISTS);
+    return (DB_TABLESPACE_EXISTS); // 返回表空间已存在错误
   }
 
-  return (DB_SUCCESS);
+  return (DB_SUCCESS); // 返回成功
 }
 
 /** Determine the space id of the given file descriptor by reading a few
@@ -875,63 +891,69 @@ dberr_t Datafile::find_space_id() {
 and copies it to the corresponding .ibd file.
 @param[in]      restore_page_no         Page number to restore
 @return DB_SUCCESS if page was restored from doublewrite, else DB_ERROR */
+/** 从双写缓冲区中找到给定空间 ID 的给定页面，并将其复制到相应的 .ibd 文件中。
+@param[in]      restore_page_no         要恢复的页面号
+@return 如果页面从双写缓冲区恢复成功，则返回 DB_SUCCESS，否则返回 DB_ERROR */
 dberr_t Datafile::restore_from_doublewrite(page_no_t restore_page_no) {
-  ut_a(is_open());
-  auto page_id = page_id_t{m_space_id, restore_page_no};
+  ut_a(is_open()); // 断言文件已打开
+  auto page_id = page_id_t{m_space_id, restore_page_no}; // 创建页面 ID
 
   /* Find if double write buffer contains page_no of given space id. */
-  const byte *page = recv_sys->dblwr->find(page_id);
+  /* 查找双写缓冲区是否包含给定空间 ID 的页面号。 */
+  const byte *page = recv_sys->dblwr->find(page_id); // 查找页面
 
-  bool found = false;
-  lsn_t reduced_lsn = LSN_MAX;
-  std::tie(found, reduced_lsn) = recv_sys->dblwr->find_entry(page_id);
+  bool found = false; // 标记是否找到页面
+  lsn_t reduced_lsn = LSN_MAX; // 初始化简化 LSN 为最大值
+  std::tie(found, reduced_lsn) = recv_sys->dblwr->find_entry(page_id); // 查找页面条目
 
   if (page == nullptr) {
     /* If the first page of the given user tablespace is not there
     in the doublewrite buffer, then the recovery is going to fail
     now. Hence this is treated as an error. */
+    /* 如果给定用户表空间的第一页不在双写缓冲区中，则恢复将失败。因此这被视为错误。 */
 
     if (found && reduced_lsn != LSN_MAX && reduced_lsn != 0) {
       ib::error(ER_REDUCED_DBLWR_PAGE_FOUND, m_filepath, page_id.space(),
-                page_id.page_no());
+                page_id.page_no()); // 打印错误信息
     } else {
       ib::error(ER_IB_MSG_412)
           << "Corrupted page " << page_id_t(m_space_id, restore_page_no)
           << " of datafile '" << m_filepath
-          << "' could not be found in the doublewrite buffer.";
+          << "' could not be found in the doublewrite buffer."; // 打印错误信息
     }
-    return (DB_CORRUPTION);
+    return (DB_CORRUPTION); // 返回数据损坏错误
   }
 
-  const lsn_t dblwr_lsn = mach_read_from_8(page + FIL_PAGE_LSN);
+  const lsn_t dblwr_lsn = mach_read_from_8(page + FIL_PAGE_LSN); // 从页面读取 LSN
 
   if (found && reduced_lsn != LSN_MAX && reduced_lsn > dblwr_lsn) {
     ib::error(ER_REDUCED_DBLWR_PAGE_FOUND, m_filepath, page_id.space(),
-              page_id.page_no());
+              page_id.page_no()); // 打印错误信息
 
-    return (DB_CORRUPTION);
+    return (DB_CORRUPTION); // 返回数据损坏错误
   }
 
-  const uint32_t flags = fsp_header_get_field(page, FSP_SPACE_FLAGS);
+  const uint32_t flags = fsp_header_get_field(page, FSP_SPACE_FLAGS); // 获取页面标志
 
-  const page_size_t page_size(flags);
+  const page_size_t page_size(flags); // 获取页面大小
 
-  ut_a(page_get_page_no(page) == restore_page_no);
+  ut_a(page_get_page_no(page) == restore_page_no); // 断言页面号匹配
 
   ib::info(ER_IB_MSG_413) << "Restoring page "
                           << page_id_t(m_space_id, restore_page_no)
                           << " of datafile '" << m_filepath
                           << "' from the doublewrite buffer. Writing "
                           << page_size.physical() << " bytes into file '"
-                          << m_filepath << "'";
+                          << m_filepath << "'"; // 打印信息
 
-  IORequest request(IORequest::WRITE);
+  IORequest request(IORequest::WRITE); // 创建写请求
 
   /* Note: The pages are written out as uncompressed because we don't
   have the compression algorithm information at this point. */
+  /* 注意：页面以未压缩的形式写出，因为此时我们没有压缩算法信息。 */
 
-  request.disable_compression();
+  request.disable_compression(); // 禁用压缩
 
   return (os_file_write(request, m_filepath, m_handle, page, 0,
-                        page_size.physical()));
+                        page_size.physical())); // 写入文件
 }

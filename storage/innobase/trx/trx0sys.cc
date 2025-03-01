@@ -467,52 +467,58 @@ const uint32_t max_rseg_init_threads = 4;
 /** Creates and initializes the central memory structures for the transaction
  system. This is called when the database is started.
  @return min binary heap of rsegs to purge */
+/** 创建并初始化事务系统的中央内存结构。这在数据库启动时调用。
+ @return 要清除的 rsegs 的最小二叉堆 */
 purge_pq_t *trx_sys_init_at_db_start(void) {
-  purge_pq_t *purge_queue;
-  trx_sysf_t *sys_header;
-  uint64_t rows_to_undo = 0;
-  const char *unit = "";
+  purge_pq_t *purge_queue; // 清除队列
+  trx_sysf_t *sys_header; // 事务系统头部
+  uint64_t rows_to_undo = 0; // 需要撤销的行数
+  const char *unit = ""; // 单位
 
   /* We create the min binary heap here and pass ownership to
   purge when we init the purge sub-system. Purge is responsible
   for freeing the binary heap. */
-  purge_queue = ut::new_withkey<purge_pq_t>(UT_NEW_THIS_FILE_PSI_KEY);
-  ut_a(purge_queue != nullptr);
+  /* 我们在这里创建最小二叉堆，并在初始化清除子系统时将所有权传递给清除。
+  清除负责释放二叉堆。 */
+  purge_queue = ut::new_withkey<purge_pq_t>(UT_NEW_THIS_FILE_PSI_KEY); // 创建最小二叉堆
+  ut_a(purge_queue != nullptr); // 断言清除队列不为空
 
-  if (srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) {
+  if (srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) { // 如果强制恢复级别小于 SRV_FORCE_NO_UNDO_LOG_SCAN
     /* Create the memory objects for all the rollback segments
     referred to in the TRX_SYS page or any undo tablespace
     RSEG_ARRAY page. */
+    /* 创建 TRX_SYS 页面或任何撤销表空间 RSEG_ARRAY 页面中引用的所有回滚段的内存对象。 */
     srv_rseg_init_threads =
-        std::min(std::thread::hardware_concurrency(), max_rseg_init_threads);
+        std::min(std::thread::hardware_concurrency(), max_rseg_init_threads); // 初始化回滚段线程数
 
     /* Test hook to initialize the rollback segments using a single
     thread. */
-    DBUG_EXECUTE_IF("rseg_init_single_thread", srv_rseg_init_threads = 1;);
+    /* 测试钩子，使用单个线程初始化回滚段。 */
+    DBUG_EXECUTE_IF("rseg_init_single_thread", srv_rseg_init_threads = 1;); // 测试钩子
 
-    using Clock = std::chrono::high_resolution_clock;
-    using Clock_point = std::chrono::time_point<Clock>;
-    Clock_point start = Clock::now();
-    if (srv_rseg_init_threads > 1) {
-      trx_rsegs_parallel_init(purge_queue);
+    using Clock = std::chrono::high_resolution_clock; // 高精度时钟
+    using Clock_point = std::chrono::time_point<Clock>; // 时钟时间点
+    Clock_point start = Clock::now(); // 获取当前时间
+    if (srv_rseg_init_threads > 1) { // 如果回滚段线程数大于 1
+      trx_rsegs_parallel_init(purge_queue); // 并行初始化回滚段
     } else {
-      trx_rsegs_init(purge_queue);
+      trx_rsegs_init(purge_queue); // 初始化回滚段
     }
-    Clock_point end = Clock::now();
+    Clock_point end = Clock::now(); // 获取结束时间
     const auto time_diff =
         std::chrono::duration_cast<std::chrono::microseconds>(end - start)
-            .count();
+            .count(); // 计算时间差
     ib::info(ER_IB_MSG_PAR_RSEG_INIT_TIME_MSG, srv_rseg_init_threads,
-             (uint32_t)time_diff);
+             (uint32_t)time_diff); // 打印初始化时间信息
   }
 
-  mtr_t mtr;
-  mtr.start();
+  mtr_t mtr; // mini-transaction
+  mtr.start(); // 开始 mini-transaction
 
-  sys_header = trx_sysf_get(&mtr);
+  sys_header = trx_sysf_get(&mtr); // 获取事务系统头部
 
   const trx_id_t max_trx_id =
-      mach_read_from_8(sys_header + TRX_SYS_TRX_ID_STORE);
+      mach_read_from_8(sys_header + TRX_SYS_TRX_ID_STORE); // 读取最大事务 ID
 
   /* VERY important: after the database is started, next_trx_id_or_no value
   needs to be set to a higher value than the maximum of values that have ever
@@ -527,66 +533,77 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
     - one that has acquired trx_sys_mutex,
     - and one that has acquired the trx_sys_serialisation_mutex.
   If you decreased the factor 2, the test innodb.max_trx_id should fail. */
+  /* 非常重要：在数据库启动后，next_trx_id_or_no 值需要设置为比 trx->id 或 trx->no 曾经使用过的最大值更高的值。
+  之后，需要将其写入事务系统头页面，然后才能第一次使用它为 trx->id 或 trx->no 分配新值。
+  这样，当数据库反复崩溃和重新启动时，事务 ID 值不会重叠！
+
+  请注意，2 * TRX_SYS_TRX_ID_WRITE_MARGIN 中的因子 2 是必需的，因为 next_trx_id_or_no 可能会在两个线程中同时增加：
+    - 一个已获取 trx_sys_mutex 的线程，
+    - 以及一个已获取 trx_sys_serialisation_mutex 的线程。
+  如果减少因子 2，测试 innodb.max_trx_id 应该会失败。 */
 
   trx_sys->next_trx_id_or_no.store(max_trx_id +
-                                   2 * trx_sys_get_trx_id_write_margin());
+                                   2 * trx_sys_get_trx_id_write_margin()); // 设置下一个事务 ID
 
-  trx_sys->serialisation_min_trx_no.store(trx_sys->next_trx_id_or_no.load());
+  trx_sys->serialisation_min_trx_no.store(trx_sys->next_trx_id_or_no.load()); // 设置最小事务号
 
-  mtr.commit();
+  mtr.commit(); // 提交 mini-transaction
 
 #ifdef UNIV_DEBUG
   /* max_trx_id is the next transaction ID to assign. Initialize maximum
   transaction number to one less if all transactions are already purged. */
+  /* max_trx_id 是下一个要分配的事务 ID。如果所有事务都已清除，则将最大事务号初始化为小于 1。 */
   if (trx_sys->rw_max_trx_no == 0) {
-    trx_sys->rw_max_trx_no = trx_sys_get_next_trx_id_or_no() - 1;
+    trx_sys->rw_max_trx_no = trx_sys_get_next_trx_id_or_no() - 1; // 初始化最大事务号
   }
 #endif /* UNIV_DEBUG */
 
-  trx_sys_mutex_enter();
-  trx_sys_write_max_trx_id();
-  trx_sys_mutex_exit();
+  trx_sys_mutex_enter(); // 进入事务系统互斥锁
+  trx_sys_write_max_trx_id(); // 写入最大事务 ID
+  trx_sys_mutex_exit(); // 退出事务系统互斥锁
 
-  trx_dummy_sess = sess_open();
+  trx_dummy_sess = sess_open(); // 打开虚拟会话
 
-  trx_lists_init_at_db_start();
+  trx_lists_init_at_db_start(); // 初始化事务列表
 
   /* This mutex is not strictly required, it is here only to satisfy
   the debug code (assertions). We are still running in single threaded
   bootstrap mode. */
+  /* 这个互斥锁不是严格要求的，它仅用于满足调试代码（断言）。
+  我们仍在单线程引导模式下运行。 */
 
-  trx_sys_mutex_enter();
+  trx_sys_mutex_enter(); // 进入事务系统互斥锁
 
-  if (UT_LIST_GET_LEN(trx_sys->rw_trx_list) > 0) {
-    for (auto trx : trx_sys->rw_trx_list) {
-      ut_ad(trx->is_recovered);
-      assert_trx_in_rw_list(trx);
+  if (UT_LIST_GET_LEN(trx_sys->rw_trx_list) > 0) { // 如果读写事务列表长度大于 0
+    for (auto trx : trx_sys->rw_trx_list) { // 遍历读写事务列表
+      ut_ad(trx->is_recovered); // 断言事务已恢复
+      assert_trx_in_rw_list(trx); // 断言事务在读写列表中
 
-      if (trx_state_eq(trx, TRX_STATE_ACTIVE)) {
-        rows_to_undo += trx->undo_no;
+      if (trx_state_eq(trx, TRX_STATE_ACTIVE)) { // 如果事务状态为活动
+        rows_to_undo += trx->undo_no; // 增加需要撤销的行数
       }
     }
 
-    if (rows_to_undo > 1000000000) {
-      unit = "M";
-      rows_to_undo = rows_to_undo / 1000000;
+    if (rows_to_undo > 1000000000) { // 如果需要撤销的行数大于 10 亿
+      unit = "M"; // 设置单位为百万
+      rows_to_undo = rows_to_undo / 1000000; // 转换为百万
     }
 
     ib::info(ER_IB_MSG_1198)
         << UT_LIST_GET_LEN(trx_sys->rw_trx_list)
         << " transaction(s) which must be rolled back or"
            " cleaned up in total "
-        << rows_to_undo << unit << " row operations to undo";
+        << rows_to_undo << unit << " row operations to undo"; // 打印需要撤销的事务信息
 
     ib::info(ER_IB_MSG_1199)
-        << "Trx id counter is " << trx_sys_get_next_trx_id_or_no();
+        << "Trx id counter is " << trx_sys_get_next_trx_id_or_no(); // 打印事务 ID 计数器
   }
 
-  trx_sys->found_prepared_trx = trx_sys->n_prepared_trx > 0;
+  trx_sys->found_prepared_trx = trx_sys->n_prepared_trx > 0; // 设置找到的预处理事务标志
 
-  trx_sys_mutex_exit();
+  trx_sys_mutex_exit(); // 退出事务系统互斥锁
 
-  return (purge_queue);
+  return (purge_queue); // 返回清除队列
 }
 
 /** Creates the trx_sys instance and initializes purge_queue and mutex. */

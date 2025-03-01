@@ -357,19 +357,19 @@ IORequest Log_file_handle::prepare_io_request(int req_type, os_offset_t offset,
 
 dberr_t Log_file_handle::read(os_offset_t read_offset, os_offset_t read_size,
                               byte *buf) {
-  if (!is_open()) return DB_ERROR;
+  if (!is_open()) return DB_ERROR; // 如果文件未打开，返回错误
 
   auto io_request =
-      prepare_io_request(IORequest::READ, read_offset, read_size, true);
+      prepare_io_request(IORequest::READ, read_offset, read_size, true); // 准备 IO 请求
 
-  ut_ad(m_access_mode != Log_file_access_mode::WRITE_ONLY);
+  ut_ad(m_access_mode != Log_file_access_mode::WRITE_ONLY); // 断言访问模式不是只写
 
   if (s_on_before_read) {
-    s_on_before_read(m_file_id, m_file_type, read_offset, read_size);
+    s_on_before_read(m_file_id, m_file_type, read_offset, read_size); // 调用读取前的回调函数
   }
 
   return os_file_read(io_request, m_file_path.c_str(), m_raw_handle, buf,
-                      read_offset, static_cast<ulint>(read_size));
+                      read_offset, static_cast<ulint>(read_size)); // 执行文件读取操作
 }
 
 dberr_t Log_file_handle::write(os_offset_t write_offset, os_offset_t write_size,
@@ -614,11 +614,11 @@ static os_offset_t log_checkpoint_header_offset(
     Log_checkpoint_header_no checkpoint_header_no) {
   switch (checkpoint_header_no) {
     case Log_checkpoint_header_no::HEADER_1:
-      return LOG_CHECKPOINT_1;
+      return LOG_CHECKPOINT_1; // 返回第一个检查点头部的偏移量
     case Log_checkpoint_header_no::HEADER_2:
-      return LOG_CHECKPOINT_2;
+      return LOG_CHECKPOINT_2; // 返回第二个检查点头部的偏移量
     default:
-      ut_error;
+      ut_error; // 断言错误
   }
 }
 
@@ -635,30 +635,30 @@ dberr_t log_checkpoint_header_read(
     Log_file_handle &file_handle, Log_checkpoint_header_no checkpoint_header_no,
     byte *buf) {
   const os_offset_t checkpoint_header_offset =
-      log_checkpoint_header_offset(checkpoint_header_no);
+      log_checkpoint_header_offset(checkpoint_header_no); // 获取检查点头部的偏移量
   return file_handle.read(checkpoint_header_offset, OS_FILE_LOG_BLOCK_SIZE,
-                          buf);
+                          buf); // 从文件中读取检查点头部
 }
 
 dberr_t log_checkpoint_header_read(
     Log_file_handle &file_handle, Log_checkpoint_header_no checkpoint_header_no,
     Log_checkpoint_header &header) {
-  Log_file_block buf;
+  Log_file_block buf; // 日志文件块缓冲区
 
   const dberr_t err =
-      log_checkpoint_header_read(file_handle, checkpoint_header_no, buf.data);
-  if (err != DB_SUCCESS) {
-    return err;
+      log_checkpoint_header_read(file_handle, checkpoint_header_no, buf.data); // 读取检查点头部
+  if (err != DB_SUCCESS) { // 如果读取失败
+    return err; // 返回错误
   }
 
-  if (!log_checkpoint_header_deserialize(buf.data, header)) {
+  if (!log_checkpoint_header_deserialize(buf.data, header)) { // 如果反序列化检查点头部失败
     DBUG_PRINT("ib_log", ("invalid checkpoint " UINT32PF " checksum %lx",
                           uint32_t{to_int(checkpoint_header_no)},
-                          ulong{log_block_get_checksum(buf.data)}));
-    return DB_CORRUPTION;
+                          ulong{log_block_get_checksum(buf.data)})); // 打印调试信息
+    return DB_CORRUPTION; // 返回数据损坏错误
   }
 
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 /** @} */
@@ -688,7 +688,10 @@ dberr_t log_data_blocks_write(Log_file_handle &file_handle,
 dberr_t log_data_blocks_read(Log_file_handle &file_handle,
                              os_offset_t read_offset, size_t read_size,
                              byte *buf) {
+  // 验证读取偏移量和读取大小
   log_data_blocks_validate(read_offset, read_size);
+  
+  // 从文件句柄中读取数据块
   return file_handle.read(read_offset, read_size, buf);
 }
 

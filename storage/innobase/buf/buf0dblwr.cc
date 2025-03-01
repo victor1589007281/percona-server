@@ -1994,50 +1994,51 @@ bool Double_write::create_v1(page_no_t &page_no1,
 }
 
 dberr_t Double_write::load(dblwr::File &file, recv::Pages *pages) noexcept {
-  os_offset_t size = os_file_get_size(file.m_pfs);
+  os_offset_t size = os_file_get_size(file.m_pfs); // 获取文件大小
 
-  if (srv_read_only_mode) {
+  if (srv_read_only_mode) { // 如果是只读模式
     ib::info() << "Skipping doublewrite buffer processing due to "
-                  "InnoDB running in read only mode";
-    return (DB_SUCCESS);
+                  "InnoDB running in read only mode"; // 打印信息：跳过双写缓冲区处理，因为 InnoDB 运行在只读模式
+    return (DB_SUCCESS); // 返回成功
   }
 
-  if (size == 0) {
+  if (size == 0) { // 如果文件大小为0
     /* Double write buffer is empty. */
-    ib::info(ER_IB_MSG_DBLWR_1285, file.m_name.c_str());
+    /* 双写缓冲区为空。 */
+    ib::info(ER_IB_MSG_DBLWR_1285, file.m_name.c_str()); // 打印信息：双写缓冲区为空
 
-    return DB_SUCCESS;
+    return DB_SUCCESS; // 返回成功
   }
 
-  if ((size % univ_page_size.physical())) {
+  if ((size % univ_page_size.physical())) { // 如果文件大小不是页面大小的整数倍
     ib::warn(ER_IB_MSG_DBLWR_1319, file.m_name.c_str(), (ulint)size,
-             (ulint)univ_page_size.physical());
+             (ulint)univ_page_size.physical()); // 打印警告：文件大小不匹配
   }
 
-  const uint32_t n_pages = size / univ_page_size.physical();
+  const uint32_t n_pages = size / univ_page_size.physical(); // 计算页面数量
 
-  Buffer buffer{n_pages};
-  IORequest read_request(IORequest::READ);
+  Buffer buffer{n_pages}; // 创建缓冲区
+  IORequest read_request(IORequest::READ); // 创建读取请求
 
-  read_request.disable_compression();
+  read_request.disable_compression(); // 禁用压缩
 
   auto err = os_file_read(read_request, file.m_name.c_str(), file.m_pfs,
-                          buffer.begin(), 0, buffer.capacity());
+                          buffer.begin(), 0, buffer.capacity()); // 读取文件内容到缓冲区
 
-  if (err != DB_SUCCESS) {
-    ib::error(ER_IB_MSG_DBLWR_1301, ut_strerr(err));
+  if (err != DB_SUCCESS) { // 如果读取失败
+    ib::error(ER_IB_MSG_DBLWR_1301, ut_strerr(err)); // 打印错误信息
 
-    return err;
+    return err; // 返回错误码
   }
 
-  auto page = buffer.begin();
+  auto page = buffer.begin(); // 获取缓冲区起始位置
 
-  for (uint32_t i = 0; i < n_pages; ++i) {
-    pages->add(i, page, univ_page_size.physical());
-    page += univ_page_size.physical();
+  for (uint32_t i = 0; i < n_pages; ++i) { // 遍历页面
+    pages->add(i, page, univ_page_size.physical()); // 添加页面条目
+    page += univ_page_size.physical(); // 移动到下一个页面
   }
 
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 /** Reduced doublewrite file deserializer. Used during crash recovery. */
@@ -2049,96 +2050,111 @@ class Reduced_batch_deserializer {
   explicit Reduced_batch_deserializer(Buffer *buf, uint32_t n_pages)
       : m_buf(buf), m_n_pages(n_pages) {}
 
-  /** Deserialize page and call Functor f for each page_entry found
+/** Deserialize page and call Functor f for each page_entry found
   from reduced dblwr page
   @param[in]   f       Functor to process page entry from dblwr page
   @return DB_SUCCESS on success, others of checksum or parsing failures */
-  template <typename F>
-  dberr_t deserialize(F &f) {
-    auto page = m_buf->begin();
-    for (uint32_t i = 0; i < m_n_pages; ++i) {
-      if (is_zeroes(page)) {
-        page += REDUCED_BATCH_PAGE_SIZE;
-        continue;
-      }
-      dberr_t err = parse_page(page, f);
-      if (err != DB_SUCCESS) {
-        ib::error(ER_REDUCED_DBLWR_FILE_CORRUPTED, i);
-        return (err);
-      }
-      page += REDUCED_BATCH_PAGE_SIZE;
+/** 反序列化页面并为从简化双写缓冲区页面中找到的每个页面条目调用函数对象 f
+  @param[in]   f       用于处理双写缓冲区页面条目的函数对象
+  @return 成功时返回 DB_SUCCESS，校验和或解析失败时返回其他错误码 */
+template <typename F>
+dberr_t deserialize(F &f) {
+  auto page = m_buf->begin(); // 获取缓冲区起始位置
+  for (uint32_t i = 0; i < m_n_pages; ++i) { // 遍历页面
+    if (is_zeroes(page)) { // 如果页面全为零
+      page += REDUCED_BATCH_PAGE_SIZE; // 跳过该页面
+      continue; // 继续下一个页面
     }
-    return (DB_SUCCESS);
+    dberr_t err = parse_page(page, f); // 解析页面并处理页面条目
+    if (err != DB_SUCCESS) { // 如果解析失败
+      ib::error(ER_REDUCED_DBLWR_FILE_CORRUPTED, i); // 打印错误信息
+      return (err); // 返回错误码
+    }
+    page += REDUCED_BATCH_PAGE_SIZE; // 移动到下一个页面
   }
+  return (DB_SUCCESS); // 返回成功
+}
 
  private:
-  /** Parse reduced dblwr batch page header
+/** Parse reduced dblwr batch page header
   @param[in]   page            Page to parse
   @param[in]   data_len        length of data in page
   @return DB_SUCCESS on success, others on failure */
-  dberr_t parse_header(const byte *page, uint16_t *data_len) noexcept {
-    //    uint32_t batch_id = mach_read_from_4(page + RB_OFF_BATCH_ID);
-    uint32_t checksum = mach_read_from_4(page + RB_OFF_CHECKSUM);
-    *data_len = mach_read_from_2(page + RB_OFF_DATA_LEN);
-    //   buf_flush_t flush_type =
-    //   static_cast<buf_flush_t>(page[RB_OFF_BATCH_TYPE]);
+/** 解析简化双写缓冲区批处理页面头部
+  @param[in]   page            要解析的页面
+  @param[in]   data_len        页面中的数据长度
+  @return 成功时返回 DB_SUCCESS，失败时返回其他错误码 */
+dberr_t parse_header(const byte *page, uint16_t *data_len) noexcept {
+  //    uint32_t batch_id = mach_read_from_4(page + RB_OFF_BATCH_ID);
+  uint32_t checksum = mach_read_from_4(page + RB_OFF_CHECKSUM); // 从页面读取校验和
+  *data_len = mach_read_from_2(page + RB_OFF_DATA_LEN); // 从页面读取数据长度
+  //   buf_flush_t flush_type =
+  //   static_cast<buf_flush_t>(page[RB_OFF_BATCH_TYPE]);
 
-    if (*data_len == 0) {
-      return (DB_CORRUPTION);
-    }
-    if (*data_len % REDUCED_ENTRY_SIZE != 0) {
-      return (DB_CORRUPTION);
-    }
-
-    uint32_t calc_checksum = ut_crc32(page + REDUCED_HEADER_SIZE, *data_len);
-    if (checksum != calc_checksum) {
-      return (DB_CORRUPTION);
-    }
-    return (DB_SUCCESS);
+  if (*data_len == 0) { // 如果数据长度为0
+    return (DB_CORRUPTION); // 返回数据损坏错误
+  }
+  if (*data_len % REDUCED_ENTRY_SIZE != 0) { // 如果数据长度不是简化条目大小的整数倍
+    return (DB_CORRUPTION); // 返回数据损坏错误
   }
 
-  /* Utility function to parse page
+  uint32_t calc_checksum = ut_crc32(page + REDUCED_HEADER_SIZE, *data_len); // 计算校验和
+  if (checksum != calc_checksum) { // 如果校验和不匹配
+    return (DB_CORRUPTION); // 返回数据损坏错误
+  }
+  return (DB_SUCCESS); // 返回成功
+}
+
+/* Utility function to parse page
   @param[in]   page    reduced dblwr batch page
   @param[in]   f       Callback function that process page entries
   @return DB_SUCCESS on success */
-  template <typename F>
-  dberr_t parse_page(const byte *page, F &f) noexcept {
-    uint16_t data_len{};
+/* 实用函数，用于解析页面
+  @param[in]   page    简化双写缓冲区批处理页面
+  @param[in]   f       处理页面条目的回调函数
+  @return 成功时返回 DB_SUCCESS */
+template <typename F>
+dberr_t parse_page(const byte *page, F &f) noexcept {
+  uint16_t data_len{}; // 数据长度
 
-    dberr_t err = parse_header(page, &data_len);
-    if (err != DB_SUCCESS) {
-      return (err);
-    }
-
-    parse_page_data(page, data_len, f);
-    return (DB_SUCCESS);
+  dberr_t err = parse_header(page, &data_len); // 解析页面头部
+  if (err != DB_SUCCESS) { // 如果解析失败
+    return (err); // 返回错误码
   }
 
-  /** Utility function to parse page data
+  parse_page_data(page, data_len, f); // 解析页面数据
+  return (DB_SUCCESS); // 返回成功
+}
+
+/** Utility function to parse page data
   @param[in]   page            reduced dblwr batch page
   @param[in]   data_len        length of data in page
   @param[in]   f               Callback function that process page entries */
-  template <typename F>
-  void parse_page_data(const byte *page, uint16_t data_len, F &f) noexcept {
-    const byte *page_data = page + REDUCED_HEADER_SIZE;
+/** 实用函数，用于解析页面数据
+  @param[in]   page            简化双写缓冲区批处理页面
+  @param[in]   data_len        页面中的数据长度
+  @param[in]   f               处理页面条目的回调函数 */
+template <typename F>
+void parse_page_data(const byte *page, uint16_t data_len, F &f) noexcept {
+  const byte *page_data = page + REDUCED_HEADER_SIZE; // 获取页面数据的起始位置
 #ifdef UNIV_DEBUG
-    const byte *page_start [[maybe_unused]] = page + REDUCED_HEADER_SIZE;
+  const byte *page_start [[maybe_unused]] = page + REDUCED_HEADER_SIZE; // 获取页面数据的起始位置（仅用于调试）
 #endif /* UNIV_DEBUG */
-    const uint32_t expected_entries = data_len / REDUCED_ENTRY_SIZE;
-    for (uint32_t entry = 1; entry <= expected_entries; ++entry) {
-      space_id_t space_id = mach_read_from_4(page_data);
-      page_data += 4;
-      page_no_t page_num = mach_read_from_4(page_data);
-      page_data += 4;
-      lsn_t lsn = mach_read_from_8(page_data);
-      page_data += 8;
-      Page_entry pe(space_id, page_num, lsn);
-      f(pe);
-    }
-
-    ut_ad(static_cast<uint32_t>(page_data - page_start) ==
-          (expected_entries * REDUCED_ENTRY_SIZE));
+  const uint32_t expected_entries = data_len / REDUCED_ENTRY_SIZE; // 计算预期的条目数量
+  for (uint32_t entry = 1; entry <= expected_entries; ++entry) { // 遍历每个条目
+    space_id_t space_id = mach_read_from_4(page_data); // 从页面数据读取空间 ID
+    page_data += 4; // 移动指针
+    page_no_t page_num = mach_read_from_4(page_data); // 从页面数据读取页面号
+    page_data += 4; // 移动指针
+    lsn_t lsn = mach_read_from_8(page_data); // 从页面数据读取 LSN
+    page_data += 8; // 移动指针
+    Page_entry pe(space_id, page_num, lsn); // 创建页面条目对象
+    f(pe); // 调用回调函数处理页面条目
   }
+
+  ut_ad(static_cast<uint32_t>(page_data - page_start) ==
+        (expected_entries * REDUCED_ENTRY_SIZE)); // 断言页面数据的长度与预期的条目大小一致
+}
 
   /** @return true if dblwr page is an all-zero page
   @param[in]   page    dblwr page in batch file (.bdblwr) */
@@ -2160,47 +2176,48 @@ class Reduced_batch_deserializer {
 
 dberr_t Double_write::load_reduced_batch(dblwr::File &file,
                                          recv::Pages *pages) noexcept {
-  os_offset_t size = os_file_get_size(file.m_pfs);
+  os_offset_t size = os_file_get_size(file.m_pfs); // 获取文件大小
 
-  if (srv_read_only_mode) {
+  if (srv_read_only_mode) { // 如果是只读模式
     ib::info() << "Skipping doublewrite buffer processing due to "
-                  "InnoDB running in read only mode";
-    return (DB_SUCCESS);
+                  "InnoDB running in read only mode"; // 打印信息：跳过双写缓冲区处理，因为 InnoDB 运行在只读模式
+    return (DB_SUCCESS); // 返回成功
   }
 
-  if (size == 0) {
+  if (size == 0) { // 如果文件大小为0
     /* Double write buffer is empty. */
-    ib::info(ER_IB_MSG_DBLWR_1285, file.m_name.c_str());
+    /* 双写缓冲区为空。 */
+    ib::info(ER_IB_MSG_DBLWR_1285, file.m_name.c_str()); // 打印信息：双写缓冲区为空
 
-    return DB_SUCCESS;
+    return DB_SUCCESS; // 返回成功
   }
 
-  if ((size % REDUCED_BATCH_PAGE_SIZE) != 0) {
+  if ((size % REDUCED_BATCH_PAGE_SIZE) != 0) { // 如果文件大小不是简化批处理页面大小的整数倍
     ib::warn(ER_IB_MSG_DBLWR_1319, file.m_name.c_str(), (ulint)size,
-             (ulint)REDUCED_BATCH_PAGE_SIZE);
+             (ulint)REDUCED_BATCH_PAGE_SIZE); // 打印警告：文件大小不匹配
   }
 
-  const uint32_t n_pages = size / REDUCED_BATCH_PAGE_SIZE;
-  Buffer buffer(n_pages, REDUCED_BATCH_PAGE_SIZE);
-  IORequest read_request(IORequest::READ);
+  const uint32_t n_pages = size / REDUCED_BATCH_PAGE_SIZE; // 计算页面数量
+  Buffer buffer(n_pages, REDUCED_BATCH_PAGE_SIZE); // 创建缓冲区
+  IORequest read_request(IORequest::READ); // 创建读取请求
 
-  read_request.disable_compression();
+  read_request.disable_compression(); // 禁用压缩
 
   auto err = os_file_read(read_request, file.m_name.c_str(), file.m_pfs,
-                          buffer.begin(), 0, buffer.capacity());
+                          buffer.begin(), 0, buffer.capacity()); // 读取文件内容到缓冲区
 
-  if (err != DB_SUCCESS) {
-    ib::error(ER_IB_MSG_DBLWR_1301, ut_strerr(err));
+  if (err != DB_SUCCESS) { // 如果读取失败
+    ib::error(ER_IB_MSG_DBLWR_1301, ut_strerr(err)); // 打印错误信息
 
-    return err;
+    return err; // 返回错误码
   }
 
-  auto page_entry_processor = [&](Page_entry &pe) { pages->add_entry(pe); };
+  auto page_entry_processor = [&](Page_entry &pe) { pages->add_entry(pe); }; // 定义页面条目处理器
 
-  Reduced_batch_deserializer rbd(&buffer, n_pages);
-  err = rbd.deserialize(page_entry_processor);
+  Reduced_batch_deserializer rbd(&buffer, n_pages); // 创建简化批处理反序列化器
+  err = rbd.deserialize(page_entry_processor); // 反序列化页面条目
 
-  return (err);
+  return (err); // 返回错误码
 }
 
 uint16_t Double_write::write_dblwr_pages(buf_flush_t flush_type) noexcept {
@@ -2681,6 +2698,7 @@ void dblwr::write_complete(buf_page_t *bpage, buf_flush_t flush_type) noexcept {
 
 dberr_t dblwr::recv::recover(recv::Pages *pages, fil_space_t *space) noexcept {
 #ifndef UNIV_HOTBACKUP
+  // 从双写缓冲区恢复页面到表空间
   return pages->recover(space);
 #endif /* UNIV_HOTBACKUP */
 }
@@ -3075,10 +3093,16 @@ static bool is_dblwr_page_corrupted(const byte *page, fil_space_t *space,
 
 /** Recover a page from the doublewrite buffer.
 @param[in]      dblwr_page_no         Page number if the doublewrite buffer
-@param[in]      space                       Tablespace the page belongs to
-@param[in]      page_no                   Page number in the tablespace
-@param[in]      page                        Data to write to <space, page_no>
+@param[in]      space                 Tablespace the page belongs to
+@param[in]      page_no               Page number in the tablespace
+@param[in]      page                  Data to write to <space, page_no>
 @return true if page was restored to the tablespace */
+/** 从双写缓冲区恢复页面。
+@param[in]      dblwr_page_no         双写缓冲区中的页面编号
+@param[in]      space                 页面所属的表空间
+@param[in]      page_no               表空间中的页面编号
+@param[in]      page                  要写入 <space, page_no> 的数据
+@return 如果页面已恢复到表空间，则返回 true */
 bool dblwr::recv::Pages::dblwr_recover_page(page_no_t dblwr_page_no,
                                             fil_space_t *space,
                                             page_no_t page_no,
@@ -3086,123 +3110,133 @@ bool dblwr::recv::Pages::dblwr_recover_page(page_no_t dblwr_page_no,
   /* For cloned database double write pages should be ignored. However,
   given the control flow, we read the pages in anyway but don't recover
   from the pages we read in. */
-  ut_a(!recv_sys->is_cloned_db);
+  /* 对于克隆数据库，应忽略双写页面。然而，鉴于控制流，我们仍然读取这些页面，但不从读取的页面中恢复。 */
+  ut_a(!recv_sys->is_cloned_db); // 断言不是克隆数据库
 
-  Buffer buffer{1};
+  Buffer buffer{1}; // 创建缓冲区
 
-  if (page_no >= space->size) {
+  if (page_no >= space->size) { // 如果页面编号超出表空间大小
     /* Do not report the warning if the tablespace is going to be truncated. */
-    if (!undo::is_active(space->id)) {
+    /* 如果表空间将被截断，则不报告警告。 */
+    if (!undo::is_active(space->id)) { // 如果表空间未激活
       ib::warn(ER_IB_MSG_DBLWR_1313)
           << "Page# " << dblwr_page_no
           << " stored in the doublewrite file is"
              " not within data file space bounds "
-          << space->size << " bytes:  page : " << page_id_t(space->id, page_no);
+          << space->size << " bytes:  page : " << page_id_t(space->id, page_no); // 打印警告信息
     }
 
-    return false;
+    return false; // 返回 false
   }
 
-  const page_size_t page_size(space->flags);
-  const page_id_t page_id(space->id, page_no);
+  const page_size_t page_size(space->flags); // 获取页面大小
+  const page_id_t page_id(space->id, page_no); // 获取页面 ID
 
   /* We want to ensure that for partial reads the
   unread portion of the page is NUL. */
-  memset(buffer.begin(), 0x0, page_size.physical());
+  /* 我们希望确保对于部分读取，未读取的页面部分为 NUL。 */
+  memset(buffer.begin(), 0x0, page_size.physical()); // 将缓冲区初始化为 0
 
-  IORequest request;
+  IORequest request; // 创建 IO 请求
 
-  request.dblwr();
+  request.dblwr(); // 设置双写请求
 
   /* Read in the page from the data file to compare. */
+  /* 从数据文件中读取页面进行比较。 */
   auto err = fil_io(request, true, page_id, page_size, 0, page_size.physical(),
-                    buffer.begin(), nullptr);
+                    buffer.begin(), nullptr); // 执行文件 IO 读取操作
 
-  if (err != DB_SUCCESS) {
+  if (err != DB_SUCCESS) { // 如果读取失败
     ib::warn(ER_IB_MSG_DBLWR_1314)
         << "Double write file recovery: " << page_id << " read failed with "
-        << "error: " << ut_strerr(err);
+        << "error: " << ut_strerr(err); // 打印警告信息
   }
 
   /* Is the page read from the data file corrupt? */
+  /* 从数据文件中读取的页面是否损坏？ */
   BlockReporter data_file_page(true, buffer.begin(), page_size,
-                               fsp_is_checksum_disabled(space->id));
+                               fsp_is_checksum_disabled(space->id)); // 创建数据文件页面报告器
 
-  if (data_file_page.is_corrupted()) {
+  if (data_file_page.is_corrupted()) { // 如果数据文件页面损坏
     ib::info(ER_IB_MSG_DBLWR_1315) << "Database page corruption or"
                                    << " a failed file read of page " << page_id
                                    << ". Trying to recover it from the"
-                                   << " doublewrite file.";
+                                   << " doublewrite file."; // 打印信息
 
-    dberr_t dblwr_err;
+    dberr_t dblwr_err; // 双写错误
 
     const bool dblwr_corrupted =
-        is_dblwr_page_corrupted(page, space, page_no, &dblwr_err);
+        is_dblwr_page_corrupted(page, space, page_no, &dblwr_err); // 检查双写页面是否损坏
 
-    if (dblwr_corrupted) {
+    if (dblwr_corrupted) { // 如果双写页面损坏
       std::ostringstream out;
 
       out << "Dumping the data file page (page_id=" << page_id << "):";
-      ib::error(ER_IB_MSG_DBLWR_1304, out.str().c_str());
+      ib::error(ER_IB_MSG_DBLWR_1304, out.str().c_str()); // 打印错误信息
 
-      buf_page_print(buffer.begin(), page_size, BUF_PAGE_PRINT_NO_CRASH);
+      buf_page_print(buffer.begin(), page_size, BUF_PAGE_PRINT_NO_CRASH); // 打印数据文件页面
 
       out.str("");
       out << "Dumping the DBLWR page (dblwr_page_no=" << dblwr_page_no << "):";
-      ib::error(ER_IB_MSG_DBLWR_1295, out.str().c_str());
+      ib::error(ER_IB_MSG_DBLWR_1295, out.str().c_str()); // 打印错误信息
 
-      buf_page_print(page, page_size, BUF_PAGE_PRINT_NO_CRASH);
+      buf_page_print(page, page_size, BUF_PAGE_PRINT_NO_CRASH); // 打印双写页面
 
-      ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_DBLWR_1306);
+      ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_DBLWR_1306); // 打印致命错误信息
     }
 
-  } else {
-    bool data_page_zeroes = buf_page_is_zeroes(buffer.begin(), page_size);
-    bool dblwr_zeroes = buf_page_is_zeroes(page, page_size);
-    dberr_t dblwr_err;
+  } else { // 如果数据文件页面未损坏
+    bool data_page_zeroes = buf_page_is_zeroes(buffer.begin(), page_size); // 检查数据文件页面是否全为零
+    bool dblwr_zeroes = buf_page_is_zeroes(page, page_size); // 检查双写页面是否全为零
+    dberr_t dblwr_err; // 双写错误
 
     if (data_page_zeroes && !dblwr_zeroes &&
         !is_dblwr_page_corrupted(page, space, page_no, &dblwr_err)) {
       /* Database page contained only zeroes, while a valid copy is
       available in dblwr buffer. */
+      /* 数据库页面仅包含零，而双写缓冲区中有有效副本。 */
     } else {
       /* Database page is fine.  No need to restore from dblwr. */
-      return false;
+      /* 数据库页面正常。无需从双写缓冲区恢复。 */
+      return false; // 返回 false
     }
   }
 
-  ut_ad(!Encryption::is_encrypted_page(page));
+  ut_ad(!Encryption::is_encrypted_page(page)); // 断言页面未加密
 
-  bool found = false;
-  lsn_t reduced_lsn = LSN_MAX;
-  std::tie(found, reduced_lsn) = find_entry(page_id);
-  lsn_t dblwr_lsn = mach_read_from_8(page + FIL_PAGE_LSN);
+  bool found = false; // 是否找到页面
+  lsn_t reduced_lsn = LSN_MAX; // 简化 LSN
+  std::tie(found, reduced_lsn) = find_entry(page_id); // 查找页面条目
+  lsn_t dblwr_lsn = mach_read_from_8(page + FIL_PAGE_LSN); // 读取双写页面的 LSN
 
   /* If we find a newer version of page that is in reduced dblwr, we
   shouldn't restore the old/stale page from regular dblwr. We should
   abort */
+  /* 如果我们在简化双写缓冲区中找到页面的较新版本，则不应从常规双写缓冲区恢复旧/过时的页面。我们应该中止。 */
   if (found && reduced_lsn != LSN_MAX && reduced_lsn > dblwr_lsn) {
     ib::error(ER_REDUCED_DBLWR_PAGE_FOUND, space->files.front().name,
-              page_id.space(), page_id.page_no());
-    return (false);
+              page_id.space(), page_id.page_no()); // 打印错误信息
+    return (false); // 返回 false
   }
 
   /* Recovered data file pages are written out as uncompressed. */
-  IORequest write_request(IORequest::WRITE);
-  write_request.disable_compression();
+  /* 恢复的数据文件页面以未压缩形式写出。 */
+  IORequest write_request(IORequest::WRITE); // 创建写请求
+  write_request.disable_compression(); // 禁用压缩
 
   /* Write the good page from the doublewrite buffer to the
   intended position. */
+  /* 将双写缓冲区中的良好页面写入预定位置。 */
 
   err = fil_io(write_request, true, page_id, page_size, 0, page_size.physical(),
-               const_cast<byte *>(page), nullptr);
+               const_cast<byte *>(page), nullptr); // 执行文件 IO 写入操作
 
-  ut_a(err == DB_SUCCESS || err == DB_TABLESPACE_DELETED);
+  ut_a(err == DB_SUCCESS || err == DB_TABLESPACE_DELETED); // 断言写入成功或表空间已删除
 
   ib::info(ER_IB_MSG_DBLWR_1308)
-      << "Recovered page " << page_id << " from the doublewrite buffer.";
+      << "Recovered page " << page_id << " from the doublewrite buffer."; // 打印信息
 
-  return true;
+  return true; // 返回 true
 }
 
 void dblwr::force_flush(buf_flush_t flush_type,
@@ -3224,49 +3258,51 @@ dberr_t recv::Pages::recover(fil_space_t *space) noexcept {
   /* For cloned database double write pages should be ignored. However,
   given the control flow, we read the pages in anyway but don't recover
   from the pages we read in. */
+  /* 对于克隆数据库，应忽略双写页面。然而，鉴于控制流，我们仍然读取这些页面，但不从读取的页面中恢复。 */
 
-  if (!dblwr::is_enabled() || recv_sys->is_cloned_db) {
-    return DB_SUCCESS;
+  if (!dblwr::is_enabled() || recv_sys->is_cloned_db) { // 如果双写未启用或是克隆数据库
+    return DB_SUCCESS; // 返回成功
   }
 
-  auto recover_all = (space == nullptr);
+  auto recover_all = (space == nullptr); // 如果 space 为 nullptr，则恢复所有页面
 
-  for (const auto &page : m_pages) {
-    if (page->m_recovered) {
-      continue;
+  for (const auto &page : m_pages) { // 遍历所有页面
+    if (page->m_recovered) { // 如果页面已恢复
+      continue; // 跳过
     }
 
-    auto ptr = page->m_buffer.begin();
-    auto page_no = page_get_page_no(ptr);
-    auto space_id = page_get_space_id(ptr);
+    auto ptr = page->m_buffer.begin(); // 获取页面缓冲区指针
+    auto page_no = page_get_page_no(ptr); // 获取页面号
+    auto space_id = page_get_space_id(ptr); // 获取表空间 ID
 
-    if (recover_all) {
-      space = fil_space_get(space_id);
+    if (recover_all) { // 如果恢复所有页面
+      space = fil_space_get(space_id); // 获取表空间
 
-      if (space == nullptr) {
+      if (space == nullptr) { // 如果表空间为空
         /* Maybe we have dropped the tablespace
         and this page once belonged to it: do nothing. */
-        continue;
+        /* 也许我们已经删除了表空间，并且这个页面曾经属于它：什么也不做。 */
+        continue; // 跳过
       }
 
-    } else if (space->id != space_id) {
-      continue;
+    } else if (space->id != space_id) { // 如果表空间 ID 不匹配
+      continue; // 跳过
     }
 
-    fil_space_open_if_needed(space);
+    fil_space_open_if_needed(space); // 如果需要，打开表空间
 
     page->m_recovered =
-        dblwr_recover_page(page->m_no, space, page_no, page->m_buffer.begin());
+        dblwr_recover_page(page->m_no, space, page_no, page->m_buffer.begin()); // 从双写缓冲区恢复页面
   }
 
-  dberr_t err = reduced_recover(space);
-  if (err != DB_SUCCESS) {
-    return (err);
+  dberr_t err = reduced_recover(space); // 执行简化恢复
+  if (err != DB_SUCCESS) { // 如果恢复失败
+    return (err); // 返回错误
   }
 
-  fil_flush_file_spaces();
+  fil_flush_file_spaces(); // 刷新文件空间
 #endif /* !UNIV_HOTBACKUP */
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 dberr_t recv::Pages::reduced_recover(fil_space_t *space) noexcept {
@@ -3438,213 +3474,234 @@ void recv::Pages::check_missing_tablespaces() const noexcept {
 dberr_t dblwr::recv::load(recv::Pages *pages) noexcept {
 #ifndef UNIV_HOTBACKUP
   /* For cloned database double write pages should be ignored. */
-  if (!dblwr::is_enabled()) {
-    return DB_SUCCESS;
+  /* 对于克隆的数据库，应忽略双写页。 */
+  if (!dblwr::is_enabled()) { // 如果双写缓冲区未启用
+    return DB_SUCCESS; // 返回成功
   }
 
-  ut_ad(!dblwr::dir.empty());
+  ut_ad(!dblwr::dir.empty()); // 断言双写缓冲区目录不为空
 
   /* The number of buffer pool instances can change. Therefore we must:
     1. Scan the doublewrite directory for all *.dblwr files and load
        their contents.
     2. Reset the file sizes after recovery is complete. */
+  /* 缓冲池实例的数量可能会改变。因此我们必须：
+    1. 扫描双写缓冲区目录中的所有 *.dblwr 文件并加载其内容。
+    2. 恢复完成后重置文件大小。 */
 
-  auto real_path_dir = Fil_path::get_real_path(dblwr::dir);
+  auto real_path_dir = Fil_path::get_real_path(dblwr::dir); // 获取双写缓冲区目录的真实路径
 
   /* Walk the sub-tree of dblwr::dir. */
+  /* 遍历双写缓冲区目录的子树。 */
 
-  std::vector<std::string> dblwr_files;
+  std::vector<std::string> dblwr_files; // 存储双写缓冲区文件的向量
 
-  Dir_Walker::walk(real_path_dir, false, [&](const std::string &path) {
-    ut_a(path.length() > real_path_dir.length());
+  Dir_Walker::walk(real_path_dir, false, [&](const std::string &path) { // 遍历目录
+    ut_a(path.length() > real_path_dir.length()); // 断言路径长度大于目录路径长度
 
-    if (Fil_path::get_file_type(path) != OS_FILE_TYPE_FILE) {
-      return;
+    if (Fil_path::get_file_type(path) != OS_FILE_TYPE_FILE) { // 如果路径不是文件类型
+      return; // 返回
     }
 
     /* Make the filename relative to the directory that was scanned. */
+    /* 将文件名相对于扫描的目录。 */
 
-    auto file = path.substr(real_path_dir.length(), path.length());
+    auto file = path.substr(real_path_dir.length(), path.length()); // 获取相对文件名
 
     /** 6 == strlen(".dblwr"). */
-    if (file.size() <= 6) {
-      return;
+    if (file.size() <= 6) { // 如果文件名长度小于等于6
+      return; // 返回
     }
 
-    if (Fil_path::has_suffix(DWR, file.c_str())) {
-      dblwr_files.push_back(file);
+    if (Fil_path::has_suffix(DWR, file.c_str())) { // 如果文件名以 ".dblwr" 结尾
+      dblwr_files.push_back(file); // 将文件名添加到向量中
     }
   });
 
   /* We have to use all the dblwr files for recovery. */
+  /* 我们必须使用所有的双写缓冲区文件进行恢复。 */
 
-  std::string rexp{"#ib_([0-9]+)_([0-9]+)\\"};
+  std::string rexp{"#ib_([0-9]+)_([0-9]+)\\"}; // 正则表达式字符串
 
-  rexp.append(dot_ext[DWR]);
+  rexp.append(dot_ext[DWR]); // 添加文件扩展名
 
-  const std::regex regex{rexp};
+  const std::regex regex{rexp}; // 创建正则表达式对象
 
-  std::vector<int> ids;
+  std::vector<int> ids; // 存储文件 ID 的向量
 
-  for (auto &file : dblwr_files) {
-    std::smatch match;
+  for (auto &file : dblwr_files) { // 遍历双写缓冲区文件
+    std::smatch match; // 匹配结果
 
-    if (std::regex_match(file, match, regex) && match.size() == 3) {
+    if (std::regex_match(file, match, regex) && match.size() == 3) { // 如果文件名匹配正则表达式
       /* Check if the page size matches. */
-      int page_size = std::stoi(match[1].str());
+      /* 检查页面大小是否匹配。 */
+      int page_size = std::stoi(match[1].str()); // 获取页面大小
 
-      if (page_size == (int)srv_page_size) {
-        int id = std::stoi(match[2].str());
-        ids.push_back(id);
+      if (page_size == (int)srv_page_size) { // 如果页面大小匹配
+        int id = std::stoi(match[2].str()); // 获取文件 ID
+        ids.push_back(id); // 将文件 ID 添加到向量中
       } else {
         ib::info(ER_IB_MSG_DBLWR_1310)
-            << "Ignoring " << file << " - page size doesn't match";
+            << "Ignoring " << file << " - page size doesn't match"; // 打印信息：忽略文件，页面大小不匹配
       }
     } else {
       ib::warn(ER_IB_MSG_DBLWR_1311)
-          << file << " not in double write buffer file name format!";
+          << file << " not in double write buffer file name format!"; // 打印警告：文件名格式不正确
     }
   }
 
-  std::sort(ids.begin(), ids.end());
+  std::sort(ids.begin(), ids.end()); // 对文件 ID 进行排序
 
-  for (uint32_t i = 0; i < ids.size(); ++i) {
-    if ((uint32_t)ids[i] != i) {
-      ib::warn(ER_IB_MSG_DBLWR_1312) << "Gap in the double write buffer files.";
-      ut_d(ut_error);
+  for (uint32_t i = 0; i < ids.size(); ++i) { // 遍历文件 ID
+    if ((uint32_t)ids[i] != i) { // 如果文件 ID 不连续
+      ib::warn(ER_IB_MSG_DBLWR_1312) << "Gap in the double write buffer files."; // 打印警告：双写缓冲区文件中有间隙
+      ut_d(ut_error); // 断言错误
     }
   }
 
-  uint32_t max_id;
+  uint32_t max_id; // 最大文件 ID
 
-  if (!ids.empty()) {
-    max_id = std::max((int)srv_buf_pool_instances, ids.back() + 1);
+  if (!ids.empty()) { // 如果文件 ID 向量不为空
+    max_id = std::max((int)srv_buf_pool_instances, ids.back() + 1); // 获取最大文件 ID
   } else {
-    max_id = srv_buf_pool_instances;
+    max_id = srv_buf_pool_instances; // 设置最大文件 ID 为缓冲池实例数量
   }
 
-  for (uint32_t i = 0; i < max_id; ++i) {
-    dblwr::File file;
+  for (uint32_t i = 0; i < max_id; ++i) { // 遍历文件 ID
+    dblwr::File file; // 双写缓冲区文件对象
 
     /* Open the file for reading. */
-    auto err = dblwr_file_open(dblwr::dir, i, file, OS_DATA_FILE);
+    /* 打开文件进行读取。 */
+    auto err = dblwr_file_open(dblwr::dir, i, file, OS_DATA_FILE); // 打开双写缓冲区文件
 
-    if (err == DB_NOT_FOUND) {
-      continue;
-    } else if (err != DB_SUCCESS) {
-      return err;
+    if (err == DB_NOT_FOUND) { // 如果文件未找到
+      continue; // 继续
+    } else if (err != DB_SUCCESS) { // 如果打开文件失败
+      return err; // 返回错误码
     }
 
-    err = Double_write::load(file, pages);
+    err = Double_write::load(file, pages); // 加载双写缓冲区文件
 
-    os_file_close(file.m_pfs);
+    os_file_close(file.m_pfs); // 关闭文件
 
-    if (err != DB_SUCCESS) {
-      return err;
+    if (err != DB_SUCCESS) { // 如果加载失败
+      return err; // 返回错误码
     }
   }
 #endif /* UNIV_HOTBACKUP */
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 dberr_t dblwr::recv::reduced_load(recv::Pages *pages) noexcept {
 #ifndef UNIV_HOTBACKUP
   /* For cloned database double write pages should be ignored. */
-  if (!dblwr::is_enabled()) {
-    return DB_SUCCESS;
+  /* 对于克隆的数据库，应忽略双写页。 */
+  if (!dblwr::is_enabled()) { // 如果双写缓冲区未启用
+    return DB_SUCCESS; // 返回成功
   }
 
-  ut_ad(!dblwr::dir.empty());
+  ut_ad(!dblwr::dir.empty()); // 断言双写缓冲区目录不为空
 
   /* The number of buffer pool instances can change. Therefore we must:
   1. Scan the doublewrite directory for all *.dblwr files and load
      their contents.
   2. Reset the file sizes after recovery is complete. */
+  /* 缓冲池实例的数量可能会改变。因此我们必须：
+  1. 扫描双写缓冲区目录中的所有 *.dblwr 文件并加载其内容。
+  2. 恢复完成后重置文件大小。 */
 
-  auto real_path_dir = Fil_path::get_real_path(dblwr::dir);
+  auto real_path_dir = Fil_path::get_real_path(dblwr::dir); // 获取双写缓冲区目录的真实路径
 
   /* Walk the sub-tree of dblwr::dir. */
+  /* 遍历双写缓冲区目录的子树。 */
 
-  std::vector<std::string> dblwr_files;
+  std::vector<std::string> dblwr_files; // 存储双写缓冲区文件的向量
 
-  Dir_Walker::walk(real_path_dir, false, [&](const std::string &path) {
-    ut_a(path.length() > real_path_dir.length());
+  Dir_Walker::walk(real_path_dir, false, [&](const std::string &path) { // 遍历目录
+    ut_a(path.length() > real_path_dir.length()); // 断言路径长度大于目录路径长度
 
-    if (Fil_path::get_file_type(path) != OS_FILE_TYPE_FILE) {
-      return;
+    if (Fil_path::get_file_type(path) != OS_FILE_TYPE_FILE) { // 如果路径不是文件类型
+      return; // 返回
     }
 
     /* Make the filename relative to the directory that was scanned. */
+    /* 将文件名相对于扫描的目录。 */
 
-    auto file = path.substr(real_path_dir.length(), path.length());
+    auto file = path.substr(real_path_dir.length(), path.length()); // 获取相对文件名
 
-    if (file.size() <= strlen(dot_ext[BWR])) {
-      return;
+    if (file.size() <= strlen(dot_ext[BWR])) { // 如果文件名长度小于等于 BWR 文件扩展名长度
+      return; // 返回
     }
 
-    if (Fil_path::has_suffix(BWR, file.c_str())) {
-      dblwr_files.push_back(file);
+    if (Fil_path::has_suffix(BWR, file.c_str())) { // 如果文件名以 ".bwr" 结尾
+      dblwr_files.push_back(file); // 将文件名添加到向量中
     }
   });
+
   /* We have to use all the dblwr files for recovery. */
+  /* 我们必须使用所有的双写缓冲区文件进行恢复。 */
 
-  std::string rexp{"#ib_([0-9]+)_([0-9]+)\\"};
+  std::string rexp{"#ib_([0-9]+)_([0-9]+)\\"}; // 正则表达式字符串
 
-  rexp.append(dot_ext[BWR]);
+  rexp.append(dot_ext[BWR]); // 添加文件扩展名
 
-  const std::regex regex{rexp};
+  const std::regex regex{rexp}; // 创建正则表达式对象
 
-  std::vector<int> ids;
+  std::vector<int> ids; // 存储文件 ID 的向量
 
-  for (auto &file : dblwr_files) {
-    std::smatch match;
+  for (auto &file : dblwr_files) { // 遍历双写缓冲区文件
+    std::smatch match; // 匹配结果
 
-    if (std::regex_match(file, match, regex) && match.size() == 3) {
+    if (std::regex_match(file, match, regex) && match.size() == 3) { // 如果文件名匹配正则表达式
       /* Check if the page size matches. */
-      int page_size = std::stoi(match[1].str());
+      /* 检查页面大小是否匹配。 */
+      int page_size = std::stoi(match[1].str()); // 获取页面大小
 
-      if (page_size == (int)srv_page_size) {
-        int id = std::stoi(match[2].str());
-        ids.push_back(id);
+      if (page_size == (int)srv_page_size) { // 如果页面大小匹配
+        int id = std::stoi(match[2].str()); // 获取文件 ID
+        ids.push_back(id); // 将文件 ID 添加到向量中
       } else {
         ib::info(ER_IB_MSG_DBLWR_1310)
-            << "Ignoring " << file << " - page size doesn't match";
+            << "Ignoring " << file << " - page size doesn't match"; // 打印信息：忽略文件，页面大小不匹配
       }
     } else {
       ib::warn(ER_IB_MSG_DBLWR_1311)
-          << file << " not in double write buffer file name format!";
+          << file << " not in double write buffer file name format!"; // 打印警告：文件名格式不正确
     }
   }
 
-  if (ids.size() == 0) {
+  if (ids.size() == 0) { // 如果没有找到匹配的文件
     // We are starting on older version that doesn't have reduced dblwr file
-    return (DB_SUCCESS);
+    // 我们正在启动没有简化双写缓冲区文件的旧版本
+    return (DB_SUCCESS); // 返回成功
   }
 
   // There should be always only one Batch DBLWR file
-  ut_ad(ids.size() == 1);
+  // 应该总是只有一个批处理双写缓冲区文件
+  ut_ad(ids.size() == 1); // 断言只有一个文件
 
-  dblwr::File file;
+  dblwr::File file; // 双写缓冲区文件对象
 
   /* Open the file for reading. */
-  auto err = dblwr_file_open(dblwr::dir, 0, file, OS_DATA_FILE, BWR);
+  /* 打开文件进行读取。 */
+  auto err = dblwr_file_open(dblwr::dir, 0, file, OS_DATA_FILE, BWR); // 打开双写缓冲区文件
 
-  if (err == DB_NOT_FOUND) {
-    return (DB_SUCCESS);
-  } else if (err != DB_SUCCESS) {
-    return err;
+  if (err == DB_NOT_FOUND) { // 如果文件未找到
+    return (DB_SUCCESS); // 返回成功
+  } else if (err != DB_SUCCESS) { // 如果打开文件失败
+    return err; // 返回错误码
   }
 
-  err = Double_write::load_reduced_batch(file, pages);
+  err = Double_write::load_reduced_batch(file, pages); // 加载简化的双写缓冲区文件
 
-  os_file_close(file.m_pfs);
+  os_file_close(file.m_pfs); // 关闭文件
 
-  if (err != DB_SUCCESS) {
-    return err;
+  if (err != DB_SUCCESS) { // 如果加载失败
+    return err; // 返回错误码
   }
 
 #endif /* UNIV_HOTBACKUP */
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 const byte *dblwr::recv::find(const recv::Pages *pages,

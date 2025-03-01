@@ -1411,27 +1411,32 @@ void srv_free(void) {
 
 /** Initializes the synchronization primitives, memory system, and the thread
  local storage. */
+/** 初始化同步原语、内存系统和线程局部存储。 */
 static void srv_general_init() {
-  sync_check_init(srv_max_n_threads);
+  sync_check_init(srv_max_n_threads); // 初始化同步检查
   /* Reset the system variables in the recovery module. */
-  recv_sys_var_init();
-  os_thread_open();
-  trx_pool_init();
-  que_init();
-  row_mysql_init();
-  undo_spaces_init();
+  /* 重置恢复模块中的系统变量。 */
+  recv_sys_var_init(); // 初始化恢复系统变量
+  os_thread_open(); // 打开操作系统线程
+  trx_pool_init(); // 初始化事务池
+  que_init(); // 初始化查询队列
+  row_mysql_init(); // 初始化行 MySQL 模块
+  undo_spaces_init(); // 初始化撤销表空间
 }
 
 /** Boots the InnoDB server. */
+/** 启动 InnoDB 服务器。 */
 void srv_boot(void) {
   /* Initialize synchronization primitives, memory management, and thread
   local storage */
+  /* 初始化同步原语、内存管理和线程局部存储 */
 
-  srv_general_init();
+  srv_general_init(); // 初始化通用组件
 
   /* Initialize this module */
+  /* 初始化此模块 */
 
-  srv_init();
+  srv_init(); // 初始化服务器模块
 }
 
 /** Refreshes the values used to calculate per-second averages. */

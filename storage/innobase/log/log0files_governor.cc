@@ -1653,51 +1653,56 @@ void log_files_remove(log_t &log) {
 }
 
 dberr_t log_files_start(log_t &log) {
-  ut_a(!log_writer_is_active());
-  ut_a(!log_checkpointer_is_active());
-  ut_a(!log_files_governor_is_active());
+  ut_a(!log_writer_is_active()); // 断言日志写入器未激活
+  ut_a(!log_checkpointer_is_active()); // 断言日志检查点未激活
+  ut_a(!log_files_governor_is_active()); // 断言日志文件管理器未激活
 
   /** Existing log files are marked as not consumed. */
+  /** 将现有日志文件标记为未消耗。 */
   log_files_for_each(log.m_files,
-                     [](const Log_file &file) { ut_a(!file.m_consumed); });
+                     [](const Log_file &file) { ut_a(!file.m_consumed); }); // 断言日志文件未被消耗
 
-  if (srv_read_only_mode) {
-    log_update_exported_variables(log);
+  if (srv_read_only_mode) { // 如果是只读模式
+    log_update_exported_variables(log); // 更新导出的变量
     /* We are not allowed to consume in read-only mode. */
-    return DB_SUCCESS;
+    /* 在只读模式下不允许消耗。 */
+    return DB_SUCCESS; // 返回成功
   }
 
-  if (log.m_format < Log_format::VERSION_8_0_30) {
+  if (log.m_format < Log_format::VERSION_8_0_30) { // 如果日志格式小于 8.0.30 版本
     /* We are not allowed to consume log files of format
     older than 8.0.30. */
-    return DB_SUCCESS;
+    /* 不允许消耗 8.0.30 版本之前格式的日志文件。 */
+    return DB_SUCCESS; // 返回成功
   }
 
-  ut_a(log_get_lsn(log) == log.write_lsn.load());
-  ut_a(log_get_lsn(log) == log.flushed_to_disk_lsn.load());
+  ut_a(log_get_lsn(log) == log.write_lsn.load()); // 断言获取的 LSN 等于写入 LSN
+  ut_a(log_get_lsn(log) == log.flushed_to_disk_lsn.load()); // 断言获取的 LSN 等于刷新到磁盘的 LSN
 
-  log_files_update_current_file_low(log);
+  log_files_update_current_file_low(log); // 更新当前文件
 
-  log_files_mark_consumed_files(log);
+  log_files_mark_consumed_files(log); // 标记已消耗的文件
 
-  log_files_validate_not_consumed(log);
+  log_files_validate_not_consumed(log); // 验证未消耗的文件
 
-  ut_a(!srv_read_only_mode);
+  ut_a(!srv_read_only_mode); // 断言不是只读模式
 
-  log_files_initialize_on_existing_redo(log);
+  log_files_initialize_on_existing_redo(log); // 初始化现有重做日志文件
 
   /* It could happen that write_lsn was in a new file, but flushed_to_disk_lsn
   was still in the previous file when server rebooted. In such case we might
   have recovery ended in the previous file successfully and need to remove the
   new file (containing some unflushed data). */
-  const dberr_t err = log_files_remove_from_future(log);
-  if (err != DB_SUCCESS) {
-    return err;
+  /* 可能会发生写入 LSN 在新文件中，但刷新到磁盘的 LSN 仍在服务器重启时的上一个文件中。
+  在这种情况下，我们可能在上一个文件中成功结束了恢复，并且需要删除新文件（包含一些未刷新数据）。 */
+  const dberr_t err = log_files_remove_from_future(log); // 从未来日志文件中移除
+  if (err != DB_SUCCESS) { // 如果移除失败
+    return err; // 返回错误
   }
 
-  log_files_process_consumed_files(log);
+  log_files_process_consumed_files(log); // 处理已消耗的文件
 
-  return DB_SUCCESS;
+  return DB_SUCCESS; // 返回成功
 }
 
 static dberr_t log_files_mark_current_file_as_incomplete(log_t &log) {

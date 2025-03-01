@@ -185,6 +185,11 @@ read in, or also for a page already in the buffer pool.
 @param jri in: true if just read in (the i/o handler calls this for
 a freshly read page)
 @param[in,out]  block   buffer block */
+/** recv_recover_page_func() 的包装器。
+如果页面的 LSN 小于日志记录的 LSN，则将哈希日志记录应用到页面。
+这可以在缓冲页面刚刚读入时调用，也可以在缓冲池中已有页面时调用。
+@param jri in: 如果刚读入则为 true（I/O 处理程序为新读取的页面调用此函数）
+@param[in,out]  block   缓冲块 */
 static inline void recv_recover_page(bool jri, buf_block_t *block) {
   recv_recover_page_func(jri, block);
 }

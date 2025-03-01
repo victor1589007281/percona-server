@@ -791,48 +791,52 @@ void trx_clear_resurrected_table_ids() { resurrected_trx_tables.clear(); }
 /** Resurrect the transactions that were doing inserts at the time of the
  crash, they need to be undone.
  @return trx_t instance */
+/** 恢复在崩溃时正在执行插入操作的事务，它们需要被撤销。
+ @return trx_t 实例 */
 static trx_t *trx_resurrect_insert(
-    trx_undo_t *undo, /*!< in: entry to UNDO */
-    trx_rseg_t *rseg) /*!< in: rollback segment */
+    trx_undo_t *undo, /*!< in: entry to UNDO */ // 撤销条目
+    trx_rseg_t *rseg) /*!< in: rollback segment */ // 回滚段
 {
-  trx_t *trx;
+  trx_t *trx; // 事务指针
 
-  trx = trx_allocate_for_background();
+  trx = trx_allocate_for_background(); // 为后台分配事务
 
-  ut_d(trx->start_file = __FILE__);
-  ut_d(trx->start_line = __LINE__);
+  ut_d(trx->start_file = __FILE__); // 设置事务开始文件
+  ut_d(trx->start_line = __LINE__); // 设置事务开始行
 
-  rseg->trx_ref_count++;
-  trx->rsegs.m_redo.rseg = rseg;
-  *trx->xid = undo->xid;
-  trx->id = undo->trx_id;
-  trx_sys_rw_trx_add(trx);
-  trx->rsegs.m_redo.insert_undo = undo;
-  trx->is_recovered = true;
+  rseg->trx_ref_count++; // 增加回滚段的事务引用计数
+  trx->rsegs.m_redo.rseg = rseg; // 设置事务的回滚段
+  *trx->xid = undo->xid; // 设置事务的 XID
+  trx->id = undo->trx_id; // 设置事务的 ID
+  trx_sys_rw_trx_add(trx); // 将事务添加到读写事务列表
+  trx->rsegs.m_redo.insert_undo = undo; // 设置插入撤销
+  trx->is_recovered = true; // 设置事务已恢复
 
   /* This is single-threaded startup code, we do not need the
   protection of trx->mutex or trx_sys->mutex here. */
+  /* 这是单线程启动代码，我们不需要在这里保护 trx->mutex 或 trx_sys->mutex。 */
 
-  if (undo->state != TRX_UNDO_ACTIVE) {
+  if (undo->state != TRX_UNDO_ACTIVE) { // 如果撤销状态不是活动的
     /* Prepared transactions are left in the prepared state
     waiting for a commit or abort decision from MySQL */
+    /* 预处理事务保持在预处理状态，等待 MySQL 的提交或中止决定 */
 
-    if (undo->is_prepared()) {
+    if (undo->is_prepared()) { // 如果撤销是预处理的
       ib::info(ER_IB_MSG_1204) << "Transaction " << trx_get_id_for_print(trx)
-                               << " was in the XA prepared state.";
+                               << " was in the XA prepared state."; // 打印事务处于 XA 预处理状态的信息
 
-      if (srv_force_recovery == 0) {
-        trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed);
-        ++trx_sys->n_prepared_trx;
+      if (srv_force_recovery == 0) { // 如果强制恢复级别为 0
+        trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed); // 设置事务状态为预处理
+        ++trx_sys->n_prepared_trx; // 增加预处理事务计数
       } else {
         ib::info(ER_IB_MSG_1205) << "Since innodb_force_recovery"
-                                    " > 0, we will force a rollback.";
+                                    " > 0, we will force a rollback."; // 打印强制回滚的信息
 
-        trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
+        trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed); // 设置事务状态为活动
       }
     } else {
       trx->state.store(TRX_STATE_COMMITTED_IN_MEMORY,
-                       std::memory_order_relaxed);
+                       std::memory_order_relaxed); // 设置事务状态为已提交
     }
 
     /* We give a dummy value for the trx no; this should have no
@@ -840,169 +844,189 @@ static trx_t *trx_resurrect_insert(
     transaction numbers, unless they are in the history
     list, in which case it looks the number from the disk based
     undo log structure */
+    /* 我们为事务号提供一个虚拟值；这应该没有关系，因为清除对已提交的事务号不感兴趣，除非它们在历史列表中，
+    在这种情况下，它会从基于磁盘的撤销日志结构中查看该号码 */
 
-    trx->no = trx->id;
+    trx->no = trx->id; // 设置事务号为事务 ID
 
   } else {
-    trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
+    trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed); // 设置事务状态为活动
 
     /* A running transaction always has the number
     field inited to TRX_ID_MAX */
+    /* 运行中的事务总是将 number 字段初始化为 TRX_ID_MAX */
 
-    trx->no = TRX_ID_MAX;
+    trx->no = TRX_ID_MAX; // 设置事务号为 TRX_ID_MAX
   }
 
   /* trx_start_low() is not called with resurrect, so need to initialize
   start time here.*/
+  /* trx_start_low() 没有与恢复一起调用，因此需要在此处初始化开始时间。 */
   if (trx->state.load(std::memory_order_relaxed) == TRX_STATE_ACTIVE ||
-      trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) {
+      trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) { // 如果事务状态为活动或预处理
     trx->start_time.store(std::chrono::system_clock::from_time_t(time(nullptr)),
-                          std::memory_order_relaxed);
+                          std::memory_order_relaxed); // 设置事务开始时间
   }
 
-  trx->ddl_operation = undo->dict_operation;
+  trx->ddl_operation = undo->dict_operation; // 设置事务的 DDL 操作
 
-  if (undo->dict_operation) {
-    trx_set_dict_operation(trx, TRX_DICT_OP_TABLE);
+  if (undo->dict_operation) { // 如果撤销是字典操作
+    trx_set_dict_operation(trx, TRX_DICT_OP_TABLE); // 设置事务的字典操作
   }
 
-  if (!undo->empty) {
-    trx->undo_no = undo->top_undo_no + 1;
-    trx->undo_rseg_space = undo->rseg->space_id;
+  if (!undo->empty) { // 如果撤销不为空
+    trx->undo_no = undo->top_undo_no + 1; // 设置撤销号
+    trx->undo_rseg_space = undo->rseg->space_id; // 设置撤销回滚段空间 ID
   }
 
-  return (trx);
+  return (trx); // 返回事务
 }
 
 /** Prepared transactions are left in the prepared state waiting for a
  commit or abort decision from MySQL */
+/** 预处理事务保持在预处理状态，等待 MySQL 的提交或中止决定 */
 static void trx_resurrect_update_in_prepared_state(
-    trx_t *trx,             /*!< in,out: transaction */
-    const trx_undo_t *undo) /*!< in: update UNDO record */
+    trx_t *trx,             /*!< in,out: transaction */ // 事务
+    const trx_undo_t *undo) /*!< in: update UNDO record */ // 更新撤销记录
 {
   /* This is single-threaded startup code, we do not need the
   protection of trx->mutex or trx_sys->mutex here. */
+  /* 这是单线程启动代码，我们不需要在这里保护 trx->mutex 或 trx_sys->mutex。 */
 
-  if (undo->is_prepared()) {
+  if (undo->is_prepared()) { // 如果撤销记录是预处理的
     ib::info(ER_IB_MSG_1206) << "Transaction " << trx_get_id_for_print(trx)
-                             << " was in the XA prepared state.";
+                             << " was in the XA prepared state."; // 打印事务处于 XA 预处理状态的信息
 
     ut_ad(trx->state.load(std::memory_order_relaxed) !=
-          TRX_STATE_FORCED_ROLLBACK);
+          TRX_STATE_FORCED_ROLLBACK); // 断言事务状态不是强制回滚
 
-    if (trx_state_eq(trx, TRX_STATE_NOT_STARTED)) {
-      ++trx_sys->n_prepared_trx;
+    if (trx_state_eq(trx, TRX_STATE_NOT_STARTED)) { // 如果事务状态为未开始
+      ++trx_sys->n_prepared_trx; // 增加预处理事务计数
     } else {
-      ut_ad(trx_state_eq(trx, TRX_STATE_PREPARED));
+      ut_ad(trx_state_eq(trx, TRX_STATE_PREPARED)); // 断言事务状态为预处理
     }
 
-    trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed);
+    trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed); // 设置事务状态为预处理
   } else {
-    trx->state.store(TRX_STATE_COMMITTED_IN_MEMORY, std::memory_order_relaxed);
+    trx->state.store(TRX_STATE_COMMITTED_IN_MEMORY, std::memory_order_relaxed); // 设置事务状态为已提交
   }
 }
 
 /** Resurrect the transactions that were doing updates the time of the
  crash, they need to be undone. */
+/** 恢复在崩溃时正在执行更新操作的事务，它们需要被撤销。 */
 static void trx_resurrect_update(
-    trx_t *trx,       /*!< in/out: transaction */
-    trx_undo_t *undo, /*!< in/out: update UNDO record */
-    trx_rseg_t *rseg) /*!< in/out: rollback segment */
+    trx_t *trx,       /*!< in/out: transaction */ // 事务
+    trx_undo_t *undo, /*!< in/out: update UNDO record */ // 更新撤销记录
+    trx_rseg_t *rseg) /*!< in/out: rollback segment */ // 回滚段
 {
   /* This resurected transaction might also have been doing inserts.
   If so, this rseg is already assigned by trx_resurrect_insert(). */
-  if (trx->rsegs.m_redo.rseg != nullptr) {
-    ut_a(trx->rsegs.m_redo.rseg == rseg);
-    ut_ad(trx->id == undo->trx_id);
-    ut_ad(trx->is_recovered);
+  /* 这个恢复的事务可能也在执行插入操作。
+  如果是这样，这个回滚段已经由 trx_resurrect_insert() 分配。 */
+  if (trx->rsegs.m_redo.rseg != nullptr) { // 如果事务的回滚段不为空
+    ut_a(trx->rsegs.m_redo.rseg == rseg); // 断言事务的回滚段等于传入的回滚段
+    ut_ad(trx->id == undo->trx_id); // 断言事务 ID 等于撤销记录的事务 ID
+    ut_ad(trx->is_recovered); // 断言事务已恢复
     /* For GTID persistence, we might have empty update undo for
     insert only transactions. */
-    if (undo->empty && trx_state_eq(trx, TRX_STATE_PREPARED)) {
-      undo->set_prepared(trx->xid);
+    /* 对于 GTID 持久性，我们可能有空的更新撤销记录用于仅插入事务。 */
+    if (undo->empty && trx_state_eq(trx, TRX_STATE_PREPARED)) { // 如果撤销记录为空且事务状态为预处理
+      undo->set_prepared(trx->xid); // 设置撤销记录为预处理状态
     }
-    ut_ad(undo->xid.eq(trx->xid));
-  } else {
-    rseg->trx_ref_count++;
-    trx->rsegs.m_redo.rseg = rseg;
-    *trx->xid = undo->xid;
-    trx->id = undo->trx_id;
-    trx_sys_rw_trx_add(trx);
-    trx->is_recovered = true;
+    ut_ad(undo->xid.eq(trx->xid)); // 断言撤销记录的 XID 等于事务的 XID
+  } else { // 否则
+    rseg->trx_ref_count++; // 增加回滚段的事务引用计数
+    trx->rsegs.m_redo.rseg = rseg; // 设置事务的回滚段
+    *trx->xid = undo->xid; // 设置事务的 XID
+    trx->id = undo->trx_id; // 设置事务的 ID
+    trx_sys_rw_trx_add(trx); // 将事务添加到读写事务列表
+    trx->is_recovered = true; // 设置事务已恢复
   }
 
   /* Assign the update_undo segment. */
-  ut_a(trx->rsegs.m_redo.update_undo == nullptr);
-  trx->rsegs.m_redo.update_undo = undo;
+  /* 分配更新撤销段。 */
+  ut_a(trx->rsegs.m_redo.update_undo == nullptr); // 断言事务的更新撤销段为空
+  trx->rsegs.m_redo.update_undo = undo; // 设置事务的更新撤销段
 
   /* This is single-threaded startup code, we do not need the
   protection of trx->mutex or trx_sys->mutex here. */
+  /* 这是单线程启动代码，我们不需要在这里保护 trx->mutex 或 trx_sys->mutex。 */
 
-  if (undo->state != TRX_UNDO_ACTIVE) {
-    trx_resurrect_update_in_prepared_state(trx, undo);
+  if (undo->state != TRX_UNDO_ACTIVE) { // 如果撤销记录状态不是活动的
+    trx_resurrect_update_in_prepared_state(trx, undo); // 在预处理状态下恢复更新事务
 
     /* We give a dummy value for the trx number */
+    /* 我们为事务号提供一个虚拟值 */
 
-    trx->no = trx->id;
+    trx->no = trx->id; // 设置事务号为事务 ID
 
-  } else {
-    trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
+  } else { // 否则
+    trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed); // 设置事务状态为活动
 
     /* A running transaction always has the number field inited to
     TRX_ID_MAX */
+    /* 运行中的事务总是将 number 字段初始化为 TRX_ID_MAX */
 
-    trx->no = TRX_ID_MAX;
+    trx->no = TRX_ID_MAX; // 设置事务号为 TRX_ID_MAX
   }
 
   /* trx_start_low() is not called with resurrect, so need to initialize
   start time here.*/
+  /* trx_start_low() 没有与恢复一起调用，因此需要在此处初始化开始时间。 */
   if (trx->state.load(std::memory_order_relaxed) == TRX_STATE_ACTIVE ||
-      trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) {
+      trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) { // 如果事务状态为活动或预处理
     trx->start_time.store(std::chrono::system_clock::from_time_t(time(nullptr)),
-                          std::memory_order_relaxed);
+                          std::memory_order_relaxed); // 设置事务开始时间
   }
 
-  trx->ddl_operation = undo->dict_operation;
+  trx->ddl_operation = undo->dict_operation; // 设置事务的 DDL 操作
 
-  if (undo->dict_operation) {
-    trx_set_dict_operation(trx, TRX_DICT_OP_TABLE);
+  if (undo->dict_operation) { // 如果撤销记录是字典操作
+    trx_set_dict_operation(trx, TRX_DICT_OP_TABLE); // 设置事务的字典操作
   }
 
-  if (!undo->empty && undo->top_undo_no >= trx->undo_no) {
-    trx->undo_no = undo->top_undo_no + 1;
-    trx->undo_rseg_space = undo->rseg->space_id;
+  if (!undo->empty && undo->top_undo_no >= trx->undo_no) { // 如果撤销记录不为空且撤销记录的顶部撤销号大于等于事务的撤销号
+    trx->undo_no = undo->top_undo_no + 1; // 设置事务的撤销号
+    trx->undo_rseg_space = undo->rseg->space_id; // 设置事务的撤销回滚段空间 ID
   }
 }
 
 /** Resurrect the transactions that were doing inserts and updates at
 the time of a crash, they need to be undone.
 @param[in]      rseg    rollback segment */
+/** 恢复在崩溃时正在执行插入和更新的事务，它们需要被撤销。
+@param[in]      rseg    回滚段 */
 static void trx_resurrect(trx_rseg_t *rseg) {
-  ut_ad(rseg != nullptr);
+  ut_ad(rseg != nullptr); // 断言回滚段不为空
 
   /* Resurrect transactions that were doing inserts. */
-  for (auto undo : rseg->insert_undo_list) {
-    auto trx = trx_resurrect_insert(undo, rseg);
+  /* 恢复正在执行插入操作的事务。 */
+  for (auto undo : rseg->insert_undo_list) { // 遍历插入撤销列表
+    auto trx = trx_resurrect_insert(undo, rseg); // 恢复插入事务
 
-    trx_resurrect_table_ids(trx, &trx->rsegs.m_redo, undo);
+    trx_resurrect_table_ids(trx, &trx->rsegs.m_redo, undo); // 恢复表 ID
   }
 
   /* Ressurrect transactions that were doing updates. */
-  for (auto undo : rseg->update_undo_list) {
+  /* 恢复正在执行更新操作的事务。 */
+  for (auto undo : rseg->update_undo_list) { // 遍历更新撤销列表
     /* Check the active_rw_trxs.by_id first. */
+    /* 首先检查 active_rw_trxs.by_id。 */
 
     trx_t *trx = trx_sys->latch_and_execute_with_active_trx(
-        undo->trx_id, [](trx_t *trx) { return trx; }, UT_LOCATION_HERE);
+        undo->trx_id, [](trx_t *trx) { return trx; }, UT_LOCATION_HERE); // 获取活动事务
 
-    if (trx == nullptr) {
-      trx = trx_allocate_for_background();
+    if (trx == nullptr) { // 如果事务为空
+      trx = trx_allocate_for_background(); // 为后台分配事务
 
-      ut_d(trx->start_file = __FILE__);
-      ut_d(trx->start_line = __LINE__);
+      ut_d(trx->start_file = __FILE__); // 设置事务开始文件
+      ut_d(trx->start_line = __LINE__); // 设置事务开始行
     }
 
-    trx_resurrect_update(trx, undo, rseg);
+    trx_resurrect_update(trx, undo, rseg); // 恢复更新事务
 
-    trx_resurrect_table_ids(trx, &trx->rsegs.m_redo, undo);
+    trx_resurrect_table_ids(trx, &trx->rsegs.m_redo, undo); // 恢复表 ID
   }
 }
 
@@ -1033,46 +1057,50 @@ static inline void trx_remove_from_rw_trx_list(trx_t *trx) {
  already exist when this function is called, because the lists of
  transactions to be rolled back or cleaned up are built based on the
  undo log lists. */
+/** 创建事务的 trx 对象并在数据库启动时初始化 trx_sys 的 trx 列表。
+ 调用此函数时，回滚段和撤销日志列表必须已经存在，因为要回滚或清理的事务列表是基于撤销日志列表构建的。 */
 void trx_lists_init_at_db_start(void) {
-  ut_a(srv_is_being_started);
+  ut_a(srv_is_being_started); // 断言服务器正在启动
 
   /* Look through the rollback segments in the TRX_SYS for
   transaction undo logs. */
-  for (auto rseg : trx_sys->rsegs) {
-    trx_resurrect(rseg);
+  /* 查看 TRX_SYS 中的回滚段以查找事务撤销日志。 */
+  for (auto rseg : trx_sys->rsegs) { // 遍历事务系统的回滚段
+    trx_resurrect(rseg); // 恢复回滚段中的事务
   }
 
   /* Look through the rollback segments in each RSEG_ARRAY for
   transaction undo logs. */
-  undo::spaces->s_lock();
-  for (auto undo_space : undo::spaces->m_spaces) {
-    undo_space->rsegs()->s_lock();
-    for (auto rseg : *undo_space->rsegs()) {
-      trx_resurrect(rseg);
+  /* 查看每个 RSEG_ARRAY 中的回滚段以查找事务撤销日志。 */
+  undo::spaces->s_lock(); // 锁定撤销表空间
+  for (auto undo_space : undo::spaces->m_spaces) { // 遍历撤销表空间
+    undo_space->rsegs()->s_lock(); // 锁定回滚段
+    for (auto rseg : *undo_space->rsegs()) { // 遍历回滚段
+      trx_resurrect(rseg); // 恢复回滚段中的事务
     }
-    undo_space->rsegs()->s_unlock();
+    undo_space->rsegs()->s_unlock(); // 解锁回滚段
   }
-  undo::spaces->s_unlock();
+  undo::spaces->s_unlock(); // 解锁撤销表空间
 
-  ut::vector<trx_t *> trxs;
-  for (auto &shard : trx_sys->shards) {
+  ut::vector<trx_t *> trxs; // 事务向量
+  for (auto &shard : trx_sys->shards) { // 遍历事务系统的分片
     shard.active_rw_trxs.latch_and_execute(
         [&](const Trx_by_id_with_min &trx_by_id_with_min) {
-          for (const auto &trx_track : trx_by_id_with_min.by_id()) {
-            trxs.emplace_back(trx_track.second);
+          for (const auto &trx_track : trx_by_id_with_min.by_id()) { // 遍历事务跟踪
+            trxs.emplace_back(trx_track.second); // 将事务添加到事务向量
           }
         },
         UT_LOCATION_HERE);
   }
   std::sort(trxs.begin(), trxs.end(),
-            [&](trx_t *a, trx_t *b) { return a->id < b->id; });
+            [&](trx_t *a, trx_t *b) { return a->id < b->id; }); // 按事务 ID 排序
 
-  for (trx_t *trx : trxs) {
+  for (trx_t *trx : trxs) { // 遍历事务向量
     if (trx->state.load(std::memory_order_relaxed) == TRX_STATE_ACTIVE ||
-        trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) {
-      trx_sys->rw_trx_ids.push_back(trx->id);
+        trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED) { // 如果事务状态为活动或预处理
+      trx_sys->rw_trx_ids.push_back(trx->id); // 将事务 ID 添加到读写事务 ID 列表
     }
-    trx_add_to_rw_trx_list(trx);
+    trx_add_to_rw_trx_list(trx); // 将事务添加到读写事务列表
   }
 }
 

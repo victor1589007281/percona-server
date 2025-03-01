@@ -33,38 +33,39 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "read0read.h"
 
 static inline bool trx_state_eq(const trx_t *trx, trx_state_t state) {
-  const auto trx_state = trx->state.load(std::memory_order_relaxed);
+  const auto trx_state = trx->state.load(std::memory_order_relaxed); // 获取事务状态
 #ifdef UNIV_DEBUG
   switch (trx_state) {
-    case TRX_STATE_PREPARED:
+    case TRX_STATE_PREPARED: // 预处理状态
 
-      ut_ad(!trx_is_autocommit_non_locking(trx));
-      return trx_state == state;
+      ut_ad(!trx_is_autocommit_non_locking(trx)); // 断言事务不是自动提交非锁定事务
+      return trx_state == state; // 返回事务状态是否等于传入状态
 
-    case TRX_STATE_ACTIVE:
+    case TRX_STATE_ACTIVE: // 活动状态
 
-      assert_trx_nonlocking_or_in_list(trx);
-      return state == trx_state;
+      assert_trx_nonlocking_or_in_list(trx); // 断言事务非锁定或在列表中
+      return state == trx_state; // 返回事务状态是否等于传入状态
 
-    case TRX_STATE_COMMITTED_IN_MEMORY:
+    case TRX_STATE_COMMITTED_IN_MEMORY: // 内存中已提交状态
 
-      check_trx_state(trx);
-      return state == trx_state;
+      check_trx_state(trx); // 检查事务状态
+      return state == trx_state; // 返回事务状态是否等于传入状态
 
-    case TRX_STATE_NOT_STARTED:
-    case TRX_STATE_FORCED_ROLLBACK:
+    case TRX_STATE_NOT_STARTED: // 未开始状态
+    case TRX_STATE_FORCED_ROLLBACK: // 强制回滚状态
 
       /* These states are not allowed for running transactions. */
+      /* 这些状态不允许运行中的事务。 */
       ut_a(state == TRX_STATE_NOT_STARTED ||
-           state == TRX_STATE_FORCED_ROLLBACK);
+           state == TRX_STATE_FORCED_ROLLBACK); // 断言传入状态为未开始或强制回滚
 
-      ut_ad(!trx->in_rw_trx_list);
+      ut_ad(!trx->in_rw_trx_list); // 断言事务不在读写事务列表中
 
-      return true;
+      return true; // 返回 true
   }
-  ut_error;
+  ut_error; // 触发错误
 #else  /* UNIV_DEBUG */
-  return trx_state == state;
+  return trx_state == state; // 返回事务状态是否等于传入状态
 #endif /* UNIV_DEBUG */
 }
 

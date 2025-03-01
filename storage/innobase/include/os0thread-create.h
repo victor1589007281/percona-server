@@ -332,32 +332,32 @@ IB_thread create_detached_thread(mysql_pfs_key_t pfs_key,
 template <typename Container, typename F, typename... Args>
 void par_for(mysql_pfs_key_t pfs_key, const Container &c, size_t n, F &&f,
              Args &&... args) {
-  if (c.empty()) {
-    return;
+  if (c.empty()) { // 如果容器为空
+    return; // 直接返回
   }
 
-  size_t slice = (n > 0) ? c.size() / n : 0;
+  size_t slice = (n > 0) ? c.size() / n : 0; // 计算每个线程处理的元素数量
 
-  using Workers = std::vector<IB_thread>;
+  using Workers = std::vector<IB_thread>; // 定义线程向量类型
 
-  Workers workers;
+  Workers workers; // 创建线程向量
 
-  workers.reserve(n);
+  workers.reserve(n); // 预留 n 个线程的空间
 
-  for (size_t i = 0; i < n; ++i) {
-    auto b = c.begin() + (i * slice);
-    auto e = b + slice;
+  for (size_t i = 0; i < n; ++i) { // 遍历每个线程
+    auto b = c.begin() + (i * slice); // 计算当前线程的起始迭代器
+    auto e = b + slice; // 计算当前线程的结束迭代器
 
-    auto worker = os_thread_create(pfs_key, i, f, b, e, i, args...);
-    worker.start();
+    auto worker = os_thread_create(pfs_key, i, f, b, e, i, args...); // 创建线程
+    worker.start(); // 启动线程
 
-    workers.push_back(std::move(worker));
+    workers.push_back(std::move(worker)); // 将线程加入线程向量
   }
 
-  f(c.begin() + (n * slice), c.end(), n, args...);
+  f(c.begin() + (n * slice), c.end(), n, args...); // 主线程处理剩余的元素
 
-  for (auto &worker : workers) {
-    worker.join();
+  for (auto &worker : workers) { // 等待所有线程完成
+    worker.join(); // 等待线程结束
   }
 }
 

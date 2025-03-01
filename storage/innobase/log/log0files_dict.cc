@@ -80,19 +80,21 @@ Log_files_dict::Const_iterator Log_files_dict::find(lsn_t lsn) const {
   /* The performance of Log_files_dict::find is not important.
   If it became important, one could add another dictionary to
   this class: m_files_by_start_lsn. */
+  /* Log_files_dict::find 的性能并不重要。
+  如果变得重要，可以向这个类添加另一个字典：m_files_by_start_lsn。 */
   const Const_iterator it =
       std::find_if(begin(), end(),
-                   [lsn](const Log_file &file) { return file.contains(lsn); });
+                   [lsn](const Log_file &file) { return file.contains(lsn); }); // 查找包含指定 LSN 的日志文件
 
-  if (it != end()) {
+  if (it != end()) { // 如果找到日志文件
     DBUG_PRINT("ib_log",
                ("found file for lsn=" LSN_PF ": file_id=%zu "
                 "[" LSN_PF "," LSN_PF "), ",
-                lsn, size_t{it->m_id}, it->m_start_lsn, it->m_end_lsn));
-  } else {
-    DBUG_PRINT("ib_log", ("found no file for lsn=" LSN_PF, lsn));
+                lsn, size_t{it->m_id}, it->m_start_lsn, it->m_end_lsn)); // 打印调试信息
+  } else { // 如果未找到日志文件
+    DBUG_PRINT("ib_log", ("found no file for lsn=" LSN_PF, lsn)); // 打印调试信息
   }
-  return it;
+  return it; // 返回迭代器
 }
 
 Log_files_dict::Const_iterator Log_files_dict::file(Log_file_id file_id) const {

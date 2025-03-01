@@ -8110,66 +8110,69 @@ void MYSQL_BIN_LOG::set_max_size(ulong max_size_arg) {
 */
 
 int MYSQL_BIN_LOG::open_binlog(const char *opt_name) {
-  LOG_INFO log_info;
-  int error = 1;
-  bool should_execute_ha_recover{false};
+  LOG_INFO log_info; // 日志信息
+  int error = 1; // 错误码
+  bool should_execute_ha_recover{false}; // 是否需要执行存储引擎恢复
 
   /*
     This function is used for 2pc transaction coordination.  Hence, it
     is never used for relay logs.
   */
-  assert(!is_relay_log);
-  assert(total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log));
-  assert(opt_name && opt_name[0]);
+  /* 该函数用于 2PC 事务协调。因此，它从不用于中继日志。 */
+  assert(!is_relay_log); // 断言不是中继日志
+  assert(total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log)); // 断言总共 2PC 大于 1 或者总共 2PC 等于 1 且启用了二进制日志
+  assert(opt_name && opt_name[0]); // 断言选项名称不为空
 
-  if (!my_b_inited(&index_file)) {
+  if (!my_b_inited(&index_file)) { // 如果索引文件未初始化
     /* There was a failure to open the index file, can't open the binlog */
-    cleanup();
-    return 1;
+    /* 打开索引文件失败，无法打开二进制日志 */
+    cleanup(); // 清理
+    return 1; // 返回错误码 1
   }
 
-  if (using_heuristic_recover()) {
+  if (using_heuristic_recover()) { // 如果使用启发式恢复
     /* generate a new binlog to mask a corrupted one */
-    mysql_mutex_lock(&LOCK_log);
+    /* 生成一个新的二进制日志以掩盖损坏的日志 */
+    mysql_mutex_lock(&LOCK_log); // 加锁
     open_binlog(opt_name, nullptr, max_binlog_size, false,
                 true /*need_lock_index=true*/, true /*need_sid_lock=true*/,
-                nullptr);
-    mysql_mutex_unlock(&LOCK_log);
-    cleanup();
-    return 1;
+                nullptr); // 打开二进制日志
+    mysql_mutex_unlock(&LOCK_log); // 解锁
+    cleanup(); // 清理
+    return 1; // 返回错误码 1
   }
 
-  if ((error = find_log_pos(&log_info, NullS, true /*need_lock_index=true*/))) {
-    if (error != LOG_INFO_EOF)
-      LogErr(ERROR_LEVEL, ER_BINLOG_CANT_FIND_LOG_IN_INDEX, error);
+  if ((error = find_log_pos(&log_info, NullS, true /*need_lock_index=true*/))) { // 查找日志位置
+    if (error != LOG_INFO_EOF) // 如果错误不是日志文件结束
+      LogErr(ERROR_LEVEL, ER_BINLOG_CANT_FIND_LOG_IN_INDEX, error); // 记录错误
     else {
-      error = 0;
-      should_execute_ha_recover = true;
+      error = 0; // 设置错误码为 0
+      should_execute_ha_recover = true; // 设置需要执行存储引擎恢复
     }
-    goto err;
+    goto err; // 跳转到错误处理
   }
 
   {
-    Log_event *ev = nullptr;
-    char log_name[FN_REFLEN];
-    my_off_t valid_pos = 0;
-    my_off_t binlog_size = 0;
+    Log_event *ev = nullptr; // 日志事件指针
+    char log_name[FN_REFLEN]; // 日志名称
+    my_off_t valid_pos = 0; // 有效位置
+    my_off_t binlog_size = 0; // 二进制日志大小
 
     do {
-      strmake(log_name, log_info.log_file_name, sizeof(log_name) - 1);
+      strmake(log_name, log_info.log_file_name, sizeof(log_name) - 1); // 复制日志文件名
     } while (
-        !(error = find_next_log(&log_info, true /*need_lock_index=true*/)));
+        !(error = find_next_log(&log_info, true /*need_lock_index=true*/))); // 查找下一个日志
 
-    if (error != LOG_INFO_EOF) {
-      LogErr(ERROR_LEVEL, ER_BINLOG_CANT_FIND_LOG_IN_INDEX, error);
-      goto err;
+    if (error != LOG_INFO_EOF) { // 如果错误不是日志文件结束
+      LogErr(ERROR_LEVEL, ER_BINLOG_CANT_FIND_LOG_IN_INDEX, error); // 记录错误
+      goto err; // 跳转到错误处理
     }
 
-    Binlog_file_reader binlog_file_reader(opt_source_verify_checksum);
-    if (binlog_file_reader.open(log_name)) {
+    Binlog_file_reader binlog_file_reader(opt_source_verify_checksum); // 二进制日志文件读取器
+    if (binlog_file_reader.open(log_name)) { // 打开二进制日志文件
       LogErr(ERROR_LEVEL, ER_BINLOG_FILE_OPEN_FAILED,
-             binlog_file_reader.get_error_str());
-      goto err;
+             binlog_file_reader.get_error_str()); // 记录错误
+      goto err; // 跳转到错误处理
     }
 
     /*
@@ -8186,70 +8189,83 @@ int MYSQL_BIN_LOG::open_binlog(const char *opt_name) {
       total_ha_2pc == 1, to find the last valid group of events written.
       Later we will take this value and truncate the log if need be.
     */
+    /* 如果二进制日志未正确关闭，则意味着服务器可能已崩溃。在这种情况下，我们需要调用
+      binlog::Binlog_recovery::recover() 来：
+
+        a) 收集已记录的 XID；
+        b) 完成待处理 XID 的 2PC；
+        c) 收集最后一个有效位置。
+
+      因此，我们确实需要遍历二进制日志，即使 total_ha_2pc == 1，以找到最后写入的有效事件组。
+      稍后我们将使用此值并在需要时截断日志。
+    */
     if ((ev = binlog_file_reader.read_event_object()) &&
         ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT &&
         (ev->common_header->flags & LOG_EVENT_BINLOG_IN_USE_F ||
-         DBUG_EVALUATE_IF("eval_force_bin_log_recovery", true, false))) {
+         DBUG_EVALUATE_IF("eval_force_bin_log_recovery", true, false))) { // 如果读取到的事件是格式描述事件且二进制日志正在使用
       LogErr(INFORMATION_LEVEL, ER_BINLOG_RECOVERING_AFTER_CRASH_USING,
-             opt_name);
-      binlog::Binlog_recovery bl_recovery{binlog_file_reader};
+             opt_name); // 记录恢复信息
+      binlog::Binlog_recovery bl_recovery{binlog_file_reader}; // 二进制日志恢复
       error = bl_recovery     //
                   .recover()  //
-                  .has_failures();
-      valid_pos = bl_recovery.get_valid_pos();
-      binlog_size = binlog_file_reader.ifile()->length();
-      if (error) {
-        if (bl_recovery.is_binlog_malformed())
+                  .has_failures(); // 恢复并检查是否有失败
+      valid_pos = bl_recovery.get_valid_pos(); // 获取有效位置
+      binlog_size = binlog_file_reader.ifile()->length(); // 获取二进制日志大小
+      if (error) { // 如果有错误
+        if (bl_recovery.is_binlog_malformed()) // 如果二进制日志格式错误
           LogErr(ERROR_LEVEL, ER_BINLOG_CRASH_RECOVERY_MALFORMED_LOG, log_name,
                  valid_pos, binlog_file_reader.position(),
-                 bl_recovery.get_failure_message().data());
-        if (bl_recovery.has_engine_recovery_failed())
-          LogErr(ERROR_LEVEL, ER_BINLOG_CRASH_RECOVERY_ERROR_RETURNED_SE);
+                 bl_recovery.get_failure_message().data()); // 记录错误
+        if (bl_recovery.has_engine_recovery_failed()) // 如果存储引擎恢复失败
+          LogErr(ERROR_LEVEL, ER_BINLOG_CRASH_RECOVERY_ERROR_RETURNED_SE); // 记录错误
       }
     } else
-      should_execute_ha_recover = true;
+      should_execute_ha_recover = true; // 设置需要执行存储引擎恢复
 
-    delete ev;
+    delete ev; // 删除事件
 
-    if (error) goto err;
+    if (error) goto err; // 如果有错误，跳转到错误处理
 
     /* Trim the crashed binlog file to last valid transaction
       or event (non-transaction) base on valid_pos. */
-    if (valid_pos > 0) {
+    /* 根据 valid_pos 将崩溃的二进制日志文件修剪到最后一个有效事务或事件（非事务）。 */
+    if (valid_pos > 0) { // 如果有效位置大于 0
       std::unique_ptr<Binlog_ofile> ofile(
-          Binlog_ofile::open_existing(key_file_binlog, log_name, MYF(MY_WME)));
+          Binlog_ofile::open_existing(key_file_binlog, log_name, MYF(MY_WME))); // 打开现有的二进制日志文件
 
-      if (!ofile) {
-        LogErr(ERROR_LEVEL, ER_BINLOG_CANT_OPEN_CRASHED_BINLOG);
-        return -1;
+      if (!ofile) { // 如果文件打开失败
+        LogErr(ERROR_LEVEL, ER_BINLOG_CANT_OPEN_CRASHED_BINLOG); // 记录错误
+        return -1; // 返回错误码 -1
       }
 
       /* Change binlog file size to valid_pos */
-      if (valid_pos < binlog_size) {
-        if (ofile->truncate(valid_pos)) {
-          LogErr(ERROR_LEVEL, ER_BINLOG_CANT_TRIM_CRASHED_BINLOG);
-          return -1;
+      /* 将二进制日志文件大小更改为 valid_pos */
+      if (valid_pos < binlog_size) { // 如果有效位置小于二进制日志大小
+        if (ofile->truncate(valid_pos)) { // 截断文件
+          LogErr(ERROR_LEVEL, ER_BINLOG_CANT_TRIM_CRASHED_BINLOG); // 记录错误
+          return -1; // 返回错误码 -1
         }
         LogErr(INFORMATION_LEVEL, ER_BINLOG_CRASHED_BINLOG_TRIMMED, log_name,
-               binlog_size, valid_pos, valid_pos);
+               binlog_size, valid_pos, valid_pos); // 记录修剪信息
       }
 
       /* Clear LOG_EVENT_BINLOG_IN_USE_F */
-      uchar flags = 0;
-      if (ofile->update(&flags, 1, BIN_LOG_HEADER_SIZE + FLAGS_OFFSET)) {
+      /* 清除 LOG_EVENT_BINLOG_IN_USE_F 标志 */
+      uchar flags = 0; // 标志
+      if (ofile->update(&flags, 1, BIN_LOG_HEADER_SIZE + FLAGS_OFFSET)) { // 更新文件
         LogErr(ERROR_LEVEL,
-               ER_BINLOG_CANT_CLEAR_IN_USE_FLAG_FOR_CRASHED_BINLOG);
-        return -1;
+               ER_BINLOG_CANT_CLEAR_IN_USE_FLAG_FOR_CRASHED_BINLOG); // 记录错误
+        return -1; // 返回错误码 -1
       }
     }  // end if (valid_pos > 0)
   }
 
 err:
-  if (should_execute_ha_recover) {
-    error = ha_recover();
-    if (error) LogErr(ERROR_LEVEL, ER_BINLOG_CRASH_RECOVERY_ERROR_RETURNED_SE);
+  if (should_execute_ha_recover) { // 如果需要执行存储引擎恢复
+    error = ha_recover(); // 执行存储引擎恢复
+    if (error) LogErr(ERROR_LEVEL, ER_BINLOG_CRASH_RECOVERY_ERROR_RETURNED_SE); // 记录错误
   }
-  return error;
+  return error; // 返回错误码
 }
 
 /**

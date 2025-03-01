@@ -492,12 +492,15 @@ class DBLWR {
     return (dblwr::recv::reduced_load(m_pages));
   }
 
-  /** Restore pages from the double write buffer to the tablespace.
+/** Restore pages from the double write buffer to the tablespace.
   @param[in]    space           Tablespace pages to restore,
                                   if set to nullptr then try
                                   and restore all. */
+/** 从双写缓冲区恢复页面到表空间。
+  @param[in]    space           要恢复的表空间页面，
+                                  如果设置为 nullptr，则尝试恢复所有页面。 */
   dberr_t recover(fil_space_t *space = nullptr) noexcept {
-    return dblwr::recv::recover(m_pages, space);
+    return dblwr::recv::recover(m_pages, space); // 调用 dblwr::recv::recover 函数恢复页面
   }
 
   /** Find a doublewrite copy of a page.

@@ -276,18 +276,20 @@ inline trx_id_t trx_sys_get_next_trx_id_or_no() {
 
 /** Determine if there are incomplete transactions in the system.
 @return whether incomplete transactions need rollback */
+/** 确定系统中是否有不完整的事务。
+@return 是否需要回滚不完整的事务 */
 static inline bool trx_sys_need_rollback() {
   ulint n_trx;
 
-  trx_sys_mutex_enter();
+  trx_sys_mutex_enter(); // 进入事务系统互斥锁
 
-  n_trx = UT_LIST_GET_LEN(trx_sys->rw_trx_list);
-  ut_ad(n_trx >= trx_sys->n_prepared_trx);
-  n_trx -= trx_sys->n_prepared_trx;
+  n_trx = UT_LIST_GET_LEN(trx_sys->rw_trx_list); // 获取读写事务列表的长度
+  ut_ad(n_trx >= trx_sys->n_prepared_trx); // 断言事务数量大于等于已准备事务数量
+  n_trx -= trx_sys->n_prepared_trx; // 减去已准备事务数量
 
-  trx_sys_mutex_exit();
+  trx_sys_mutex_exit(); // 退出事务系统互斥锁
 
-  return (n_trx > 0);
+  return (n_trx > 0); // 返回是否有不完整的事务
 }
 
 static inline void trx_sys_rw_trx_add(trx_t *trx) {

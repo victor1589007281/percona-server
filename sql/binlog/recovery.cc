@@ -41,6 +41,8 @@ my_off_t binlog::Binlog_recovery::get_valid_pos() const {
 
 bool binlog::Binlog_recovery::has_failures() const {
   return this->m_is_malformed || this->m_no_engine_recovery;
+  // 返回是否有失败
+  // 如果 m_is_malformed 或 m_no_engine_recovery 为 true，则表示有失败
 }
 
 bool binlog::Binlog_recovery::is_binlog_malformed() const {
@@ -56,51 +58,52 @@ std::string const &binlog::Binlog_recovery::get_failure_message() const {
 }
 
 binlog::Binlog_recovery &binlog::Binlog_recovery::recover() {
-  binlog::tools::Iterator it{&this->m_reader};
-  it.set_copy_event_buffer();
-  this->m_valid_pos = this->m_reader.position();
+  binlog::tools::Iterator it{&this->m_reader}; // 创建迭代器
+  it.set_copy_event_buffer(); // 设置复制事件缓冲区
+  this->m_valid_pos = this->m_reader.position(); // 设置有效位置
 
-  for (Log_event *ev = it.begin(); ev != it.end(); ev = it.next()) {
-    switch (ev->get_type_code()) {
-      case binary_log::QUERY_EVENT: {
-        this->process_query_event(dynamic_cast<Query_log_event &>(*ev));
+  for (Log_event *ev = it.begin(); ev != it.end(); ev = it.next()) { // 遍历日志事件
+    switch (ev->get_type_code()) { // 获取事件类型代码
+      case binary_log::QUERY_EVENT: { // 查询事件
+        this->process_query_event(dynamic_cast<Query_log_event &>(*ev)); // 处理查询事件
         break;
       }
-      case binary_log::XID_EVENT: {
-        this->process_xid_event(dynamic_cast<Xid_log_event &>(*ev));
+      case binary_log::XID_EVENT: { // XID 事件
+        this->process_xid_event(dynamic_cast<Xid_log_event &>(*ev)); // 处理 XID 事件
         break;
       }
-      case binary_log::XA_PREPARE_LOG_EVENT: {
+      case binary_log::XA_PREPARE_LOG_EVENT: { // XA 预处理日志事件
         this->process_xa_prepare_event(
-            dynamic_cast<XA_prepare_log_event &>(*ev));
+            dynamic_cast<XA_prepare_log_event &>(*ev)); // 处理 XA 预处理日志事件
         break;
       }
-      default: {
+      default: { // 其他事件
         break;
       }
     }
 
     // Whenever the current position is at a transaction boundary, save it
     // to m_valid_pos
+    // 每当当前位置在事务边界时，将其保存到 m_valid_pos
     if (!this->m_is_malformed && !this->m_in_transaction &&
         !is_gtid_event(ev) && !is_session_control_event(ev))
-      this->m_valid_pos = this->m_reader.position();
+      this->m_valid_pos = this->m_reader.position(); // 更新有效位置
 
-    delete ev;
-    ev = nullptr;
-    this->m_is_malformed = it.has_error() || this->m_is_malformed;
-    if (this->m_is_malformed) break;
+    delete ev; // 删除事件
+    ev = nullptr; // 将事件指针置为空
+    this->m_is_malformed = it.has_error() || this->m_is_malformed; // 检查是否有错误
+    if (this->m_is_malformed) break; // 如果有错误，退出循环
   }
 
-  if (!this->m_is_malformed && total_ha_2pc > 1) {
-    Xa_state_list xa_list{this->m_external_xids};
-    this->m_no_engine_recovery = ha_recover(&this->m_internal_xids, &xa_list);
-    if (this->m_no_engine_recovery) {
-      this->m_failure_message.assign("Recovery failed in storage engines");
+  if (!this->m_is_malformed && total_ha_2pc > 1) { // 如果没有错误且总共 2PC 大于 1
+    Xa_state_list xa_list{this->m_external_xids}; // 创建 XA 状态列表
+    this->m_no_engine_recovery = ha_recover(&this->m_internal_xids, &xa_list); // 恢复存储引擎
+    if (this->m_no_engine_recovery) { // 如果恢复失败
+      this->m_failure_message.assign("Recovery failed in storage engines"); // 设置失败消息
     }
   }
 
-  return (*this);
+  return (*this); // 返回恢复对象
 }
 
 void binlog::Binlog_recovery::process_query_event(Query_log_event const &ev) {

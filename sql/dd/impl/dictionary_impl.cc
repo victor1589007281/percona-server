@@ -102,14 +102,19 @@ const String_type Dictionary_impl::DEFAULT_CATALOG_NAME("def");
 ///////////////////////////////////////////////////////////////////////////
 
 bool Dictionary_impl::init(enum_dd_init_type dd_init) {
+  // 检查初始化类型是否为DD_INITIALIZE或DD_RESTART_OR_UPGRADE
   if (dd_init == enum_dd_init_type::DD_INITIALIZE ||
       dd_init == enum_dd_init_type::DD_RESTART_OR_UPGRADE) {
+    // 断言确保当前没有已存在的Dictionary_impl实例
     assert(!Dictionary_impl::s_instance);
 
+    // 如果已经存在实例，返回false
     if (Dictionary_impl::s_instance) return false; /* purecov: inspected */
 
+    // 创建一个新的Dictionary_impl实例
     std::unique_ptr<Dictionary_impl> d(new Dictionary_impl());
 
+    // 将新创建的实例赋值给静态成员变量s_instance
     Dictionary_impl::s_instance = d.release();
   }
 
@@ -120,13 +125,17 @@ bool Dictionary_impl::init(enum_dd_init_type dd_init) {
     Upgrade process needs heap engine initialized, hence parameter 'true'
     is passed to the function.
   */
+  // 初始化优化器成本模型，但在数据字典初始化完成后删除它。
+  // 这是因为数据字典初始化过程中需要成本模型，但在插件初始化后需要重新初始化。
+  // 升级过程需要堆引擎初始化，因此传递参数'true'给函数。
   bool cost_constant_inited = false;
   if (cost_constant_cache == nullptr) {
-    init_optimizer_cost_module(true);
-    cost_constant_inited = true;
+    init_optimizer_cost_module(true);  // 初始化优化器成本模型
+    cost_constant_inited = true;  // 标记成本模型已初始化
   }
 
   // Disable table encryption privilege checks for system threads.
+  // 禁用系统线程的表加密权限检查
   bool saved_table_encryption_privilege_check =
       opt_table_encryption_privilege_check;
   opt_table_encryption_privilege_check = false;
@@ -135,15 +144,18 @@ bool Dictionary_impl::init(enum_dd_init_type dd_init) {
     Install or start or upgrade the dictionary
     depending on bootstrapping option.
   */
+  // 根据启动选项安装、启动或升级数据字典
 
   bool result = false;
 
   // Creation of Data Dictionary through current server
+  // 通过当前服务器创建数据字典
   if (dd_init == enum_dd_init_type::DD_INITIALIZE)
     result = ::bootstrap::run_bootstrap_thread(
         nullptr, nullptr, &bootstrap::initialize, SYSTEM_THREAD_DD_INITIALIZE);
 
   // Creation of INFORMATION_SCHEMA system views.
+  // 创建INFORMATION_SCHEMA系统视图
   else if (dd_init == enum_dd_init_type::DD_INITIALIZE_SYSTEM_VIEWS)
     result = ::bootstrap::run_bootstrap_thread(nullptr, nullptr,
                                                &dd::info_schema::initialize,
@@ -153,29 +165,35 @@ bool Dictionary_impl::init(enum_dd_init_type dd_init) {
     Creation of Dictionary Tables in old Data Directory
     This function also takes care of normal server restart.
   */
+  // 在旧数据目录中创建数据字典表
+  // 该函数还处理正常的服务器重启
   else if (dd_init == enum_dd_init_type::DD_RESTART_OR_UPGRADE)
     result = ::bootstrap::run_bootstrap_thread(
         nullptr, nullptr, &upgrade_57::do_pre_checks_and_initialize_dd,
         SYSTEM_THREAD_DD_INITIALIZE);
 
   // Populate metadata in DD tables from old data directory and do cleanup.
+  // 从旧数据目录填充元数据到数据字典表并进行清理
   else if (dd_init == enum_dd_init_type::DD_POPULATE_UPGRADE)
     result = ::bootstrap::run_bootstrap_thread(
         nullptr, nullptr, &upgrade_57::fill_dd_and_finalize,
         SYSTEM_THREAD_DD_INITIALIZE);
 
   // Delete DD tables and do cleanup in case of error in upgrade
+  // 在升级过程中出现错误时删除数据字典表并进行清理
   else if (dd_init == enum_dd_init_type::DD_DELETE)
     result = ::bootstrap::run_bootstrap_thread(
         nullptr, nullptr, &upgrade_57::terminate, SYSTEM_THREAD_DD_INITIALIZE);
 
   // Update server and plugin I_S table metadata into DD tables.
+  // 更新服务器和插件的I_S表元数据到数据字典表中
   else if (dd_init == enum_dd_init_type::DD_UPDATE_I_S_METADATA)
     result = ::bootstrap::run_bootstrap_thread(
         nullptr, nullptr, &dd::info_schema::update_I_S_metadata,
         SYSTEM_THREAD_DD_INITIALIZE);
 
   // Creation of non-dd-based INFORMATION_SCHEMA system views.
+  // 创建非基于数据字典的INFORMATION_SCHEMA系统视图
   else if (dd_init ==
            enum_dd_init_type::DD_INITIALIZE_NON_DD_BASED_SYSTEM_VIEWS)
     result = ::bootstrap::run_bootstrap_thread(
@@ -183,12 +201,14 @@ bool Dictionary_impl::init(enum_dd_init_type dd_init) {
         SYSTEM_THREAD_DD_INITIALIZE);
 
   // Restore the table_encryption_privilege_check.
+  // 恢复表加密权限检查
   opt_table_encryption_privilege_check = saved_table_encryption_privilege_check;
 
   /* Now that the dd is initialized, delete the cost model. */
+  // 现在数据字典已初始化，删除成本模型
   if (cost_constant_inited) delete_optimizer_cost_module();
 
-  return result;
+  return result;  // 返回初始化结果
 }
 
 ///////////////////////////////////////////////////////////////////////////

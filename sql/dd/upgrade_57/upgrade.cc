@@ -779,11 +779,14 @@ static bool migrate_stats(THD *thd) {
 }
 
 // Initialize dictionary in case of server restart.
+// 在服务器重启的情况下初始化数据字典
 static bool restart_dictionary(THD *thd) {
   // RAII to handle error messages.
+  // 使用 RAII 机制处理错误消息
   dd::upgrade::Bootstrap_error_handler bootstrap_error_handler;
 
   // RAII to handle error in execution of CREATE TABLE.
+  // 使用 RAII 机制处理 CREATE TABLE 执行中的错误
   Key_length_error_handler key_error_handler;
   /*
     Ignore ER_TOO_LONG_KEY for dictionary tables during restart.
@@ -791,13 +794,16 @@ static bool restart_dictionary(THD *thd) {
     cached objects and not physical tables.
     TODO: Workaround due to bug#20629014. Remove when the bug is fixed.
   */
+  // 在重启期间忽略字典表的 ER_TOO_LONG_KEY 错误。
+  // 不要将错误打印到错误日志中，因为我们只是创建缓存对象而不是物理表。
+  // TODO: 由于 bug#20629014 的临时解决方案。修复该 bug 后移除。
   bool error = false;
-  thd->push_internal_handler(&key_error_handler);
-  bootstrap_error_handler.set_log_error(false);
-  error = bootstrap::restart(thd);
-  bootstrap_error_handler.set_log_error(true);
-  thd->pop_internal_handler();
-  return error;
+  thd->push_internal_handler(&key_error_handler);  // 将错误处理程序推入 THD 的内部处理程序栈
+  bootstrap_error_handler.set_log_error(false);  // 设置不记录错误日志
+  error = bootstrap::restart(thd);  // 调用 bootstrap::restart 重启数据字典
+  bootstrap_error_handler.set_log_error(true);  // 恢复记录错误日志
+  thd->pop_internal_handler();  // 弹出错误处理程序
+  return error;  // 返回错误状态
 }
 
 /**
@@ -834,24 +840,27 @@ static bool ha_upgrade_engine_logs(THD *thd) {
 }
 
 // Initialize DD in case of upgrade.
+// 在升级情况下初始化数据字典（DD）
 bool do_pre_checks_and_initialize_dd(THD *thd) {
   // Set both variables false in the beginning
+  // 在开始时将两个变量设置为false
   set_in_progress(false);
   opt_initialize = false;
   set_allow_sdi_creation(true);
 
-  Disable_autocommit_guard autocommit_guard(thd);
-  Dictionary_impl *d = dd::Dictionary_impl::instance();
-  assert(d);
-  cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+  Disable_autocommit_guard autocommit_guard(thd);  // 禁用自动提交
+  Dictionary_impl *d = dd::Dictionary_impl::instance();  // 获取数据字典实例
+  assert(d);  // 断言数据字典实例存在
+  cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());  // 自动释放字典客户端
 
   char path[FN_REFLEN + 1];
   bool not_used;
   build_table_filename(path, sizeof(path) - 1, "", "mysql", ".ibd", 0,
-                       &not_used);
-  bool exists_mysql_tablespace = (!my_access(path, F_OK));
+                       &not_used);  // 构建mysql.ibd文件路径
+  bool exists_mysql_tablespace = (!my_access(path, F_OK));  // 检查mysql.ibd文件是否存在
 
   // Check existence of mysql/plugin.frm
+  // 检查mysql/plugin.frm文件是否存在
   build_table_filename(path, sizeof(path) - 1, "mysql", "plugin", ".frm", 0,
                        &not_used);
   bool exists_plugin_frm = (!my_access(path, F_OK));
@@ -863,39 +872,45 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     Server restart is not possible without mysql.ibd.
     Exit with an error.
   */
+  // 如果mysql.ibd和mysql/plugin.frm都不存在，则这不是重启也不是原地升级的情况。
+  // 升级过程依赖于mysql.plugin表。没有mysql.ibd，服务器无法重启。退出并报错。
   if (!exists_mysql_tablespace && !exists_plugin_frm) {
-    LogErr(ERROR_LEVEL, ER_DD_UPGRADE_FAILED_FIND_VALID_DATA_DIR);
+    LogErr(ERROR_LEVEL, ER_DD_UPGRADE_FAILED_FIND_VALID_DATA_DIR);  // 记录错误
     return true;
   }
 
   // Read stage of upgrade from the file.
+  // 从文件中读取升级的阶段
   Upgrade_status upgrade_status;
-  bool upgrade_status_exists = upgrade_status.exists();
+  bool upgrade_status_exists = upgrade_status.exists();  // 检查升级状态文件是否存在
   Upgrade_status::enum_stage upgrade_stage = Upgrade_status::enum_stage::NONE;
   if (upgrade_status_exists) {
-    upgrade_stage = upgrade_status.get();
+    upgrade_stage = upgrade_status.get();  // 获取升级阶段
 
     DBUG_EXECUTE_IF("dd_upgrade_debug_info",
                     sql_print_information("Status of upgrade is %d",
-                                          static_cast<int>(upgrade_stage)););
+                                          static_cast<int>(upgrade_stage)););  // 调试信息
   }
 
   // Upgrade data directory from mysql-5.7
+  // 从MySQL 5.7升级数据目录
   if (!exists_mysql_tablespace && !upgrade_status_exists) {
     if (opt_upgrade_mode == UPGRADE_NONE) {
-      LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_OFF);
+      LogErr(ERROR_LEVEL, ER_SERVER_UPGRADE_OFF);  // 记录错误
       return true;
     }
 
     // Create the file to track stages of upgrade.
+    // 创建文件以跟踪升级阶段
     if (upgrade_status.create()) return true;
 
     /*
       If mysql.idb does not exist and upgrade stage tracking file
       does not exist, we are in upgrade mode.
     */
-    LogErr(SYSTEM_LEVEL, ER_DD_UPGRADE_START);
-    sysd::notify("STATUS=Data Dictionary upgrade from MySQL 5.7 in progress\n");
+    // 如果mysql.ibd不存在且升级阶段跟踪文件不存在，则我们处于升级模式
+    LogErr(SYSTEM_LEVEL, ER_DD_UPGRADE_START);  // 记录系统信息
+    sysd::notify("STATUS=Data Dictionary upgrade from MySQL 5.7 in progress\n");  // 通知系统升级进行中
   }
 
   /*
@@ -909,18 +924,21 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     mode. It would create mysql tablespace. Do nothing here, we will treat this
     as upgrade.
   */
-
+  // 如果mysql.ibd存在，则以重启模式初始化InnoDB。
+  // 否则，以升级模式初始化InnoDB以创建mysql表空间并升级redo和undo日志。
+  // 如果mysql.ibd不存在但升级阶段跟踪文件存在，这可能发生在服务器检测到需要升级的罕见情况下。
+  // 服务器创建了mysql_dd_upgrade_info文件，但在创建mysql.ibd之前崩溃或被杀死。在这种情况下，InnoDB已经在升级模式下初始化。它将创建mysql表空间。这里不做任何操作，我们将这种情况视为升级。
   if (exists_mysql_tablespace) {
     if (bootstrap::DDSE_dict_init(thd, DICT_INIT_CHECK_FILES,
                                   d->get_target_dd_version())) {
-      LogErr(ERROR_LEVEL, ER_DD_SE_INIT_FAILED);
+      LogErr(ERROR_LEVEL, ER_DD_SE_INIT_FAILED);  // 记录错误
       return true;
     }
   } else {
     if (bootstrap::DDSE_dict_init(thd, DICT_INIT_UPGRADE_57_FILES,
                                   d->get_target_dd_version())) {
-      LogErr(ERROR_LEVEL, ER_DD_UPGRADE_FAILED_INIT_DD_SE);
-      Upgrade_status().remove();
+      LogErr(ERROR_LEVEL, ER_DD_UPGRADE_FAILED_INIT_DD_SE);  // 记录错误
+      Upgrade_status().remove();  // 删除升级状态文件
       return true;
     }
   }
@@ -929,6 +947,8 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     Add status to mark initialization of InnoDB.
     This indicates undo and redo logs are upgraded and mysql.ibd exists.
   */
+  // 添加状态以标记InnoDB的初始化。
+  // 这表示undo和redo日志已升级，且mysql.ibd存在。
   if (!exists_mysql_tablespace && !upgrade_status_exists) {
     if (upgrade_status.update(Upgrade_status::enum_stage::DICT_SPACE_CREATED))
       return true;
@@ -942,6 +962,8 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
                       revert all changes done by upgrade and data directory
                       should be reusable by 5.7 server.
                     */
+                    // 服务器在升级5.7数据目录时会崩溃。这将使服务器处于不一致状态。
+                    // 跟踪升级的文件将写入阶段1。下次在同一数据目录上重启服务器时，应恢复升级所做的所有更改，并且数据目录应可被5.7服务器重用。
                     DBUG_SUICIDE(););
   }
 
@@ -952,8 +974,10 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     For ordinary restart of an 8.0 server, and for upgrades post 8.0,
     this code path will be taken.
   */
+  // 如果mysql.ibd存在且升级阶段跟踪文件不存在，则重启服务器。
+  // 对于8.0服务器的普通重启以及8.0之后的升级，将采用此代码路径。
   if (exists_mysql_tablespace && !upgrade_status_exists) {
-    return (restart_dictionary(thd));
+    return (restart_dictionary(thd));  // 重启数据字典
   }
 
   if (exists_mysql_tablespace && upgrade_status_exists) {
@@ -962,6 +986,7 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
       get stage of upgrade. This is happen only in extreme cases like
       Server crash or server kill.
     */
+    // 如果mysql.ibd存在且升级阶段跟踪文件存在，则获取升级阶段。这仅在服务器崩溃或被杀死等极端情况下发生。
     switch (upgrade_stage) {
       case Upgrade_status::enum_stage::STARTED:
       case Upgrade_status::enum_stage::DICT_SPACE_CREATED: {
@@ -977,8 +1002,11 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
 
           Error out, delete mysql.ibd, downgrade innodb undo and redo logs.
         */
-        LogErr(ERROR_LEVEL, ER_DD_ABORTING_PARTIAL_UPGRADE);
-        terminate(thd);
+        // 升级阶段0 DD_UPGRADE_STARTED：升级阶段跟踪文件已创建，但InnoDB未完全初始化，mysql.ibd已创建。InnoDB未创建新的undo日志。
+        // 升级阶段1 DD_UPGRADE_DICT_SPACE_CREATED：字典表未完全创建，InnoDB undo日志不应有任何新数据。
+        // 报错，删除mysql.ibd，降级InnoDB undo和redo日志。
+        LogErr(ERROR_LEVEL, ER_DD_ABORTING_PARTIAL_UPGRADE);  // 记录错误
+        terminate(thd);  // 终止升级
         return true;
       }
       case Upgrade_status::enum_stage::DICT_TABLES_CREATED:
@@ -997,13 +1025,17 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
           then error out and delete mysql.ibd, downgrade innodb undo
           and redo logs.
         */
-
-        LogErr(ERROR_LEVEL, ER_DD_UPGRADE_FOUND_PARTIALLY_UPGRADED_DD_ABORT);
+        // 升级阶段2 DD_UPGRADE_DICT_TABLES_CREATED：表示字典表已创建，但字典未完全初始化。这是一种罕见情况。
+        // 升级阶段3 DD_UPGRADE_DICTIONARY_CREATED：表示字典表初始化已完成，但用户表未完全升级。
+        // InnoDB在这两个阶段都会有undo日志。
+        // 初始化字典，启动InnoDB恢复以清空undo日志，然后报错并删除mysql.ibd，降级InnoDB undo和redo日志。
+        LogErr(ERROR_LEVEL, ER_DD_UPGRADE_FOUND_PARTIALLY_UPGRADED_DD_ABORT);  // 记录错误
 
         // Try to Initialize dictionary to empty undo log.
+        // 尝试初始化字典以清空undo日志
         bootstrap::recover_innodb_upon_upgrade(thd);
 
-        terminate(thd);
+        terminate(thd);  // 终止升级
         return true;
       }
       case Upgrade_status::enum_stage::USER_TABLE_UPGRADED: {
@@ -1013,16 +1045,20 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
 
           Restart dictionary, then update SDI information.
         */
+        // 表示用户表已升级，但表空间中的SDI信息未更新。
+        // 重启字典，然后更新SDI信息。
         LogErr(INFORMATION_LEVEL,
-               ER_DD_UPGRADE_FOUND_PARTIALLY_UPGRADED_DD_CONTINUE);
+               ER_DD_UPGRADE_FOUND_PARTIALLY_UPGRADED_DD_CONTINUE);  // 记录信息
         if (restart_dictionary(thd)) return true;
 
         // Ignore error in this stage and continue with server restart.
+        // 在此阶段忽略错误并继续服务器重启
         (void)add_sdi_info(thd);
 
         (void)migrate_stats(thd);
 
         // Cleanup after successful upgrade.
+        // 成功升级后进行清理
         finalize_upgrade(thd);
 
         return false;
@@ -1032,19 +1068,21 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
           It indicates that SDI information was created but stats migration
           was not complete. Ignore and continue with server restart.
         */
-
+        // 表示SDI信息已创建，但统计信息迁移未完成。忽略并继续服务器重启。
         LogErr(INFORMATION_LEVEL,
-               ER_DD_UPGRADE_FOUND_PARTIALLY_UPGRADED_DD_CONTINUE);
+               ER_DD_UPGRADE_FOUND_PARTIALLY_UPGRADED_DD_CONTINUE);  // 记录信息
 
         if (restart_dictionary(thd)) return true;
 
         // Cleanup after successful upgrade.
+        // 成功升级后进行清理
         finalize_upgrade(thd);
 
         return false;
       }
       case Upgrade_status::enum_stage::NONE:
         // Try to restart server in case this impossible scenario hits
+        // 如果遇到这种不可能的情况，尝试重启服务器
         return restart_dictionary(thd);
 
     }  // End of switch
@@ -1054,12 +1092,13 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     Create New DD tables in DD and storage engine. Mark
     dd_upgrade_flag to true to indicate that we are upgrading.
   */
+  // 在数据字典和存储引擎中创建新的DD表。将dd_upgrade_flag标记为true以表示我们正在升级。
   set_allow_sdi_creation(true);
   set_in_progress(true);
   opt_initialize = true;
 
   if (check_for_dd_tables()) {
-    LogErr(ERROR_LEVEL, ER_DD_FRM_EXISTS_FOR_TABLE);
+    LogErr(ERROR_LEVEL, ER_DD_FRM_EXISTS_FOR_TABLE);  // 记录错误
     return true;
   }
 
@@ -1067,7 +1106,10 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     Ignore ER_TOO_LONG_KEY for dictionary tables creation.
     TODO: Workaround due to bug#20629014. Remove when the bug is fixed.
   */
+  // 忽略字典表创建时的ER_TOO_LONG_KEY错误。
+  // TODO: 由于bug#20629014的临时解决方案。修复该bug后移除。
   // RAII to handle error in execution of CREATE TABLE.
+  // RAII用于处理CREATE TABLE执行中的错误
   Key_length_error_handler key_error_handler;
   thd->push_internal_handler(&key_error_handler);
 
@@ -1080,23 +1122,28 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
   }
 
   // Add status to mark creation and initialization of dictionary.
+  // 添加状态以标记字典的创建和初始化
   if (Upgrade_status().update(Upgrade_status::enum_stage::DICTIONARY_CREATED))
     return true;
 
   thd->pop_internal_handler();
 
-  LogErr(INFORMATION_LEVEL, ER_DD_CREATED_FOR_UPGRADE);
+  LogErr(INFORMATION_LEVEL, ER_DD_CREATED_FOR_UPGRADE);  // 记录信息
 
   // Rename .ibd files for innodb stats tables
+  // 重命名InnoDB统计表的.ibd文件
   rename_stats_tables();
 
   // Mark opt_initiazlize false after creating dictionary tables.
+  // 在创建字典表后将opt_initialize标记为false
   opt_initialize = false;
 
   // Mark flag true to skip creation of SDI information in tablespaces.
+  // 将标志设置为true以跳过表空间中的SDI信息创建
   set_allow_sdi_creation(false);
 
   // Migrate tablespaces from SE to dictionary.
+  // 将表空间从存储引擎迁移到字典
   if (ha_migrate_tablespaces(thd)) {
     terminate(thd);
     return true;
@@ -1104,6 +1151,7 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
 
   // Transfer compression dictionary data from InnoDB SYS_ZIP_DICT
   // to mysql.compression_dictionary table
+  // 将压缩字典数据从InnoDB SYS_ZIP_DICT传输到mysql.compression_dictionary表
   if (compression_dict::upgrade_transfer_compression_dict_data(thd)) {
     terminate(thd);
     return true;
@@ -1113,6 +1161,7 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     Migrate meta data of plugin table to DD.
     It is used in plugin initialization.
   */
+  // 将插件表的元数据迁移到数据字典中。它用于插件初始化。
   if (migrate_plugin_table_to_dd(thd)) {
     terminate(thd);
     return true;
@@ -1126,12 +1175,14 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
     present in 5.7, then we create the schema explicitly, if the server is
     configured to use the performance schema.
   */
+  // 插件可能需要创建性能模式表。在从5.7升级时，我们还没有在mysql.schemata中为性能模式创建条目，因此创建此类表将失败。为了避免这种情况，如果5.7中存在该模式，我们在此迁移该条目。如果5.7中不存在性能模式，则如果服务器配置为使用性能模式，则显式创建该模式。
   size_t path_len = build_table_filename(
       path, sizeof(path) - 1, PERFORMANCE_SCHEMA_DB_NAME.str, "", "", 0);
   path[path_len - 1] = 0;  // Remove last '/' from path
   MY_STAT stat_info;
 
   // RAII to handle error messages.
+  // RAII用于处理错误消息
   dd::upgrade::Bootstrap_error_handler bootstrap_error_handler;
 
   if (mysql_file_stat(key_file_misc, path, &stat_info, MYF(0)) != nullptr) {
@@ -1148,6 +1199,7 @@ bool do_pre_checks_and_initialize_dd(THD *thd) {
 #endif
 
   // Reset flag
+  // 重置标志
   set_allow_sdi_creation(true);
 
   return false;
