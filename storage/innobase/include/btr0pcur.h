@@ -502,16 +502,27 @@ struct btr_pcur_t {
   import_ctx_t *import_ctx{nullptr};
 };
 
+// storage/innobase/include/btr0pcur.h (505-515)
+
+/**
+ * @brief 初始化 B+树 游标对象。
+ * 
+ * 该函数用于初始化 B+树 游标对象，设置默认的读取级别，并清除相关的状态和缓冲区。
+ * 
+ * @param read_level 读取级别，用于指定在 B+树 中读取数据时的层级。
+ */
 inline void btr_pcur_t::init(size_t read_level) {
+  // 设置默认的页面获取类型为 NORMAL
   set_fetch_type(Page_fetch::NORMAL);
 
-  m_old_stored = false;
-  m_old_rec_buf = nullptr;
-  m_old_rec = nullptr;
-  m_btr_cur.rtr_info = nullptr;
-  m_read_level = read_level;
-  import_ctx = nullptr;
-  m_block_when_stored.clear();
+  // 初始化游标的状态和缓冲区
+  m_old_stored = false;  // 标记旧的记录是否已存储
+  m_old_rec_buf = nullptr;  // 旧的记录缓冲区指针，初始化为空
+  m_old_rec = nullptr;  // 旧的记录指针，初始化为空
+  m_btr_cur.rtr_info = nullptr;  // R-tree 相关信息指针，初始化为空
+  m_read_level = read_level;  // 设置读取级别
+  import_ctx = nullptr;  // 导入上下文指针，初始化为空
+  m_block_when_stored.clear();  // 清除存储时的块信息
 }
 
 inline void btr_pcur_t::open(dict_index_t *index, ulint level,

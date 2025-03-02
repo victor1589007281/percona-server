@@ -261,18 +261,18 @@ void srv_conc_force_exit_innodb(trx_t *trx) /*!< in: transaction object
                                             associated with the thread */
 {
   if ((trx->mysql_thd != nullptr &&
-       thd_is_replication_slave_thread(trx->mysql_thd)) ||
-      trx->declared_to_be_inside_innodb == false) {
-    return;
+       thd_is_replication_slave_thread(trx->mysql_thd)) ||  // 如果事务的 MySQL 线程是复制从线程
+      trx->declared_to_be_inside_innodb == false) {  // 或者事务未被声明为在 InnoDB 内部
+    return;  // 直接返回
   }
 
-  srv_conc_exit_innodb_with_atomics(trx);
+  srv_conc_exit_innodb_with_atomics(trx);  // 使用原子操作强制退出 InnoDB
 
 #ifdef UNIV_DEBUG
   {
-    btrsea_sync_check check(trx->has_search_latch);
+    btrsea_sync_check check(trx->has_search_latch);  // 在调试模式下检查搜索锁
 
-    ut_ad(!sync_check_iterate(check));
+    ut_ad(!sync_check_iterate(check));  // 断言没有其他线程持有搜索锁
   }
 #endif /* UNIV_DEBUG */
 }

@@ -2171,34 +2171,34 @@ bool srv_master_thread_is_active() {
  in the MySQL interface. Note that there is a small chance that the master
  thread stays suspended (we do not protect our operation with the
  srv_sys_t->mutex, for performance reasons). */
-void srv_active_wake_master_thread_low() {
-  ut_ad(!srv_read_only_mode);
-  ut_ad(!srv_sys_mutex_own());
+ void srv_active_wake_master_thread_low() {
+  ut_ad(!srv_read_only_mode);  // 断言服务器不是只读模式
+  ut_ad(!srv_sys_mutex_own());  // 断言当前线程不持有 srv_sys 的互斥锁
 
-  srv_inc_activity_count();
+  srv_inc_activity_count();  // 增加活动计数
 
-  if (srv_sys->n_threads_active[SRV_MASTER] == 0) {
-    srv_slot_t *slot;
+  if (srv_sys->n_threads_active[SRV_MASTER] == 0) {  // 如果主线程当前没有活动
+    srv_slot_t *slot;  // 定义线程槽位指针
 
-    srv_sys_mutex_enter();
+    srv_sys_mutex_enter();  // 进入 srv_sys 的互斥锁
 
-    slot = &srv_sys->sys_threads[SRV_MASTER_SLOT];
+    slot = &srv_sys->sys_threads[SRV_MASTER_SLOT];  // 获取主线程的槽位
 
-    /* Only if the master thread has been started. */
+    /* Only if the master thread has been started. */  // 仅当主线程已启动时
 
-    if (slot->in_use) {
-      ut_a(srv_slot_get_type(slot) == SRV_MASTER);
+    if (slot->in_use) {  // 如果槽位正在使用
+      ut_a(srv_slot_get_type(slot) == SRV_MASTER);  // 断言槽位类型为主线程
 
-      if (slot->suspended) {
-        slot->suspended = false;
+      if (slot->suspended) {  // 如果主线程被挂起
+        slot->suspended = false;  // 设置挂起标志为 false
 
-        ++srv_sys->n_threads_active[SRV_MASTER];
+        ++srv_sys->n_threads_active[SRV_MASTER];  // 增加活动主线程计数
 
-        os_event_set(slot->event);
+        os_event_set(slot->event);  // 设置事件，唤醒主线程
       }
     }
 
-    srv_sys_mutex_exit();
+    srv_sys_mutex_exit();  // 退出 srv_sys 的互斥锁
   }
 }
 
@@ -3052,50 +3052,50 @@ static void srv_master_wait(srv_slot_t *slot) {
 /** Executes the main loop of the master thread.
 @param[in]   slot     slot reserved as SRV_MASTER */
 static void srv_master_main_loop(srv_slot_t *slot) {
-  if (srv_force_recovery >= SRV_FORCE_NO_BACKGROUND) {
+  if (srv_force_recovery >= SRV_FORCE_NO_BACKGROUND) {  // 如果强制恢复级别大于等于 SRV_FORCE_NO_BACKGROUND
     /* When innodb_force_recovery is at least SRV_FORCE_NO_BACKGROUND,
     we avoid performing active/idle master's tasks. However, we still
     need to ensure that:
       srv_shutdown_state >= SRV_SHUTDOWN_PRE_DD_AND_SYSTEM_TRANSACTIONS,
     after we exited srv_master_main_loop(). Keep waiting until that
-    is satisfied and then exit. */
+    is satisfied and then exit. */  // 当 innodb_force_recovery 至少为 SRV_FORCE_NO_BACKGROUND 时，我们避免执行主线程的主动/空闲任务。然而，我们仍然需要确保在退出 srv_master_main_loop() 后，srv_shutdown_state >= SRV_SHUTDOWN_PRE_DD_AND_SYSTEM_TRANSACTIONS。继续等待直到满足该条件，然后退出。
     while (srv_shutdown_state.load() <
-           SRV_SHUTDOWN_PRE_DD_AND_SYSTEM_TRANSACTIONS) {
-      srv_master_wait(slot);
+           SRV_SHUTDOWN_PRE_DD_AND_SYSTEM_TRANSACTIONS) {  // 当关闭状态小于预数据字典和系统事务关闭状态时继续循环
+      srv_master_wait(slot);  // 主线程等待
     }
-    return;
+    return;  // 返回
   }
 
-  ulint old_activity_count = srv_get_activity_count();
-  ulint old_ibuf_merge_activity_count = srv_get_ibuf_merge_activity_count();
+  ulint old_activity_count = srv_get_activity_count();  // 获取当前活动计数
+  ulint old_ibuf_merge_activity_count = srv_get_ibuf_merge_activity_count();  // 获取当前插入缓冲合并活动计数
 
   while (srv_shutdown_state.load() <
-         SRV_SHUTDOWN_PRE_DD_AND_SYSTEM_TRANSACTIONS) {
-    srv_master_sleep();
+         SRV_SHUTDOWN_PRE_DD_AND_SYSTEM_TRANSACTIONS) {  // 当关闭状态小于预数据字典和系统事务关闭状态时继续循环
+    srv_master_sleep();  // 主线程睡眠
 
-    MONITOR_INC(MONITOR_MASTER_THREAD_SLEEP);
+    MONITOR_INC(MONITOR_MASTER_THREAD_SLEEP);  // 增加主线程睡眠的监控计数
 
-    srv_current_thread_priority = srv_master_thread_priority;
+    srv_current_thread_priority = srv_master_thread_priority;  // 设置当前线程优先级为主线程优先级
 
     /* Just in case - if there is not much free space in redo,
     try to avoid asking for troubles because of extra work
-    performed in such background thread. */
-    srv_main_thread_op_info = "checking free log space";
-    log_free_check();
+    performed in such background thread. */  // 以防万一 - 如果 redo 日志中没有太多空闲空间，尽量避免因为在此类后台线程中执行额外工作而引发问题。
+    srv_main_thread_op_info = "checking free log space";  // 设置主线程操作信息为“检查日志空间”
+    log_free_check();  // 检查日志空间
 
-    if (srv_check_activity(old_activity_count, old_ibuf_merge_activity_count)) {
-      old_activity_count = srv_get_activity_count();
-      old_ibuf_merge_activity_count = srv_get_ibuf_merge_activity_count();
-      srv_master_do_active_tasks();
+    if (srv_check_activity(old_activity_count, old_ibuf_merge_activity_count)) {  // 如果活动计数发生变化
+      old_activity_count = srv_get_activity_count();  // 更新活动计数
+      old_ibuf_merge_activity_count = srv_get_ibuf_merge_activity_count();  // 更新插入缓冲合并活动计数
+      srv_master_do_active_tasks();  // 执行主线程的主动任务
     } else {
-      srv_master_do_idle_tasks();
+      srv_master_do_idle_tasks();  // 执行主线程的空闲任务
     }
 
-    /* Enable undo log encryption if it is set */
-    undo_rotate_default_master_key();
+    /* Enable undo log encryption if it is set */  // 如果设置了 undo 日志加密，则启用它
+    undo_rotate_default_master_key();  // 旋转默认的主密钥
 
-    /* Purge any deleted tablespace pages. */
-    fil_purge();
+    /* Purge any deleted tablespace pages. */  // 清除任何已删除的表空间页面
+    fil_purge();  // 执行表空间页面清除
   }
 }
 
@@ -3129,37 +3129,37 @@ static void srv_master_shutdown_loop() {
 
 /** The master thread controlling the server. */
 void srv_master_thread() {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  srv_slot_t *slot;
+  srv_slot_t *slot;  // 定义线程槽位指针
 
-  THD *thd = create_internal_thd();
+  THD *thd = create_internal_thd();  // 创建内部 THD 对象
 
-  ut_ad(!srv_read_only_mode);
+  ut_ad(!srv_read_only_mode);  // 断言服务器不是只读模式
 
-  srv_main_thread_process_no = os_proc_get_number();
-  srv_main_thread_id = std::this_thread::get_id();
+  srv_main_thread_process_no = os_proc_get_number();  // 获取主线程的进程号
+  srv_main_thread_id = std::this_thread::get_id();  // 获取主线程的线程 ID
 
-  slot = srv_reserve_slot(SRV_MASTER);
-  ut_a(slot == srv_sys->sys_threads);
+  slot = srv_reserve_slot(SRV_MASTER);  // 为主线程保留槽位
+  ut_a(slot == srv_sys->sys_threads);  // 断言槽位与系统线程槽位一致
 
-  srv_master_main_loop(slot);
+  srv_master_main_loop(slot);  // 进入主线程的主循环
 
-  srv_master_pre_dd_shutdown_loop();
+  srv_master_pre_dd_shutdown_loop();  // 进入主线程的预数据字典关闭循环
 
-  os_event_set(srv_threads.m_master_ready_for_dd_shutdown);
+  os_event_set(srv_threads.m_master_ready_for_dd_shutdown);  // 设置事件，表示主线程已准备好进行数据字典关闭
 
-  /* This is just for test scenarios. */
-  srv_thread_delay_cleanup_if_needed(true);
+  /* This is just for test scenarios. */  // 这只是为了测试场景
+  srv_thread_delay_cleanup_if_needed(true);  // 如果需要，延迟清理线程
 
-  while (srv_shutdown_state.load() < SRV_SHUTDOWN_MASTER_STOP) {
-    srv_master_wait(slot);
+  while (srv_shutdown_state.load() < SRV_SHUTDOWN_MASTER_STOP) {  // 当关闭状态小于主线程停止状态时继续循环
+    srv_master_wait(slot);  // 主线程等待
   }
 
-  srv_master_shutdown_loop();
+  srv_master_shutdown_loop();  // 进入主线程的关闭循环
 
-  srv_main_thread_op_info = "exiting";
-  destroy_internal_thd(thd);
+  srv_main_thread_op_info = "exiting";  // 设置主线程操作信息为“退出”
+  destroy_internal_thd(thd);  // 销毁内部 THD 对象
 }
 
 /**

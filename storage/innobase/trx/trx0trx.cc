@@ -146,105 +146,105 @@ void trx_set_detailed_error_from_file(
 
 /** Initialize transaction object.
  @param trx trx to initialize */
-static void trx_init(trx_t *trx) {
+ static void trx_init(trx_t *trx) {
   /* This is called at the end of commit, do not reset the
   trx_t::state here to NOT_STARTED. The FORCED_ROLLBACK
-  status is required for asynchronous handling. */
+  status is required for asynchronous handling. */  // 在提交结束时调用，不要将 trx_t::state 重置为 NOT_STARTED。FORCED_ROLLBACK 状态是异步处理所必需的
 
-  trx->id = 0;
+  trx->id = 0;  // 初始化事务 ID 为 0
 
-  trx->preallocated_id = 0;
+  trx->preallocated_id = 0;  // 初始化预分配的事务 ID 为 0
 
-  trx->no = TRX_ID_MAX;
+  trx->no = TRX_ID_MAX;  // 初始化事务编号为最大值
 
-  trx->persists_gtid = false;
+  trx->persists_gtid = false;  // 初始化 GTID 持久化标志为 false
 
-  trx->skip_lock_inheritance = false;
+  trx->skip_lock_inheritance = false;  // 初始化跳过锁继承标志为 false
 
-  trx->is_recovered = false;
+  trx->is_recovered = false;  // 初始化事务恢复标志为 false
 
-  trx->op_info = "";
+  trx->op_info = "";  // 初始化操作信息为空字符串
 
-  trx->isolation_level = TRX_ISO_REPEATABLE_READ;
+  trx->isolation_level = TRX_ISO_REPEATABLE_READ;  // 初始化事务隔离级别为可重复读
 
-  trx->check_foreigns = true;
+  trx->check_foreigns = true;  // 初始化外键检查标志为 true
 
-  trx->check_unique_secondary = true;
+  trx->check_unique_secondary = true;  // 初始化唯一二级索引检查标志为 true
 
-  trx->lock.n_rec_locks.store(0);
+  trx->lock.n_rec_locks.store(0);  // 初始化记录锁数量为 0
 
-  trx->lock.blocking_trx.store(nullptr);
+  trx->lock.blocking_trx.store(nullptr);  // 初始化阻塞事务为 nullptr
 
-  trx->dict_operation = TRX_DICT_OP_NONE;
+  trx->dict_operation = TRX_DICT_OP_NONE;  // 初始化字典操作为无
 
-  trx->ddl_operation = false;
+  trx->ddl_operation = false;  // 初始化 DDL 操作标志为 false
 
-  trx->idle_start = 0;
-  trx->last_stmt_start = 0;
+  trx->idle_start = 0;  // 初始化空闲开始时间为 0
+  trx->last_stmt_start = 0;  // 初始化最后语句开始时间为 0
 
-  trx->error_state = DB_SUCCESS;
+  trx->error_state = DB_SUCCESS;  // 初始化错误状态为成功
 
-  trx->error_key_num = ULINT_UNDEFINED;
+  trx->error_key_num = ULINT_UNDEFINED;  // 初始化错误键编号为未定义
 
-  trx->undo_no = 0;
+  trx->undo_no = 0;  // 初始化 undo 编号为 0
 
-  trx->rsegs.m_redo.rseg = nullptr;
+  trx->rsegs.m_redo.rseg = nullptr;  // 初始化 redo 回滚段为 nullptr
 
-  trx->rsegs.m_noredo.rseg = nullptr;
+  trx->rsegs.m_noredo.rseg = nullptr;  // 初始化 noredo 回滚段为 nullptr
 
-  trx->read_only = false;
+  trx->read_only = false;  // 初始化只读标志为 false
 
-  trx->auto_commit = false;
+  trx->auto_commit = false;  // 初始化自动提交标志为 false
 
-  trx->will_lock = 0;
+  trx->will_lock = 0;  // 初始化将要加锁的标志为 0
 
-  trx->lock.inherit_all.store(false);
+  trx->lock.inherit_all.store(false);  // 初始化继承所有锁的标志为 false
 
-  trx->internal = false;
+  trx->internal = false;  // 初始化内部事务标志为 false
 
-  trx->in_truncate = false;
+  trx->in_truncate = false;  // 初始化截断标志为 false
 #ifdef UNIV_DEBUG
-  trx->is_dd_trx = false;
-  trx->in_rollback = false;
-  trx->lock.in_rollback = false;
+  trx->is_dd_trx = false;  // 在调试模式下初始化数据字典事务标志为 false
+  trx->in_rollback = false;  // 在调试模式下初始化回滚标志为 false
+  trx->lock.in_rollback = false;  // 在调试模式下初始化锁回滚标志为 false
 #endif /* UNIV_DEBUG */
 
-  ut_d(trx->start_file = nullptr);
+  ut_d(trx->start_file = nullptr);  // 在调试模式下初始化起始文件为 nullptr
 
-  ut_d(trx->start_line = 0);
+  ut_d(trx->start_line = 0);  // 在调试模式下初始化起始行号为 0
 
-  trx->magic_n = TRX_MAGIC_N;
+  trx->magic_n = TRX_MAGIC_N;  // 初始化事务的魔数为 TRX_MAGIC_N
 
-  trx->lock.que_state = TRX_QUE_RUNNING;
+  trx->lock.que_state = TRX_QUE_RUNNING;  // 初始化锁队列状态为运行中
 
-  trx->last_sql_stat_start.least_undo_no = 0;
+  trx->last_sql_stat_start.least_undo_no = 0;  // 初始化最后 SQL 语句开始的 undo 编号为 0
 
-  ut_ad(!MVCC::is_view_active(trx->read_view));
+  ut_ad(!MVCC::is_view_active(trx->read_view));  // 断言事务的读视图未激活
 
-  trx->lock.rec_cached = 0;
+  trx->lock.rec_cached = 0;  // 初始化缓存记录锁数量为 0
 
-  trx->lock.table_cached = 0;
+  trx->lock.table_cached = 0;  // 初始化缓存表锁数量为 0
 
-  trx->error_index = nullptr;
+  trx->error_index = nullptr;  // 初始化错误索引为 nullptr
 
-  trx->stats.set(false);
+  trx->stats.set(false);  // 初始化事务统计信息为 false
 
   /* During asynchronous rollback, we should reset forced rollback flag
   only after rollback is complete to avoid race with the thread owning
-  the transaction. */
+  the transaction. */  // 在异步回滚期间，只有在回滚完成后才应重置强制回滚标志，以避免与拥有事务的线程竞争
 
-  if (!TrxInInnoDB::is_async_rollback(trx)) {
-    trx->killed_by.store(std::thread::id{});
+  if (!TrxInInnoDB::is_async_rollback(trx)) {  // 如果事务不是异步回滚
+    trx->killed_by.store(std::thread::id{});  // 初始化杀死事务的线程 ID 为空
 
     /* Note: Do not set to 0, the ref count is decremented inside
-    the TrxInInnoDB() destructor. We only need to clear the flags. */
+    the TrxInInnoDB() destructor. We only need to clear the flags. */  // 注意：不要设置为 0，引用计数在 TrxInInnoDB() 析构函数中递减。我们只需要清除标志
 
-    trx->in_innodb &= TRX_FORCE_ROLLBACK_MASK;
+    trx->in_innodb &= TRX_FORCE_ROLLBACK_MASK;  // 清除 InnoDB 内部标志
   }
 
-  trx->flush_observer = nullptr;
+  trx->flush_observer = nullptr;  // 初始化刷新观察者为 nullptr
 
-  ++trx->version;
+  ++trx->version;  // 增加事务版本号
 }
 
 /** For managing the life-cycle of the trx_t instance that we get
@@ -487,30 +487,30 @@ static trx_t *trx_create_low() {
 Release a trx_t instance back to the pool.
 @param trx the instance to release. */
 static void trx_free(trx_t *&trx) {
-  assert_trx_is_free(trx);
+  assert_trx_is_free(trx);  // 断言事务是空闲的
 
-  trx->mysql_thd = nullptr;
+  trx->mysql_thd = nullptr;  // 将事务的 MySQL 线程句柄置为空
 
-  // FIXME: We need to avoid this heap free/alloc for each commit.
-  if (trx->lock.autoinc_locks != nullptr) {
-    ut_ad(ib_vector_is_empty(trx->lock.autoinc_locks));
-    /* We allocated a dedicated heap for the vector. */
-    ib_vector_free(trx->lock.autoinc_locks);
-    trx->lock.autoinc_locks = nullptr;
+  // FIXME: We need to avoid this heap free/alloc for each commit.  // 需要避免每次提交时的堆释放和分配
+  if (trx->lock.autoinc_locks != nullptr) {  // 如果事务的 AUTOINC 锁向量不为空
+    ut_ad(ib_vector_is_empty(trx->lock.autoinc_locks));  // 断言 AUTOINC 锁向量为空
+    /* We allocated a dedicated heap for the vector. */  // 我们为向量分配了专用的堆
+    ib_vector_free(trx->lock.autoinc_locks);  // 释放 AUTOINC 锁向量
+    trx->lock.autoinc_locks = nullptr;  // 将 AUTOINC 锁向量置为空
   }
 
-  trx->mod_tables.clear();
+  trx->mod_tables.clear();  // 清空事务的修改表集合
 
-  ut_ad(trx->read_view == nullptr);
-  ut_ad(trx->is_dd_trx == false);
+  ut_ad(trx->read_view == nullptr);  // 断言事务的读视图为空
+  ut_ad(trx->is_dd_trx == false);  // 断言事务不是数据字典事务
 
   /* trx locking state should have been reset before returning trx
-  to pool */
-  ut_ad(trx->will_lock == 0);
+  to pool */  // 在将事务返回池之前，事务的锁定状态应该已被重置
+  ut_ad(trx->will_lock == 0);  // 断言事务的将要加锁标志为 0
 
-  trx_pools->mem_free(trx);
+  trx_pools->mem_free(trx);  // 将事务释放回内存池
 
-  trx = nullptr;
+  trx = nullptr;  // 将事务指针置为空
 }
 
 /** Creates a transaction object for background operations by the master thread.
@@ -547,51 +547,51 @@ trx_t *trx_allocate_for_mysql(void) {
 /** Check state of transaction before freeing it.
 @param[in,out]  trx     transaction object to validate */
 static void trx_validate_state_before_free(trx_t *trx) {
-  if (trx->declared_to_be_inside_innodb) {
-    ib::error(ER_IB_MSG_1202)
+  if (trx->declared_to_be_inside_innodb) {  // 如果事务被声明为正在 InnoDB 内部处理
+    ib::error(ER_IB_MSG_1202)  // 打印错误信息
         << "Freeing a trx (" << trx << ", " << trx_get_id_for_print(trx)
         << ") which is declared"
            " to be processing inside InnoDB";
 
-    trx_print(stderr, trx, 600);
+    trx_print(stderr, trx, 600);  // 打印事务的详细信息
     putc('\n', stderr);
 
     /* This is an error but not a fatal error. We must keep
-    the counters like srv_conc_n_threads accurate. */
-    srv_conc_force_exit_innodb(trx);
+    the counters like srv_conc_n_threads accurate. */  // 这是一个错误但不是致命错误，必须保持计数器如 srv_conc_n_threads 的准确性
+    srv_conc_force_exit_innodb(trx);  // 强制退出 InnoDB
   }
 
-  if (trx->n_mysql_tables_in_use != 0 || trx->mysql_n_tables_locked != 0) {
-    ib::error(ER_IB_MSG_1203)
+  if (trx->n_mysql_tables_in_use != 0 || trx->mysql_n_tables_locked != 0) {  // 如果事务正在使用 MySQL 表或锁定了 MySQL 表
+    ib::error(ER_IB_MSG_1203)  // 打印错误信息
         << "MySQL is freeing a thd though trx->n_mysql_tables_in_use is "
         << trx->n_mysql_tables_in_use << " and trx->mysql_n_tables_locked is "
         << trx->mysql_n_tables_locked << ".";
 
-    trx_print(stderr, trx, 600);
-    ut_print_buf(stderr, trx, sizeof(trx_t));
+    trx_print(stderr, trx, 600);  // 打印事务的详细信息
+    ut_print_buf(stderr, trx, sizeof(trx_t));  // 打印事务对象的内存内容
     putc('\n', stderr);
   }
 
-  trx->dict_operation = TRX_DICT_OP_NONE;
-  assert_trx_is_inactive(trx);
+  trx->dict_operation = TRX_DICT_OP_NONE;  // 将事务的字典操作设置为无
+  assert_trx_is_inactive(trx);  // 断言事务处于非活动状态
 }
 
 /** Free and initialize a transaction object instantiated during recovery.
 @param[in,out]  trx     transaction object to free and initialize */
 void trx_free_resurrected(trx_t *trx) {
-  trx_validate_state_before_free(trx);
+  trx_validate_state_before_free(trx);  // 验证事务状态，确保在释放前状态正确
 
-  trx_init(trx);
+  trx_init(trx);  // 初始化事务对象
 
-  trx_free(trx);
+  trx_free(trx);  // 释放事务对象
 }
 
 /** Free a transaction that was allocated by background or user threads.
 @param[in,out]  trx     transaction object to free */
 void trx_free_for_background(trx_t *trx) {
-  trx_validate_state_before_free(trx);
+  trx_validate_state_before_free(trx);  // 验证事务状态，确保在释放前状态正确
 
-  trx_free(trx);
+  trx_free(trx);  // 释放事务对象
 }
 
 void trx_free_prepared_or_active_recovered(trx_t *trx) {
@@ -742,46 +742,46 @@ static void trx_resurrect_table_ids(trx_t *trx, const trx_undo_ptr_t *undo_ptr,
 }
 
 void trx_resurrect_locks(bool all) {
-  for (const auto &element : resurrected_trx_tables) {
-    trx_t *trx = element.first;
+  for (const auto &element : resurrected_trx_tables) {  // 遍历所有已恢复的事务表
+    trx_t *trx = element.first;  // 获取事务对象
 
     /* We deal only with recovered transactions. If all is false,
-    we skip non dictionary transactions. */
-    if (!trx->is_recovered || (!all && !trx->ddl_operation)) {
-      continue;
+    we skip non dictionary transactions. */  // 只处理已恢复的事务，如果 all 为 false，跳过非字典事务
+    if (!trx->is_recovered || (!all && !trx->ddl_operation)) {  // 如果事务未恢复或不是字典事务且 all 为 false
+      continue;  // 跳过当前事务
     }
 
-    const table_id_set &tables = element.second;
+    const table_id_set &tables = element.second;  // 获取事务关联的表 ID 集合
 
-    for (auto id : tables) {
-      auto table = dd_table_open_on_id(id, nullptr, nullptr, false, true);
+    for (auto id : tables) {  // 遍历表 ID 集合
+      auto table = dd_table_open_on_id(id, nullptr, nullptr, false, true);  // 根据表 ID 打开表
 
-      if (table == nullptr) {
-        continue;
+      if (table == nullptr) {  // 如果表不存在
+        continue;  // 跳过当前表
       }
 
-      ut_ad(!table->is_temporary());
+      ut_ad(!table->is_temporary());  // 断言表不是临时表
 
-      if (table->ibd_file_missing || table->is_temporary()) {
-        dict_sys_mutex_enter();
-        dd_table_close(table, nullptr, nullptr, true);
-        dict_table_remove_from_cache(table);
-        dict_sys_mutex_exit();
-        continue;
+      if (table->ibd_file_missing || table->is_temporary()) {  // 如果表的 IBD 文件丢失或表是临时表
+        dict_sys_mutex_enter();  // 进入字典系统互斥锁
+        dd_table_close(table, nullptr, nullptr, true);  // 关闭表
+        dict_table_remove_from_cache(table);  // 从缓存中移除表
+        dict_sys_mutex_exit();  // 退出字典系统互斥锁
+        continue;  // 跳过当前表
       }
 
-      if (trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED &&
-          !dict_table_is_sdi(table->id)) {
-        trx->mod_tables.insert(table);
+      if (trx->state.load(std::memory_order_relaxed) == TRX_STATE_PREPARED &&  // 如果事务状态为 PREPARED
+          !dict_table_is_sdi(table->id)) {  // 并且表不是 SDI 表
+        trx->mod_tables.insert(table);  // 将表插入到事务的修改表集合中
       }
-      DICT_TF2_FLAG_SET(table, DICT_TF2_RESURRECT_PREPARED);
+      DICT_TF2_FLAG_SET(table, DICT_TF2_RESURRECT_PREPARED);  // 设置表的 RESURRECT_PREPARED 标志
 
-      lock_table_ix_resurrect(table, trx);
+      lock_table_ix_resurrect(table, trx);  // 为表重新获取 IX 锁
 
       DBUG_PRINT("ib_trx", ("resurrect" TRX_ID_FMT "  table '%s' IX lock",
-                            trx_get_id_for_print(trx), table->name.m_name));
+                            trx_get_id_for_print(trx), table->name.m_name));  // 打印调试信息，表示已为表重新获取 IX 锁
 
-      dd_table_close(table, nullptr, nullptr, false);
+      dd_table_close(table, nullptr, nullptr, false);  // 关闭表
     }
   }
 }
@@ -1035,10 +1035,10 @@ Requires trx_sys->mutex, unless called in the single threaded startup code.
 @param[in]  trx   The transaction assumed to not be in the rw_trx_list yet
 */
 static inline void trx_add_to_rw_trx_list(trx_t *trx) {
-  ut_ad(srv_is_being_started || trx_sys_mutex_own());
-  ut_ad(!trx->in_rw_trx_list);
-  UT_LIST_ADD_FIRST(trx_sys->rw_trx_list, trx);
-  ut_d(trx->in_rw_trx_list = true);
+  ut_ad(srv_is_being_started || trx_sys_mutex_own());  // 断言在单线程启动代码中调用或持有 trx_sys 互斥锁
+  ut_ad(!trx->in_rw_trx_list);  // 断言事务不在读写事务列表中
+  UT_LIST_ADD_FIRST(trx_sys->rw_trx_list, trx);  // 将事务添加到事务系统的读写事务列表的首部
+  ut_d(trx->in_rw_trx_list = true);  // 在调试模式下将事务的 in_rw_trx_list 标志设置为 true
 }
 
 /** Removes the transaction from trx_sys->rw_trx_list.
@@ -1046,10 +1046,10 @@ Requires trx_sys->mutex, unless called in the single threaded startup code.
 @param[in]  trx   The transaction assumed to be in the rw_trx_list
 */
 static inline void trx_remove_from_rw_trx_list(trx_t *trx) {
-  ut_ad(srv_is_being_started || trx_sys_mutex_own());
-  ut_ad(trx->in_rw_trx_list);
-  UT_LIST_REMOVE(trx_sys->rw_trx_list, trx);
-  ut_d(trx->in_rw_trx_list = false);
+  ut_ad(srv_is_being_started || trx_sys_mutex_own());  // 断言在单线程启动代码中调用或持有 trx_sys 互斥锁
+  ut_ad(trx->in_rw_trx_list);  // 断言事务在读写事务列表中
+  UT_LIST_REMOVE(trx_sys->rw_trx_list, trx);  // 从事务系统的读写事务列表中移除该事务
+  ut_d(trx->in_rw_trx_list = false);  // 在调试模式下将事务的 in_rw_trx_list 标志设置为 false
 }
 
 /** Creates trx objects for transactions and initializes the trx list of
@@ -1301,45 +1301,45 @@ static void trx_start_low(
     trx_t *trx,      /*!< in: transaction */
     bool read_write) /*!< in: true if read-write transaction */
 {
-  ut_ad(!trx->in_rollback);
-  ut_ad(!trx->is_recovered);
-  ut_ad(trx->start_line != 0);
-  ut_ad(trx->start_file != nullptr);
-  ut_ad(trx->roll_limit == 0);
-  ut_ad(!trx->lock.in_rollback);
-  ut_ad(trx->error_state == DB_SUCCESS);
-  ut_ad(trx->rsegs.m_redo.rseg == nullptr);
-  ut_ad(trx->rsegs.m_noredo.rseg == nullptr);
-  ut_ad(trx_state_eq(trx, TRX_STATE_NOT_STARTED));
-  ut_ad(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);
-  ut_ad(!(trx->in_innodb & TRX_FORCE_ROLLBACK));
-  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
+  ut_ad(!trx->in_rollback);  // 断言事务不在回滚中
+  ut_ad(!trx->is_recovered);  // 断言事务不是恢复的事务
+  ut_ad(trx->start_line != 0);  // 断言事务的起始行号不为 0
+  ut_ad(trx->start_file != nullptr);  // 断言事务的起始文件名不为空
+  ut_ad(trx->roll_limit == 0);  // 断言事务的回滚限制为 0
+  ut_ad(!trx->lock.in_rollback);  // 断言事务的锁不在回滚中
+  ut_ad(trx->error_state == DB_SUCCESS);  // 断言事务的错误状态为成功
+  ut_ad(trx->rsegs.m_redo.rseg == nullptr);  // 断言事务的 redo 回滚段为空
+  ut_ad(trx->rsegs.m_noredo.rseg == nullptr);  // 断言事务的 noredo 回滚段为空
+  ut_ad(trx_state_eq(trx, TRX_STATE_NOT_STARTED));  // 断言事务状态为未启动
+  ut_ad(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);  // 断言事务的锁列表为空
+  ut_ad(!(trx->in_innodb & TRX_FORCE_ROLLBACK));  // 断言事务没有被强制回滚
+  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));  // 断言当前线程可以处理该事务或该事务是高性能受害者
 
-  ++trx->version;
+  ++trx->version;  // 增加事务版本号
 
-  /* Check whether it is an AUTOCOMMIT SELECT */
+  /* Check whether it is an AUTOCOMMIT SELECT */  // 检查是否是自动提交的 SELECT
   trx->auto_commit = (trx->api_trx && trx->api_auto_commit) ||
-                     thd_trx_is_auto_commit(trx->mysql_thd);
+                     thd_trx_is_auto_commit(trx->mysql_thd);  // 设置事务的自动提交标志
 
   trx->read_only = (trx->api_trx && !trx->read_write) ||
                    (!trx->internal && thd_trx_is_read_only(trx->mysql_thd)) ||
-                   srv_read_only_mode;
+                   srv_read_only_mode;  // 设置事务的只读标志
 
-  if (!trx->auto_commit) {
-    ++trx->will_lock;
-  } else if (trx->will_lock == 0) {
-    trx->read_only = true;
+  if (!trx->auto_commit) {  // 如果事务不是自动提交的
+    ++trx->will_lock;  // 增加事务的将要加锁标志
+  } else if (trx->will_lock == 0) {  // 如果事务的将要加锁标志为 0
+    trx->read_only = true;  // 设置事务为只读
   }
-  trx->persists_gtid = false;
+  trx->persists_gtid = false;  // 设置事务的 GTID 持久化标志为 false
 
 #ifdef UNIV_DEBUG
   /* If the transaction is DD attachable trx, it should be AC-NL-RO
-  (AutoCommit-NonLocking-ReadOnly) trx */
-  if (trx->is_dd_trx) {
-    ut_ad(trx->read_only);
-    ut_ad(trx->auto_commit);
+  (AutoCommit-NonLocking-ReadOnly) trx */  // 如果事务是数据字典可附加事务，则它应该是自动提交-非锁定-只读事务
+  if (trx->is_dd_trx) {  // 如果事务是数据字典事务
+    ut_ad(trx->read_only);  // 断言事务是只读的
+    ut_ad(trx->auto_commit);  // 断言事务是自动提交的
     ut_ad(trx->isolation_level == TRX_ISO_READ_UNCOMMITTED ||
-          trx->isolation_level == TRX_ISO_READ_COMMITTED);
+          trx->isolation_level == TRX_ISO_READ_COMMITTED);  // 断言事务的隔离级别为读未提交或读已提交
   }
 #endif /* UNIV_DEBUG */
 
@@ -1352,105 +1352,104 @@ static void trx_start_low(
   was to keep this issue for read-only transactions as it was, because
   providing a fix which would guarantee that state of printed information
   about such transactions is always consistent, would take much more work.
-  TODO: check performance gain from this micro-optimization on ARM. */
+  TODO: check performance gain from this micro-optimization on ARM. */  // 注意，trx->start_time 是在没有 std::memory_order_release 的情况下设置的，并且有可能 trx->state 在下面的代码中既不在由 trx_sys->mutex 保护的关键部分中设置，也没有使用 std::memory_order_release。这对于只读事务在下面的代码中是可能的。这可能导致在 buf_pool_resize 线程中打印到错误日志中的关于事务持续时间过长的信息不正确。决定是保持只读事务的这个问题不变，因为提供一个保证此类事务的打印信息状态始终一致的修复需要更多的工作。TODO：检查此微优化在 ARM 上的性能增益。
 
-  if (trx->mysql_thd != nullptr) {
+  if (trx->mysql_thd != nullptr) {  // 如果事务的 MySQL 线程不为空
     trx->start_time.store(thd_start_time(trx->mysql_thd),
-                          std::memory_order_relaxed);
-    if (!trx->ddl_operation) {
-      trx->ddl_operation = thd_is_dd_update_stmt(trx->mysql_thd);
+                          std::memory_order_relaxed);  // 设置事务的起始时间
+    if (!trx->ddl_operation) {  // 如果事务不是 DDL 操作
+      trx->ddl_operation = thd_is_dd_update_stmt(trx->mysql_thd);  // 设置事务的 DDL 操作标志
     }
   } else {
     trx->start_time.store(std::chrono::system_clock::from_time_t(time(nullptr)),
-                          std::memory_order_relaxed);
+                          std::memory_order_relaxed);  // 设置事务的起始时间为当前时间
   }
 
   /* The initial value for trx->no: TRX_ID_MAX is used in
-  read_view_open_now: */
+  read_view_open_now: */  // trx->no 的初始值 TRX_ID_MAX 用于 read_view_open_now
+  trx->no = TRX_ID_MAX;  // 设置事务的编号为最大值
 
-  trx->no = TRX_ID_MAX;
-
-  ut_a(ib_vector_is_empty(trx->lock.autoinc_locks));
+  ut_a(ib_vector_is_empty(trx->lock.autoinc_locks));  // 断言事务的 AUTOINC 锁向量为空
 
   /* This value will only be read by a thread inspecting lock sys queue after
-  the thread which enqueues this trx releases the queue's latch. */
-  trx->lock.schedule_weight.store(0, std::memory_order_relaxed);
+  the thread which enqueues this trx releases the queue's latch. */  // 此值仅由在将此事务入队的线程释放队列锁存器后检查锁系统队列的线程读取。
+  trx->lock.schedule_weight.store(0, std::memory_order_relaxed);  // 设置事务的调度权重为 0
 
   /* If this transaction came from trx_allocate_for_mysql(),
   trx->in_mysql_trx_list would hold. In that case, the trx->state
   change must be protected by the trx_sys->mutex, so that
-  lock_print_info_all_transactions() will have a consistent view. */
+  lock_print_info_all_transactions() will have a consistent view. */  // 如果此事务来自 trx_allocate_for_mysql()，则 trx->in_mysql_trx_list 将保持。在这种情况下，trx->state 的更改必须由 trx_sys->mutex 保护，以便 lock_print_info_all_transactions() 具有一致的视图。
 
-  ut_ad(!trx->in_rw_trx_list);
+  ut_ad(!trx->in_rw_trx_list);  // 断言事务不在读写事务列表中
 
   /* We tend to over assert and that complicates the code somewhat.
   e.g., the transaction state can be set earlier but we are forced to
   set it under the protection of the trx_sys_t::mutex because some
-  trx list assertions are triggered unnecessarily. */
+  trx list assertions are triggered unnecessarily. */  // 我们倾向于过度断言，这使代码有些复杂。例如，事务状态可以更早设置，但我们被迫在 trx_sys_t::mutex 的保护下设置它，因为某些事务列表断言被不必要地触发。
 
   /* By default all transactions are in the read-only list unless they
   are non-locking auto-commit read only transactions or background
   (internal) transactions. Note: Transactions marked explicitly as
   read only can write to temporary tables, we put those on the RO
-  list too. */
+  list too. */  // 默认情况下，所有事务都在只读列表中，除非它们是非锁定的自动提交只读事务或后台（内部）事务。注意：明确标记为只读的事务可以写入临时表，我们也将它们放在只读列表中。
 
   if (!trx->read_only &&
-      (trx->mysql_thd == nullptr || read_write || trx->ddl_operation)) {
-    trx_assign_rseg_durable(trx);
+      (trx->mysql_thd == nullptr || read_write || trx->ddl_operation)) {  // 如果事务不是只读的，并且事务的 MySQL 线程为空或事务是读写事务或事务是 DDL 操作
+    trx_assign_rseg_durable(trx);  // 为事务分配持久回滚段
 
     /* Temporary rseg is assigned only if the transaction
-    updates a temporary table */
-    DEBUG_SYNC_C("trx_sys_before_assign_id");
+    updates a temporary table */  // 仅当事务更新临时表时，才分配临时回滚段
+    DEBUG_SYNC_C("trx_sys_before_assign_id");  // 调试同步点
 
-    trx_sys_mutex_enter();
+    trx_sys_mutex_enter();  // 进入事务系统的互斥锁
 
-    trx_assign_id_for_rw(trx);
+    trx_assign_id_for_rw(trx);  // 为读写事务分配 ID
 
     ut_ad(trx->rsegs.m_redo.rseg != nullptr || srv_read_only_mode ||
-          srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO);
+          srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO);  // 断言事务的 redo 回滚段不为空，或者服务器是只读模式，或者强制恢复级别大于等于 SRV_FORCE_NO_TRX_UNDO
 
-    trx_add_to_rw_trx_list(trx);
+    trx_add_to_rw_trx_list(trx);  // 将事务添加到读写事务列表
 
-    trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
+    trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);  // 设置事务状态为活动状态
 
-    ut_ad(trx_sys_validate_trx_list());
+    ut_ad(trx_sys_validate_trx_list());  // 断言事务列表有效
 
-    trx_sys_mutex_exit();
+    trx_sys_mutex_exit();  // 退出事务系统的互斥锁
 
-    trx_sys_rw_trx_add(trx);
+    trx_sys_rw_trx_add(trx);  // 将事务添加到读写事务系统
 
-  } else {
-    trx->id = 0;
+  } else {  // 如果事务是只读的
+    trx->id = 0;  // 设置事务 ID 为 0
 
-    if (!trx_is_autocommit_non_locking(trx)) {
+    if (!trx_is_autocommit_non_locking(trx)) {  // 如果事务不是自动提交的非锁定事务
       /* If this is a read-only transaction that is writing
       to a temporary table then it needs a transaction id
-      to write to the temporary table. */
+      to write to the temporary table. */  // 如果这是一个写入临时表的只读事务，则需要一个事务 ID 来写入临时表。
 
-      if (read_write) {
-        trx_sys_mutex_enter();
+      if (read_write) {  // 如果事务是读写事务
+        trx_sys_mutex_enter();  // 进入事务系统的互斥锁
 
-        ut_ad(!srv_read_only_mode);
+        ut_ad(!srv_read_only_mode);  // 断言服务器不是只读模式
 
-        trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
-        trx_assign_id_for_rw(trx);
+        trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);  // 设置事务状态为活动状态
+        trx_assign_id_for_rw(trx);  // 为读写事务分配 ID
 
-        trx_sys_mutex_exit();
+        trx_sys_mutex_exit();  // 退出事务系统的互斥锁
 
-        trx_sys_rw_trx_add(trx);
+        trx_sys_rw_trx_add(trx);  // 将事务添加到读写事务系统
 
-      } else {
-        trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
+      } else {  // 如果事务不是读写事务
+        trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);  // 设置事务状态为活动状态
       }
-    } else {
-      ut_ad(!read_write);
-      trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);
+    } else {  // 如果事务是自动提交的非锁定事务
+      ut_ad(!read_write);  // 断言事务不是读写事务
+      trx->state.store(TRX_STATE_ACTIVE, std::memory_order_relaxed);  // 设置事务状态为活动状态
     }
   }
 
-  ut_a(trx->error_state == DB_SUCCESS);
+  ut_a(trx->error_state == DB_SUCCESS);  // 断言事务的错误状态为成功
 
-  MONITOR_INC(MONITOR_TRX_ACTIVE);
+  MONITOR_INC(MONITOR_TRX_ACTIVE);  // 增加活动事务的监控计数
 }
 
 /** Assigns the trx->no and add the transaction to the serialisation_list.
@@ -1750,28 +1749,28 @@ static void trx_flush_log_if_needed_low(lsn_t lsn) /*!< in: lsn up to which logs
                                                    are to be flushed. */
 {
 #ifdef _WIN32
-  bool flush = true;
+  bool flush = true;  // 在 Windows 平台上，默认启用日志刷新
 #else
-  bool flush = srv_unix_file_flush_method != SRV_UNIX_NOSYNC;
+  bool flush = srv_unix_file_flush_method != SRV_UNIX_NOSYNC;  // 在 Unix 平台上，根据文件刷新方法决定是否刷新日志
 #endif /* _WIN32 */
 
-  Wait_stats wait_stats;
+  Wait_stats wait_stats;  // 定义等待统计对象
 
-  switch (srv_flush_log_at_trx_commit) {
+  switch (srv_flush_log_at_trx_commit) {  // 根据日志刷新策略进行分支处理
     case 2:
-      /* Write the log but do not flush it to disk */
-      flush = false;
-      [[fallthrough]];
+      /* Write the log but do not flush it to disk */  // 写入日志但不刷新到磁盘
+      flush = false;  // 设置刷新标志为 false
+      [[fallthrough]];  // 继续执行下一个 case
     case 1:
-      /* Write the log and optionally flush it to disk */
-      wait_stats = log_write_up_to(*log_sys, lsn, flush);
+      /* Write the log and optionally flush it to disk */  // 写入日志并可选地刷新到磁盘
+      wait_stats = log_write_up_to(*log_sys, lsn, flush);  // 将日志写入到指定 LSN
 
-      MONITOR_INC_WAIT_STATS(MONITOR_TRX_ON_LOG_, wait_stats);
+      MONITOR_INC_WAIT_STATS(MONITOR_TRX_ON_LOG_, wait_stats);  // 增加日志写入等待时间的监控统计
 
-      return;
+      return;  // 返回
     case 0:
-      /* Do nothing */
-      return;
+      /* Do nothing */  // 不执行任何操作
+      return;  // 返回
   }
 }
 
@@ -1781,40 +1780,40 @@ static void trx_flush_log_if_needed(lsn_t lsn, /*!< in: lsn up to which logs are
                                                to be flushed. */
                                     trx_t *trx) /*!< in/out: transaction */
 {
-  trx->op_info = "flushing log";
+  trx->op_info = "flushing log";  // 设置事务的操作信息为“刷新日志”
 
-  DEBUG_SYNC_C("trx_flush_log_if_needed");
+  DEBUG_SYNC_C("trx_flush_log_if_needed");  // 调试同步点
 
-  if (trx->ddl_operation || trx->ddl_must_flush) {
-    auto wait_stats = log_write_up_to(*log_sys, lsn, true);
-    MONITOR_INC_WAIT_STATS(MONITOR_TRX_ON_LOG_, wait_stats);
-  } else {
-    trx_flush_log_if_needed_low(lsn);
+  if (trx->ddl_operation || trx->ddl_must_flush) {  // 如果事务是 DDL 操作或必须刷新日志
+    auto wait_stats = log_write_up_to(*log_sys, lsn, true);  // 将日志刷新到指定 LSN
+    MONITOR_INC_WAIT_STATS(MONITOR_TRX_ON_LOG_, wait_stats);  // 增加日志刷新等待时间的监控统计
+  } else {  // 如果事务不是 DDL 操作或不需要强制刷新日志
+    trx_flush_log_if_needed_low(lsn);  // 调用低级别的日志刷新函数
   }
 
-  trx->op_info = "";
+  trx->op_info = "";  // 清空事务的操作信息
 }
 
 /** For each table that has been modified by the given transaction: update
  its dict_table_t::update_time with the current timestamp. Clear the list
  of the modified tables at the end. */
-static void trx_update_mod_tables_timestamp(trx_t *trx) /*!< in: transaction */
-{
-  ut_ad(trx->id != 0);
-
-  /* consider using trx->start_time if calling time() is too
-  expensive here */
-  const auto now = std::chrono::system_clock::from_time_t(time(nullptr));
-
-  trx_mod_tables_t::const_iterator end = trx->mod_tables.end();
-
-  for (trx_mod_tables_t::const_iterator it = trx->mod_tables.begin(); it != end;
-       ++it) {
-    (*it)->update_time = now;
-  }
-
-  trx->mod_tables.clear();
-}
+ static void trx_update_mod_tables_timestamp(trx_t *trx) /*!< in: transaction */
+ {
+   ut_ad(trx->id != 0);  // 断言事务 ID 不为 0
+ 
+   /* consider using trx->start_time if calling time() is too
+   expensive here */  // 如果调用 time() 太昂贵，考虑使用 trx->start_time
+   const auto now = std::chrono::system_clock::from_time_t(time(nullptr));  // 获取当前时间
+ 
+   trx_mod_tables_t::const_iterator end = trx->mod_tables.end();  // 获取修改表列表的结束迭代器
+ 
+   for (trx_mod_tables_t::const_iterator it = trx->mod_tables.begin(); it != end;
+        ++it) {  // 遍历修改表列表
+     (*it)->update_time = now;  // 更新表的修改时间为当前时间
+   }
+ 
+   trx->mod_tables.clear();  // 清空修改表列表
+ }
 
 /**
 Erase the transaction from running transaction lists and serialization
@@ -1952,100 +1951,99 @@ static void trx_release_impl_and_expl_locks(trx_t *trx, bool serialised) {
 
 /** Commits a transaction in memory. */
 static void trx_commit_in_memory(
-    trx_t *trx,       /*!< in/out: transaction */
-    const mtr_t *mtr, /*!< in: mini-transaction of
-                      trx_write_serialisation_history(), or NULL if
-                      the transaction did not modify anything */
-    bool serialised)
-/*!< in: true if serialisation log was
-written */
+  trx_t *trx,       /*!< in/out: transaction */
+  const mtr_t *mtr, /*!< in: mini-transaction of
+                    trx_write_serialisation_history(), or NULL if
+                    the transaction did not modify anything */
+  bool serialised)  /*!< in: true if serialisation log was
+                    written */
 {
-  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
-
-  trx->must_flush_log_later = false;
-  trx->ddl_must_flush = false;
-
-  if (trx_is_autocommit_non_locking(trx)) {
-    ut_ad(trx->id == 0);
-    ut_ad(trx->read_only);
-    ut_a(!trx->is_recovered);
-    ut_ad(trx->rsegs.m_redo.rseg == nullptr);
-    ut_ad(!trx->in_rw_trx_list);
-
+  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));  // 断言当前线程可以处理该事务或该事务是高性能受害者
+  
+  trx->must_flush_log_later = false;  // 设置稍后刷新日志标志为 false
+  trx->ddl_must_flush = false;  // 设置 DDL 必须刷新标志为 false
+  
+  if (trx_is_autocommit_non_locking(trx)) {  // 如果事务是自动提交的非锁定事务
+    ut_ad(trx->id == 0);  // 断言事务 ID 为 0
+    ut_ad(trx->read_only);  // 断言事务是只读的
+    ut_a(!trx->is_recovered);  // 断言事务不是恢复的事务
+    ut_ad(trx->rsegs.m_redo.rseg == nullptr);  // 断言事务的 redo 回滚段为空
+    ut_ad(!trx->in_rw_trx_list);  // 断言事务不在读写事务列表中
+  
     /* Note: We are asserting without holding the locksys latch. But
     that is OK because this transaction is not waiting and cannot
     be rolled back and no new locks can (or should not) be added
-    because it is flagged as a non-locking read-only transaction. */
-
-    ut_a(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);
-
+    because it is flagged as a non-locking read-only transaction. */  // 注意：我们在没有持有锁系统锁的情况下进行断言。但这没关系，因为该事务没有等待，不能被回滚，并且不能（或不应该）添加新锁，因为它被标记为非锁定的只读事务。
+  
+    ut_a(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);  // 断言事务的锁列表为空
+  
     /* This state change is not protected by any mutex, therefore
     there is an inherent race here around state transition during
     printouts. We ignore this race for the sake of efficiency.
     However, the trx_sys_t::mutex will protect the trx_t instance
     and it cannot be removed from the mysql_trx_list and freed
-    without first acquiring the trx_sys_t::mutex. */
-
-    ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE));
-
-    if (trx->read_view != nullptr) {
-      trx_sys->mvcc->view_close(trx->read_view, false);
+    without first acquiring the trx_sys_t::mutex. */  // 此状态更改不受任何互斥锁保护，因此在打印期间存在状态转换的固有竞争。为了效率，我们忽略此竞争。然而，trx_sys_t::mutex 将保护 trx_t 实例，并且在未首先获取 trx_sys_t::mutex 的情况下，不能将其从 mysql_trx_list 中移除并释放。
+  
+    ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE));  // 断言事务状态为活动状态
+  
+    if (trx->read_view != nullptr) {  // 如果事务的读视图不为空
+      trx_sys->mvcc->view_close(trx->read_view, false);  // 关闭读视图
     }
-
-    MONITOR_INC(MONITOR_TRX_NL_RO_COMMIT);
-
-    /* AC-NL-RO transactions can't be rolled back asynchronously. */
-    ut_ad(!trx->abort);
-    ut_ad(!(trx->in_innodb & TRX_FORCE_ROLLBACK));
-
-    trx->state.store(TRX_STATE_NOT_STARTED, std::memory_order_relaxed);
-
-  } else {
-    trx_release_impl_and_expl_locks(trx, serialised);
-
+  
+    MONITOR_INC(MONITOR_TRX_NL_RO_COMMIT);  // 增加非锁定只读事务提交的监控计数
+  
+    /* AC-NL-RO transactions can't be rolled back asynchronously. */  // 自动提交的非锁定只读事务不能异步回滚
+    ut_ad(!trx->abort);  // 断言事务没有被中止
+    ut_ad(!(trx->in_innodb & TRX_FORCE_ROLLBACK));  // 断言事务没有被强制回滚
+  
+    trx->state.store(TRX_STATE_NOT_STARTED, std::memory_order_relaxed);  // 将事务状态设置为未启动
+  
+  } else {  // 如果事务不是自动提交的非锁定事务
+    trx_release_impl_and_expl_locks(trx, serialised);  // 释放隐式和显式锁
+  
     /* Removed the transaction from the list of active transactions.
-    It no longer holds any user locks. */
-
-    ut_ad(trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY));
-    DEBUG_SYNC_C("after_trx_committed_in_memory");
-
-    if (trx->read_only || trx->rsegs.m_redo.rseg == nullptr) {
-      MONITOR_INC(MONITOR_TRX_RO_COMMIT);
-      if (trx->read_view != nullptr) {
-        trx_sys->mvcc->view_close(trx->read_view, false);
+    It no longer holds any user locks. */  // 从事务的活动列表中移除事务。它不再持有任何用户锁。
+  
+    ut_ad(trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY));  // 断言事务状态为已提交到内存
+    DEBUG_SYNC_C("after_trx_committed_in_memory");  // 调试同步点
+  
+    if (trx->read_only || trx->rsegs.m_redo.rseg == nullptr) {  // 如果事务是只读的或 redo 回滚段为空
+      MONITOR_INC(MONITOR_TRX_RO_COMMIT);  // 增加只读事务提交的监控计数
+      if (trx->read_view != nullptr) {  // 如果事务的读视图不为空
+        trx_sys->mvcc->view_close(trx->read_view, false);  // 关闭读视图
       }
-
-    } else {
-      ut_ad(trx->id > 0);
-      MONITOR_INC(MONITOR_TRX_RW_COMMIT);
+  
+    } else {  // 如果事务是读写事务
+      ut_ad(trx->id > 0);  // 断言事务 ID 大于 0
+      MONITOR_INC(MONITOR_TRX_RW_COMMIT);  // 增加读写事务提交的监控计数
     }
   }
-
-  /* Reset flag that SE persists GTID. */
+  
+  /* Reset flag that SE persists GTID. */  // 重置 SE 持久化 GTID 的标志
   auto &gtid_persistor = clone_sys->get_gtid_persistor();
-  gtid_persistor.set_persist_gtid(trx, false);
-
-  if (mtr != nullptr) {
-    if (trx->rsegs.m_redo.insert_undo != nullptr) {
-      trx_undo_insert_cleanup(&trx->rsegs.m_redo, false);
+  gtid_persistor.set_persist_gtid(trx, false);  // 设置持久化 GTID 标志为 false
+  
+  if (mtr != nullptr) {  // 如果 mtr 不为空
+    if (trx->rsegs.m_redo.insert_undo != nullptr) {  // 如果 redo 回滚段的插入 undo 日志不为空
+      trx_undo_insert_cleanup(&trx->rsegs.m_redo, false);  // 清理插入 undo 日志
     }
-
-    if (trx->rsegs.m_noredo.insert_undo != nullptr) {
-      trx_undo_insert_cleanup(&trx->rsegs.m_noredo, true);
+  
+    if (trx->rsegs.m_noredo.insert_undo != nullptr) {  // 如果 noredo 回滚段的插入 undo 日志不为空
+      trx_undo_insert_cleanup(&trx->rsegs.m_noredo, true);  // 清理插入 undo 日志
     }
-
+  
     /* NOTE that we could possibly make a group commit more
     efficient here: call std::this_thread::yield() here to allow also other
-    trxs to come to commit! */
-
+    trxs to come to commit! */  // 注意，我们可能在这里使组提交更高效：调用 std::this_thread::yield() 以允许其他事务也提交！
+  
     /*-------------------------------------*/
-
+  
     /* Depending on the my.cnf options, we may now write the log
     buffer to the log files, making the transaction durable if
     the OS does not crash. We may also flush the log files to
     disk, making the transaction durable also at an OS crash or a
     power outage.
-
+  
     The idea in InnoDB's group commit is that a group of
     transactions gather behind a trx doing a physical disk write
     to log files, and when that physical write has been completed,
@@ -2053,43 +2051,43 @@ written */
     group. Note that this group commit will only bring benefit if
     there are > 2 users in the database. Then at least 2 users can
     gather behind one doing the physical log write to disk.
-
+  
     If we are calling trx_commit() under prepare_commit_mutex, we
     will delay possible log write and flush to a separate function
     trx_commit_complete_for_mysql(), which is only called when the
     thread has released the mutex. This is to make the
     group commit algorithm to work. Otherwise, the prepare_commit
     mutex would serialize all commits and prevent a group of
-    transactions from gathering. */
-
-    lsn_t lsn = mtr->commit_lsn();
-
-    if (lsn == 0) {
-      /* Nothing to be done. */
-    } else if (trx->flush_log_later) {
-      /* Do nothing yet */
-      trx->must_flush_log_later = true;
-
+    transactions from gathering. */  // 根据 my.cnf 的选项，我们现在可以将日志缓冲区写入日志文件，使事务在操作系统不崩溃时持久化。我们还可以将日志文件刷新到磁盘，使事务在操作系统崩溃或断电时也持久化。InnoDB 的组提交思想是，一组事务聚集在一个进行物理磁盘写入日志文件的事务后面，当该物理写入完成后，其中一个事务进行写入以提交整个组。请注意，只有在数据库中有 > 2 个用户时，此组提交才会带来好处。然后至少 2 个用户可以聚集在一个进行物理日志写入磁盘的事务后面。如果我们在 prepare_commit_mutex 下调用 trx_commit()，我们将延迟可能的日志写入和刷新到一个单独的函数 trx_commit_complete_for_mysql()，该函数仅在线程释放互斥锁时调用。这是为了使组提交算法工作。否则，prepare_commit 互斥锁将序列化所有提交并阻止一组事务聚集。
+  
+    lsn_t lsn = mtr->commit_lsn();  // 获取 mtr 的提交日志序列号
+  
+    if (lsn == 0) {  // 如果日志序列号为 0
+      /* Nothing to be done. */  // 无需执行任何操作
+    } else if (trx->flush_log_later) {  // 如果稍后刷新日志标志为 true
+      /* Do nothing yet */  // 暂时不执行任何操作
+      trx->must_flush_log_later = true;  // 设置稍后刷新日志标志为 true
+  
       /* Remember current ddl_operation, because trx_init()
       later will set ddl_operation to false. And the final
-      flush is even later. */
-      trx->ddl_must_flush = trx->ddl_operation;
+      flush is even later. */  // 记住当前的 ddl_operation，因为稍后 trx_init() 会将 ddl_operation 设置为 false。最终的刷新甚至更晚。
+      trx->ddl_must_flush = trx->ddl_operation;  // 设置 DDL 必须刷新标志为当前 DDL 操作状态
     } else if ((srv_flush_log_at_trx_commit == 0 ||
                 thd_requested_durability(trx->mysql_thd) ==
                     HA_IGNORE_DURABILITY) &&
-               (!trx->ddl_operation)) {
-      /* Do nothing */
+               (!trx->ddl_operation)) {  // 如果日志刷新策略为 0 或请求的持久性为忽略持久性，并且不是 DDL 操作
+      /* Do nothing */  // 无需执行任何操作
     } else {
-      trx_flush_log_if_needed(lsn, trx);
+      trx_flush_log_if_needed(lsn, trx);  // 根据需要刷新日志
     }
-
-    trx->commit_lsn = lsn;
-
+  
+    trx->commit_lsn = lsn;  // 设置事务的提交日志序列号
+  
     /* Tell server some activity has happened, since the trx
     does changes something. Background utility threads like
     master thread, purge thread or page_cleaner thread might
-    have some work to do. */
-    srv_active_wake_master_thread();
+    have some work to do. */  // 告诉服务器发生了一些活动，因为事务更改了某些内容。后台实用程序线程（如主线程、清除线程或页面清理线程）可能需要做一些工作。
+    srv_active_wake_master_thread();  // 唤醒主线程
   }
 
   /* Do not decrement the reference count before this point.
@@ -2101,52 +2099,52 @@ written */
   being truncated. A non-zero reference count ensures that the
   thread attempting to truncate/drop the undo tablespace
   cannot be successful as the undo log cannot be dropped until
-  is it empty. */
-  if (trx->rsegs.m_redo.rseg != nullptr) {
-    trx_rseg_t *rseg = trx->rsegs.m_redo.rseg;
-    ut_ad(rseg->trx_ref_count > 0);
-
+  is it empty. */  // 在此点之前不要减少引用计数。存在一个潜在问题，即尝试删除 undo 表空间的线程可能会在此线程完成清理之前删除此 undo 空间。在将 undo 空间标记为非活动状态时，服务器会尝试查找是否有任何事务正在使用被截断的 undo 日志。非零引用计数确保尝试截断/删除 undo 表空间的线程无法成功，因为 undo 日志在为空之前不能被删除。
+  if (trx->rsegs.m_redo.rseg != nullptr) {  // 如果 redo 回滚段不为空
+    trx_rseg_t *rseg = trx->rsegs.m_redo.rseg;  // 获取 redo 回滚段
+    ut_ad(rseg->trx_ref_count > 0);  // 断言回滚段的事务引用计数大于 0
+  
     /* Multiple transactions can simultaneously decrement
-    the atomic counter. */
-    rseg->trx_ref_count--;
-
-    trx->rsegs.m_redo.rseg = nullptr;
+    the atomic counter. */  // 多个事务可以同时减少原子计数器
+    rseg->trx_ref_count--;  // 减少回滚段的事务引用计数
+  
+    trx->rsegs.m_redo.rseg = nullptr;  // 将 redo 回滚段置为空
   }
-
-  /* Free all savepoints, starting from the first. */
-  trx_named_savept_t *savep = UT_LIST_GET_FIRST(trx->trx_savepoints);
-
-  trx_roll_savepoints_free(trx, savep);
-
-  if (trx->fts_trx != nullptr) {
-    trx_finalize_for_fts(trx, trx->undo_no != 0);
+  
+  /* Free all savepoints, starting from the first. */  // 释放所有保存点，从第一个开始
+  trx_named_savept_t *savep = UT_LIST_GET_FIRST(trx->trx_savepoints);  // 获取事务的第一个保存点
+  
+  trx_roll_savepoints_free(trx, savep);  // 释放保存点
+  
+  if (trx->fts_trx != nullptr) {  // 如果事务有 FTS 事务
+    trx_finalize_for_fts(trx, trx->undo_no != 0);  // 完成 FTS 事务
   }
-
-  trx_mutex_enter(trx);
-  trx->dict_operation = TRX_DICT_OP_NONE;
-
+  
+  trx_mutex_enter(trx);  // 进入事务的互斥锁
+  trx->dict_operation = TRX_DICT_OP_NONE;  // 设置字典操作为无
+  
   /* Because we can rollback transactions asynchronously, we change
   the state at the last step. trx_t::abort cannot change once commit
   or rollback has started because we will have released the locks by
-  the time we get here. */
-
-  if (trx->abort) {
-    trx->abort = false;
-    trx->state.store(TRX_STATE_FORCED_ROLLBACK, std::memory_order_relaxed);
+  the time we get here. */  // 因为我们可以异步回滚事务，所以我们在最后一步更改状态。一旦提交或回滚开始，trx_t::abort 就不能更改，因为在我们到达这里时已经释放了锁。
+  
+  if (trx->abort) {  // 如果事务被中止
+    trx->abort = false;  // 设置中止标志为 false
+    trx->state.store(TRX_STATE_FORCED_ROLLBACK, std::memory_order_relaxed);  // 将事务状态设置为强制回滚
   } else {
-    trx->state.store(TRX_STATE_NOT_STARTED, std::memory_order_relaxed);
+    trx->state.store(TRX_STATE_NOT_STARTED, std::memory_order_relaxed);  // 将事务状态设置为未启动
   }
-
+  
   /* trx->in_mysql_trx_list would hold between
   trx_allocate_for_mysql() and trx_free_for_mysql(). It does not
-  hold for recovered transactions or system transactions. */
-  assert_trx_is_free(trx);
-
-  trx_init(trx);
-
-  trx_mutex_exit(trx);
-
-  ut_a(trx->error_state == DB_SUCCESS);
+  hold for recovered transactions or system transactions. */  // trx->in_mysql_trx_list 将在 trx_allocate_for_mysql() 和 trx_free_for_mysql() 之间保持。它不适用于恢复的事务或系统事务。
+  assert_trx_is_free(trx);  // 断言事务是空闲的
+  
+  trx_init(trx);  // 初始化事务
+  
+  trx_mutex_exit(trx);  // 退出事务的互斥锁
+  
+  ut_a(trx->error_state == DB_SUCCESS);  // 断言事务的错误状态为成功
 }
 
 /** Commits a transaction and a mini-transaction.
@@ -2154,40 +2152,40 @@ written */
 @param[in,out] mtr Mini-transaction (will be committed), or null if trx made no
 modifications */
 void trx_commit_low(trx_t *trx, mtr_t *mtr) {
-  assert_trx_nonlocking_or_in_list(trx);
-  ut_ad(!trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY));
-  ut_ad(!mtr || mtr->is_active());
-  /* undo_no is non-zero if we're doing the final commit. */
+  assert_trx_nonlocking_or_in_list(trx);  // 断言事务是非锁定事务或在事务列表中
+  ut_ad(!trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY));  // 断言事务状态不是已提交到内存
+  ut_ad(!mtr || mtr->is_active());  // 断言如果 mtr 不为空，则 mtr 是活动的
+  /* undo_no is non-zero if we're doing the final commit. */  // 如果正在进行最终提交，undo_no 不为零
   if (trx->fts_trx != nullptr && trx->undo_no != 0 &&
-      trx->lock.que_state != TRX_QUE_ROLLING_BACK) {
+      trx->lock.que_state != TRX_QUE_ROLLING_BACK) {  // 如果事务有 FTS 事务且 undo_no 不为零且事务不在回滚中
     dberr_t error;
 
-    ut_a(!trx_is_autocommit_non_locking(trx));
+    ut_a(!trx_is_autocommit_non_locking(trx));  // 断言事务不是自动提交的非锁定事务
 
-    error = fts_commit(trx);
+    error = fts_commit(trx);  // 提交 FTS 事务
 
     /* FTS-FIXME: Temporarily tolerate DB_DUPLICATE_KEY
     instead of dying. This is a possible scenario if there
     is a crash between insert to DELETED table committing
     and transaction committing. The fix would be able to
-    return error from this function */
-    if (error != DB_SUCCESS && error != DB_DUPLICATE_KEY) {
+    return error from this function */  // 暂时容忍 DB_DUPLICATE_KEY 而不是崩溃。如果在插入 DELETED 表提交和事务提交之间发生崩溃，这是一个可能的场景。修复将能够从此函数返回错误
+    if (error != DB_SUCCESS && error != DB_DUPLICATE_KEY) {  // 如果提交失败且错误不是重复键
       /* FTS-FIXME: once we can return values from this
       function, we should do so and signal an error
-      instead of just dying. */
+      instead of just dying. */  // 一旦我们可以从此函数返回值，我们应该这样做并发出错误信号，而不是直接崩溃
 
-      ut_error;
+      ut_error;  // 触发错误
     }
   }
 
   bool serialised;
 
-  if (mtr != nullptr) {
-    mtr->set_sync();
+  if (mtr != nullptr) {  // 如果 mtr 不为空
+    mtr->set_sync();  // 设置 mtr 为同步模式
 
-    DEBUG_SYNC_C("trx_sys_before_assign_no");
+    DEBUG_SYNC_C("trx_sys_before_assign_no");  // 调试同步点
 
-    serialised = trx_write_serialisation_history(trx, mtr);
+    serialised = trx_write_serialisation_history(trx, mtr);  // 写入事务的序列化历史
 
     /* The following call commits the mini-transaction, making the
     whole transaction committed in the file-based world, at this
@@ -2204,28 +2202,28 @@ void trx_commit_low(trx_t *trx, mtr_t *mtr) {
     adding to the contention of the kernel mutex. However, if
     a transaction T2 is able to see modifications made by
     a transaction T1, T2 will always get a bigger transaction
-    number and a bigger commit lsn than T1. */
+    number and a bigger commit lsn than T1. */  // 以下调用提交 mini-transaction，使整个事务在文件系统中提交，在此日志序列号处。当我们把日志写入磁盘时，事务变得“持久”，但从逻辑上讲，文件数据结构（如 undo 日志等）中的提交发生在这里。注意，事务号仅分配给具有更新 undo 日志的事务，如果事务具有不同的回滚段，则事务号不一定与提交 lsn 的顺序完全相同。为了获得完全相同的顺序，我们应该持有内核互斥锁直到这一点，但这会增加内核互斥锁的争用。然而，如果事务 T2 能够看到事务 T1 所做的修改，T2 将始终获得比 T1 更大的事务号和更大的提交 lsn。
 
     /*--------------*/
 
     DBUG_EXECUTE_IF("trx_commit_to_the_end_of_log_block", {
       const size_t space_left = mtr->get_expected_log_size();
       mtr_commit_mlog_test_filling_block(*log_sys, space_left);
-    });
+    });  // 调试模式下，如果设置了崩溃点，则在此处崩溃
 
-    mtr_commit(mtr);
+    mtr_commit(mtr);  // 提交 mini-transaction
 
-    DBUG_PRINT("trx_commit", ("commit lsn at " LSN_PF, mtr->commit_lsn()));
+    DBUG_PRINT("trx_commit", ("commit lsn at " LSN_PF, mtr->commit_lsn()));  // 打印提交日志序列号
 
     DBUG_EXECUTE_IF(
         "ib_crash_during_trx_commit_in_mem", if (trx_is_rseg_updated(trx)) {
           log_make_latest_checkpoint();
           DBUG_SUICIDE();
-        });
+        });  // 调试模式下，如果设置了崩溃点，则在此处崩溃
     /*--------------*/
 
-  } else {
-    serialised = false;
+  } else {  // 如果 mtr 为空
+    serialised = false;  // 设置序列化为 false
   }
 #ifdef UNIV_DEBUG
   /* In case of this function is called from a stack executing
@@ -2235,73 +2233,73 @@ void trx_commit_low(trx_t *trx, mtr_t *mtr) {
      mysql's thd does not seem to have
      thd->debug_sync_control defined any longer. However the stack
      is possible only with a prepared trx not updating any data.
-  */
-  if (trx->mysql_thd != nullptr && trx_is_redo_rseg_updated(trx)) {
-    DEBUG_SYNC_C("before_trx_state_committed_in_memory");
+  */  // 如果此函数从执行 THD::release_resources -> ... innobase_connection_close() -> trx_rollback_for_mysql... -> . 的堆栈中调用，mysql 的 thd 似乎不再定义 thd->debug_sync_control。然而，堆栈仅在未更新任何数据的准备事务中可能。
+  if (trx->mysql_thd != nullptr && trx_is_redo_rseg_updated(trx)) {  // 如果事务的 MySQL 线程不为空且 redo 回滚段已更新
+    DEBUG_SYNC_C("before_trx_state_committed_in_memory");  // 调试同步点
   }
 #endif
 
-  trx_commit_in_memory(trx, mtr, serialised);
+  trx_commit_in_memory(trx, mtr, serialised);  // 提交事务到内存
 }
 
 /** Commits a transaction. */
 void trx_commit(trx_t *trx) /*!< in/out: transaction */
 {
-  mtr_t *mtr;
-  mtr_t local_mtr;
+  mtr_t *mtr;  // 定义 MTR（Mini-Transaction）指针
+  mtr_t local_mtr;  // 定义本地 MTR 对象
 
   DBUG_EXECUTE_IF("ib_trx_commit_crash_before_trx_commit_start",
-                  DBUG_SUICIDE(););
+                  DBUG_SUICIDE(););  // 调试模式下，如果设置了崩溃点，则在此处崩溃
 
-  if (trx_is_rseg_updated(trx)) {
-    mtr = &local_mtr;
+  if (trx_is_rseg_updated(trx)) {  // 如果事务的回滚段被更新
+    mtr = &local_mtr;  // 使用本地 MTR 对象
 
-    DBUG_EXECUTE_IF("ib_trx_commit_crash_rseg_updated", DBUG_SUICIDE(););
+    DBUG_EXECUTE_IF("ib_trx_commit_crash_rseg_updated", DBUG_SUICIDE(););  // 调试模式下，如果设置了崩溃点，则在此处崩溃
 
-    mtr_start_sync(mtr);
+    mtr_start_sync(mtr);  // 启动同步 MTR
 
-  } else {
-    mtr = nullptr;
+  } else {  // 如果事务的回滚段未被更新
+    mtr = nullptr;  // 将 MTR 指针置为空
   }
 
-  trx_commit_low(trx, mtr);
+  trx_commit_low(trx, mtr);  // 调用低级别的提交函数
 }
 
 /** Cleans up a transaction at database startup. The cleanup is needed if
  the transaction already got to the middle of a commit when the database
  crashed, and we cannot roll it back. */
-void trx_cleanup_at_db_startup(trx_t *trx) /*!< in: transaction */
-{
-  ut_ad(trx->is_recovered);
-
-  /* Cleanup any durable undo logs in non-temporary rollback segments.
-  At database start-up there are no active transactions recorded in
-  any rollback segments in the temporary tablespace because all those
-  changes are all lost on restart. */
-  if (trx->rsegs.m_redo.insert_undo != nullptr) {
-    trx_undo_insert_cleanup(&trx->rsegs.m_redo, false);
-  }
-
-  memset(&trx->rsegs, 0x0, sizeof(trx->rsegs));
-  trx->undo_no = 0;
-  trx->undo_rseg_space = 0;
-  trx->last_sql_stat_start.least_undo_no = 0;
-
-  trx_sys_mutex_enter();
-
-  ut_a(!trx->read_only);
-  trx_remove_from_rw_trx_list(trx);
-
-  trx_sys_mutex_exit();
-
-  /* Change the transaction state without mutex protection, now
-  that it no longer is in the trx_list. Recovered transactions
-  are never placed in the mysql_trx_list. */
-  ut_ad(trx->is_recovered);
-  ut_ad(!trx->in_rw_trx_list);
-  ut_ad(!trx->in_mysql_trx_list);
-  trx->state.store(TRX_STATE_NOT_STARTED, std::memory_order_relaxed);
-}
+ void trx_cleanup_at_db_startup(trx_t *trx) /*!< in: transaction */
+ {
+   ut_ad(trx->is_recovered);  // 断言事务是已恢复的事务
+ 
+   /* Cleanup any durable undo logs in non-temporary rollback segments.
+   At database start-up there are no active transactions recorded in
+   any rollback segments in the temporary tablespace because all those
+   changes are all lost on restart. */  // 清理非临时回滚段中的持久化 undo 日志，数据库启动时临时表空间中的回滚段没有活动事务记录，因为所有更改在重启时都会丢失
+   if (trx->rsegs.m_redo.insert_undo != nullptr) {  // 如果事务的 redo 回滚段中有插入 undo 日志
+     trx_undo_insert_cleanup(&trx->rsegs.m_redo, false);  // 清理插入 undo 日志
+   }
+ 
+   memset(&trx->rsegs, 0x0, sizeof(trx->rsegs));  // 将事务的回滚段信息清零
+   trx->undo_no = 0;  // 将事务的 undo 编号清零
+   trx->undo_rseg_space = 0;  // 将事务的 undo 回滚段空间清零
+   trx->last_sql_stat_start.least_undo_no = 0;  // 将事务的最后 SQL 语句开始的 undo 编号清零
+ 
+   trx_sys_mutex_enter();  // 进入事务系统互斥锁
+ 
+   ut_a(!trx->read_only);  // 断言事务不是只读的
+   trx_remove_from_rw_trx_list(trx);  // 从事务的读写事务列表中移除该事务
+ 
+   trx_sys_mutex_exit();  // 退出事务系统互斥锁
+ 
+   /* Change the transaction state without mutex protection, now
+   that it no longer is in the trx_list. Recovered transactions
+   are never placed in the mysql_trx_list. */  // 现在事务不再在事务列表中，无需互斥锁保护即可更改事务状态。已恢复的事务永远不会被放入 mysql_trx_list
+   ut_ad(trx->is_recovered);  // 断言事务是已恢复的事务
+   ut_ad(!trx->in_rw_trx_list);  // 断言事务不在读写事务列表中
+   ut_ad(!trx->in_mysql_trx_list);  // 断言事务不在 mysql 事务列表中
+   trx->state.store(TRX_STATE_NOT_STARTED, std::memory_order_relaxed);  // 将事务状态设置为未启动
+ }
 
 /** Assigns a read view for a consistent read query. All the consistent reads
  within the same transaction will get the same read view, which is created
@@ -2359,8 +2357,11 @@ ReadView *trx_clone_read_view(trx_t *trx, trx_t *from_trx) {
   return (trx->read_view);
 }
 
-/** Prepares a transaction for commit/rollback. */
-void trx_commit_or_rollback_prepare(trx_t *trx) /*!< in/out: transaction */
+/**
+ * @brief 准备事务以进行提交或回滚。
+ * @brief Prepares a transaction for commit/rollback.
+ */
+void trx_commit_or_rollback_prepare(trx_t *trx) /*!< in/out: transaction */ /*!< in/out: 事务 */
 {
   /* We are reading trx->state without mutex protection here,
   because the rollback should either be invoked for:
@@ -2371,40 +2372,48 @@ void trx_commit_or_rollback_prepare(trx_t *trx) /*!< in/out: transaction */
       run by the current thread, in which case it is guaranteed that
       thread owning the transaction, which is being killed, is not
       inside InnoDB (thanks to TRX_FORCE_ROLLBACK and TrxInInnoDB::wait()). */
+  /* 我们在这里读取 trx->state 而不加互斥锁保护，
+     因为回滚应该被调用用于以下情况：
+    - 与当前线程关联的正在运行的活跃 MySQL 事务，
+    - 或者一个恢复的已准备事务，
+    - 或者一个被当前线程运行的 HP 事务杀死的受害者事务，
+      在这种情况下，保证拥有该事务的线程（正在被杀死）不在 InnoDB 内部
+      （感谢 TRX_FORCE_ROLLBACK 和 TrxInInnoDB::wait()）。 */
 
-  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
+  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));  // 断言：确保当前线程可以处理该事务或该事务是 HP 受害者
 
-  switch (trx->state.load(std::memory_order_relaxed)) {
-    case TRX_STATE_NOT_STARTED:
-    case TRX_STATE_FORCED_ROLLBACK:
+  switch (trx->state.load(std::memory_order_relaxed)) {  // 根据事务的状态进行处理
+    case TRX_STATE_NOT_STARTED:  // 事务未启动
+    case TRX_STATE_FORCED_ROLLBACK:  // 事务被强制回滚
 
-      trx_start_low(trx, true);
-      [[fallthrough]];
+      trx_start_low(trx, true);  // 启动事务
+      [[fallthrough]];  // 继续执行下一个 case
 
-    case TRX_STATE_ACTIVE:
-    case TRX_STATE_PREPARED:
+    case TRX_STATE_ACTIVE:  // 事务处于活跃状态
+    case TRX_STATE_PREPARED:  // 事务已准备
 
       /* If the trx is in a lock wait state, moves the waiting
       query thread to the suspended state */
+      /* 如果事务处于锁等待状态，将等待的查询线程移动到挂起状态 */
 
-      if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
-        ut_a(trx->lock.wait_thr != nullptr);
-        trx->lock.wait_thr->state = QUE_THR_SUSPENDED;
-        trx->lock.wait_thr = nullptr;
+      if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {  // 如果事务处于锁等待状态
+        ut_a(trx->lock.wait_thr != nullptr);  // 断言：确保等待线程不为空
+        trx->lock.wait_thr->state = QUE_THR_SUSPENDED;  // 将等待线程的状态设置为挂起
+        trx->lock.wait_thr = nullptr;  // 清空等待线程
 
-        trx->stats.stop_lock_wait(*trx);
+        trx->stats.stop_lock_wait(*trx);  // 停止锁等待统计
 
-        trx->lock.que_state = TRX_QUE_RUNNING;
+        trx->lock.que_state = TRX_QUE_RUNNING;  // 将事务的队列状态设置为运行中
       }
 
-      ut_a(trx->lock.n_active_thrs == 1);
+      ut_a(trx->lock.n_active_thrs == 1);  // 断言：确保活跃线程数为 1
       return;
 
-    case TRX_STATE_COMMITTED_IN_MEMORY:
+    case TRX_STATE_COMMITTED_IN_MEMORY:  // 事务已在内存中提交
       break;
   }
 
-  ut_error;
+  ut_error;  // 如果事务状态未知，触发错误
 }
 
 /** Creates a commit command node struct.
@@ -2469,58 +2478,58 @@ que_thr_t *trx_commit_step(que_thr_t *thr) /*!< in: query thread */
 
 /** Does the transaction commit for MySQL.
  @return DB_SUCCESS or error number */
-dberr_t trx_commit_for_mysql(trx_t *trx) /*!< in/out: transaction */
-{
-  DEBUG_SYNC_C("trx_commit_for_mysql_checks_for_aborted");
-  TrxInInnoDB trx_in_innodb(trx, true);
-
-  if (trx_in_innodb.is_aborted() &&
-      trx->killed_by != std::this_thread::get_id()) {
-    return (DB_FORCED_ABORT);
-  }
-
-  /* Because we do not do the commit by sending an Innobase
-  sig to the transaction, we must here make sure that trx has been
-  started. */
-
-  dberr_t db_err = DB_SUCCESS;
-
-  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
-
-  switch (trx->state.load(std::memory_order_relaxed)) {
-    case TRX_STATE_NOT_STARTED:
-    case TRX_STATE_FORCED_ROLLBACK:
-
-      ut_d(trx->start_file = __FILE__);
-      ut_d(trx->start_line = __LINE__);
-
-      trx_start_low(trx, true);
-      [[fallthrough]];
-    case TRX_STATE_ACTIVE:
-    case TRX_STATE_PREPARED:
-      trx->op_info = "committing";
-
-      /* For GTID persistence we need update undo segment. */
-      db_err = trx_undo_gtid_add_update_undo(trx, false, false);
-      if (db_err != DB_SUCCESS) {
-        return (db_err);
-      }
-
-      if (trx->id != 0) {
-        trx_update_mod_tables_timestamp(trx);
-      }
-
-      trx_commit(trx);
-
-      MONITOR_DEC(MONITOR_TRX_ACTIVE);
-      trx->op_info = "";
-      return (DB_SUCCESS);
-    case TRX_STATE_COMMITTED_IN_MEMORY:
-      break;
-  }
-  ut_error;
-  return (DB_CORRUPTION);
-}
+ dberr_t trx_commit_for_mysql(trx_t *trx) /*!< in/out: transaction */
+ {
+   DEBUG_SYNC_C("trx_commit_for_mysql_checks_for_aborted");  // 调试同步点
+   TrxInInnoDB trx_in_innodb(trx, true);  // 确保事务在 InnoDB 中
+ 
+   if (trx_in_innodb.is_aborted() &&
+       trx->killed_by != std::this_thread::get_id()) {  // 如果事务被中止且不是当前线程中止的
+     return (DB_FORCED_ABORT);  // 返回强制中止错误
+   }
+ 
+   /* Because we do not do the commit by sending an Innobase
+   sig to the transaction, we must here make sure that trx has been
+   started. */  // 因为我们不通过发送 Innobase 信号来提交事务，所以我们必须在这里确保事务已启动。
+ 
+   dberr_t db_err = DB_SUCCESS;  // 定义错误码为成功
+ 
+   ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));  // 断言当前线程可以处理该事务或该事务是高性能受害者
+ 
+   switch (trx->state.load(std::memory_order_relaxed)) {  // 根据事务状态进行分支处理
+     case TRX_STATE_NOT_STARTED:  // 如果事务状态为未启动
+     case TRX_STATE_FORCED_ROLLBACK:  // 如果事务状态为强制回滚
+ 
+       ut_d(trx->start_file = __FILE__);  // 在调试模式下设置事务的起始文件
+       ut_d(trx->start_line = __LINE__);  // 在调试模式下设置事务的起始行号
+ 
+       trx_start_low(trx, true);  // 启动事务
+       [[fallthrough]];  // 继续执行下一个 case
+     case TRX_STATE_ACTIVE:  // 如果事务状态为活动状态
+     case TRX_STATE_PREPARED:  // 如果事务状态为准备状态
+       trx->op_info = "committing";  // 设置事务操作信息为“提交中”
+ 
+       /* For GTID persistence we need update undo segment. */  // 为了 GTID 持久化，我们需要更新 undo 段
+       db_err = trx_undo_gtid_add_update_undo(trx, false, false);  // 更新 undo 段以支持 GTID 持久化
+       if (db_err != DB_SUCCESS) {  // 如果更新失败
+         return (db_err);  // 返回错误码
+       }
+ 
+       if (trx->id != 0) {  // 如果事务 ID 不为 0
+         trx_update_mod_tables_timestamp(trx);  // 更新事务修改表的时间戳
+       }
+ 
+       trx_commit(trx);  // 提交事务
+ 
+       MONITOR_DEC(MONITOR_TRX_ACTIVE);  // 减少活动事务的监控计数
+       trx->op_info = "";  // 清空事务操作信息
+       return (DB_SUCCESS);  // 返回成功
+     case TRX_STATE_COMMITTED_IN_MEMORY:  // 如果事务状态为已提交到内存
+       break;  // 跳出 switch 语句
+   }
+   ut_error;  // 触发错误
+   return (DB_CORRUPTION);  // 返回损坏错误
+ }
 
 /** If required, flushes the log to disk if we called trx_commit_for_mysql()
  with trx->flush_log_later == true. */
@@ -3377,32 +3386,32 @@ trx_t *trx_get_trx_by_xid(const XID *xid) {
 @param[in,out] trx Transaction
 @param[in] read_write True if read write transaction */
 void trx_start_if_not_started_xa_low(trx_t *trx, bool read_write) {
-  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
-  switch (trx->state.load(std::memory_order_relaxed)) {
-    case TRX_STATE_NOT_STARTED:
-    case TRX_STATE_FORCED_ROLLBACK:
-      trx_start_low(trx, read_write);
-      return;
+  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));  // 断言当前线程可以处理该事务或该事务是高性能受害者
+  switch (trx->state.load(std::memory_order_relaxed)) {  // 根据事务状态进行分支处理
+    case TRX_STATE_NOT_STARTED:  // 如果事务状态为未启动
+    case TRX_STATE_FORCED_ROLLBACK:  // 如果事务状态为强制回滚
+      trx_start_low(trx, read_write);  // 调用低级别的启动事务函数
+      return;  // 返回
 
-    case TRX_STATE_ACTIVE:
-      if (trx->id == 0 && read_write) {
+    case TRX_STATE_ACTIVE:  // 如果事务状态为活动状态
+      if (trx->id == 0 && read_write) {  // 如果事务 ID 为 0 且事务为读写事务
         /* If the transaction is tagged as read-only then
         it can only write to temp tables and for such
         transactions we don't want to move them to the
-        trx_sys_t::rw_trx_list. */
-        if (!trx->read_only) {
-          trx_set_rw_mode(trx);
-        } else if (!srv_read_only_mode) {
-          trx_assign_rseg_temp(trx);
+        trx_sys_t::rw_trx_list. */  // 如果事务被标记为只读，则它只能写入临时表，对于此类事务，我们不希望将它们移动到 trx_sys_t::rw_trx_list 中。
+        if (!trx->read_only) {  // 如果事务不是只读的
+          trx_set_rw_mode(trx);  // 设置事务为读写模式
+        } else if (!srv_read_only_mode) {  // 如果服务器不是只读模式
+          trx_assign_rseg_temp(trx);  // 为事务分配临时回滚段
         }
       }
-      return;
-    case TRX_STATE_PREPARED:
-    case TRX_STATE_COMMITTED_IN_MEMORY:
-      break;
+      return;  // 返回
+    case TRX_STATE_PREPARED:  // 如果事务状态为准备状态
+    case TRX_STATE_COMMITTED_IN_MEMORY:  // 如果事务状态为已提交到内存
+      break;  // 跳出 switch 语句
   }
 
-  ut_error;
+  ut_error;  // 触发错误
 }
 
 /** Starts the transaction if it is not yet started.

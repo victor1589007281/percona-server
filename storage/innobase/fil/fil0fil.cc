@@ -9856,42 +9856,42 @@ the letter case.
 @param[in]      new_path        path to new file */
 static void fil_adjust_partition_stat(const std::string &old_path,
                                       const std::string &new_path) {
-  char errstr[FN_REFLEN];
-  std::string path;
+  char errstr[FN_REFLEN];  // 定义错误信息缓冲区
+  std::string path;  // 定义路径字符串
 
-  /* Skip if not IBD file extension. */
+  /* Skip if not IBD file extension. */  // 如果不是 IBD 文件扩展名，则跳过
   if (!Fil_path::has_suffix(IBD, old_path) ||
       !Fil_path::has_suffix(IBD, new_path)) {
     return;
   }
 
-  /* Check if partitioned table. */
+  /* Check if partitioned table. */  // 检查是否是分区表
   if (!dict_name::is_partition(old_path) ||
       !dict_name::is_partition(new_path)) {
     return;
   }
 
-  std::string old_name;
-  path.assign(old_path);
-  if (!Fil_path::parse_file_path(path, IBD, old_name)) {
+  std::string old_name;  // 定义旧表名
+  path.assign(old_path);  // 将旧路径赋值给 path
+  if (!Fil_path::parse_file_path(path, IBD, old_name)) {  // 解析文件路径
     return;
   }
-  ut_ad(!old_name.empty());
+  ut_ad(!old_name.empty());  // 断言旧表名不为空
 
-  std::string new_name;
-  path.assign(new_path);
-  if (!Fil_path::parse_file_path(path, IBD, new_name)) {
+  std::string new_name;  // 定义新表名
+  path.assign(new_path);  // 将新路径赋值给 path
+  if (!Fil_path::parse_file_path(path, IBD, new_name)) {  // 解析文件路径
     return;
   }
-  ut_ad(!new_name.empty());
+  ut_ad(!new_name.empty());  // 断言新表名不为空
 
   /* Required for case insensitive file system where file path letter case
-  doesn't matter. We need to keep the name in stat table consistent. */
-  dict_name::rebuild(new_name);
+  doesn't matter. We need to keep the name in stat table consistent. */  // 对于不区分大小写的文件系统，文件路径的大小写无关紧要。我们需要保持统计表中的名称一致。
+  dict_name::rebuild(new_name);  // 重建新表名
 
-  if (old_name.compare(new_name) != 0) {
+  if (old_name.compare(new_name) != 0) {  // 如果旧表名和新表名不同
     dict_stats_rename_table(old_name.c_str(), new_name.c_str(), errstr,
-                            sizeof(errstr));
+                            sizeof(errstr));  // 重命名统计表中的表名
   }
 }
 
@@ -9900,100 +9900,99 @@ Free the Tablespace_files instance.
 @param[in]      read_only_mode  true if InnoDB is started in read only mode.
 @return DB_SUCCESS if all OK */
 dberr_t Fil_system::prepare_open_for_business(bool read_only_mode) {
-  if (read_only_mode && !m_moved.empty()) {
+  if (read_only_mode && !m_moved.empty()) {  // 如果 InnoDB 以只读模式启动且存在移动的文件
     ib::error(ER_IB_MSG_344)
         << m_moved.size() << " files have been relocated"
         << " and the server has been started in read"
-        << " only mode. Cannot update the data dictionary.";
+        << " only mode. Cannot update the data dictionary.";  // 打印错误信息，表示无法更新数据字典
 
-    return DB_READ_ONLY;
+    return DB_READ_ONLY;  // 返回只读错误
   }
 
-  trx_t *trx = check_trx_exists(current_thd);
+  trx_t *trx = check_trx_exists(current_thd);  // 获取当前线程的事务对象
 
-  TrxInInnoDB trx_in_innodb(trx);
+  TrxInInnoDB trx_in_innodb(trx);  // 确保事务在 InnoDB 中
 
-  /* The transaction should not be active yet, start it */
+  /* The transaction should not be active yet, start it */  // 事务尚未激活，启动它
+  trx->isolation_level = trx_t::READ_UNCOMMITTED;  // 设置事务隔离级别为读未提交
 
-  trx->isolation_level = trx_t::READ_UNCOMMITTED;
+  trx_start_if_not_started_xa(trx, false, UT_LOCATION_HERE);  // 如果事务未启动，则启动 XA 事务
 
-  trx_start_if_not_started_xa(trx, false, UT_LOCATION_HERE);
+  size_t count = 0;  // 初始化处理计数
+  size_t failed = 0;  // 初始化失败计数
+  size_t batch_size = 0;  // 初始化批量大小
+  bool print_msg = false;  // 初始化打印消息标志
+  auto start_time = std::chrono::steady_clock::now();  // 获取当前时间
 
-  size_t count = 0;
-  size_t failed = 0;
-  size_t batch_size = 0;
-  bool print_msg = false;
-  auto start_time = std::chrono::steady_clock::now();
+  /* If some file paths have changed then update the DD */  // 如果某些文件路径已更改，则更新数据字典
+  for (auto &tablespace : m_moved) {  // 遍历所有移动的表空间
+    dberr_t err;  // 定义错误码
 
-  /* If some file paths have changed then update the DD */
-  for (auto &tablespace : m_moved) {
-    dberr_t err;
+    auto old_path = std::get<dd_fil::OLD_PATH>(tablespace);  // 获取旧路径
 
-    auto old_path = std::get<dd_fil::OLD_PATH>(tablespace);
+    auto space_name = std::get<dd_fil::SPACE_NAME>(tablespace);  // 获取表空间名称
 
-    auto space_name = std::get<dd_fil::SPACE_NAME>(tablespace);
+    auto new_path = std::get<dd_fil::NEW_PATH>(tablespace);  // 获取新路径
+    auto object_id = std::get<dd_fil::OBJECT_ID>(tablespace);  // 获取对象 ID
 
-    auto new_path = std::get<dd_fil::NEW_PATH>(tablespace);
-    auto object_id = std::get<dd_fil::OBJECT_ID>(tablespace);
-
-    /* We already have the space name in system cs. */
+    /* We already have the space name in system cs. */  // 我们已经在系统字符集中有了表空间名称
     err = dd_tablespace_rename(object_id, true, space_name.c_str(),
-                               new_path.c_str());
+                               new_path.c_str());  // 更新数据字典中的表空间路径
 
-    if (err != DB_SUCCESS) {
+    if (err != DB_SUCCESS) {  // 如果更新失败
       ib::error(ER_IB_MSG_345) << "Unable to update tablespace ID"
                                << " " << object_id << " "
                                << " '" << old_path << "' to"
-                               << " '" << new_path << "'";
+                               << " '" << new_path << "'";  // 打印错误信息
 
-      ++failed;
+      ++failed;  // 增加失败计数
     }
 
-    /* Update persistent stat table if table name is modified. */
-    fil_adjust_partition_stat(old_path, new_path);
+    /* Update persistent stat table if table name is modified. */  // 如果表名被修改，则更新持久统计表
+    fil_adjust_partition_stat(old_path, new_path);  // 调整分区统计
 
-    ++count;
+    ++count;  // 增加处理计数
 
-    if (std::chrono::steady_clock::now() - start_time >= PRINT_INTERVAL) {
+    if (std::chrono::steady_clock::now() - start_time >= PRINT_INTERVAL) {  // 如果处理时间超过打印间隔
       ib::info(ER_IB_MSG_346) << "Processed " << count << "/" << m_moved.size()
-                              << " tablespace paths. Failures " << failed;
+                              << " tablespace paths. Failures " << failed;  // 打印处理进度
 
-      start_time = std::chrono::steady_clock::now();
-      print_msg = true;
+      start_time = std::chrono::steady_clock::now();  // 重置开始时间
+      print_msg = true;  // 设置打印消息标志
     }
 
-    ++batch_size;
+    ++batch_size;  // 增加批量大小
 
-    if (batch_size > 10000) {
-      innobase_commit_low(trx);
+    if (batch_size > 10000) {  // 如果批量大小超过 10000
+      innobase_commit_low(trx);  // 提交事务
 
-      ib::info(ER_IB_MSG_347) << "Committed : " << batch_size;
+      ib::info(ER_IB_MSG_347) << "Committed : " << batch_size;  // 打印提交信息
 
-      batch_size = 0;
+      batch_size = 0;  // 重置批量大小
 
-      trx_start_if_not_started_xa(trx, false, UT_LOCATION_HERE);
+      trx_start_if_not_started_xa(trx, false, UT_LOCATION_HERE);  // 重新启动事务
     }
   }
 
-  if (batch_size > 0) {
-    ib::info(ER_IB_MSG_348) << "Committed : " << batch_size;
+  if (batch_size > 0) {  // 如果批量大小大于 0
+    ib::info(ER_IB_MSG_348) << "Committed : " << batch_size;  // 打印提交信息
   }
 
-  innobase_commit_low(trx);
+  innobase_commit_low(trx);  // 提交事务
 
-  if (print_msg) {
+  if (print_msg) {  // 如果需要打印消息
     ib::info(ER_IB_MSG_349) << "Updated " << count << " tablespace paths"
-                            << ", failures " << failed;
+                            << ", failures " << failed;  // 打印最终处理结果
   }
 
-  return failed == 0 ? DB_SUCCESS : DB_ERROR;
+  return failed == 0 ? DB_SUCCESS : DB_ERROR;  // 如果没有失败则返回成功，否则返回错误
 }
 
 /** Free the Tablespace_files instance.
 @param[in]      read_only_mode  true if InnoDB is started in read only mode.
 @return DB_SUCCESS if all OK */
 dberr_t fil_open_for_business(bool read_only_mode) {
-  return fil_system->prepare_open_for_business(read_only_mode);
+  return fil_system->prepare_open_for_business(read_only_mode);  // 调用 fil_system 的 prepare_open_for_business 方法，准备打开文件系统
 }
 
 /** Replay a file rename operation for ddl replay.

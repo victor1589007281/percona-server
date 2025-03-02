@@ -543,11 +543,11 @@ struct mtr_t {
   /** Get the LSN of commit().
   @return the commit LSN
   @retval 0 if the transaction only modified temporary tablespaces or logging
-  is disabled globally. */
+  is disabled globally. */  // 获取提交的 LSN。如果事务仅修改了临时表空间或全局禁用了日志记录，则返回 0。
   [[nodiscard]] lsn_t commit_lsn() const {
-    ut_ad(has_committed());
-    ut_ad(m_impl.m_log_mode == MTR_LOG_ALL);
-    return (m_commit_lsn);
+    ut_ad(has_committed());  // 断言事务已提交
+    ut_ad(m_impl.m_log_mode == MTR_LOG_ALL);  // 断言日志模式为 MTR_LOG_ALL
+    return (m_commit_lsn);  // 返回提交的 LSN
   }
 
   /** Note that we are inside the change buffer code. */

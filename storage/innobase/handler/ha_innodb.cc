@@ -4107,42 +4107,42 @@ dberr_t Validate_files::validate(const DD_tablespaces &tablespaces) {
 @retval true    on error
 @retval false   on success */
 [[nodiscard]] static bool boot_tablespaces(THD *thd) {
-  auto dc = dd::get_dd_client(thd);
+  auto dc = dd::get_dd_client(thd);  // 获取字典客户端
 
-  using DD_tablespaces = std::vector<const dd::Tablespace *>;
-  using Releaser = dd::cache::Dictionary_client::Auto_releaser;
+  using DD_tablespaces = std::vector<const dd::Tablespace *>;  // 定义表空间向量类型
+  using Releaser = dd::cache::Dictionary_client::Auto_releaser;  // 定义自动释放器类型
 
-  DD_tablespaces tablespaces;
-  Releaser releaser(dc);
+  DD_tablespaces tablespaces;  // 存储表空间的向量
+  Releaser releaser(dc);  // 自动释放字典客户端
 
   /* Initialize the max space_id from sys header */
-  dict_sys_mutex_enter();
+  dict_sys_mutex_enter();  // 进入字典系统互斥锁
 
-  mtr_t mtr;
+  mtr_t mtr;  // 定义 MTR（Mini-Transaction）对象
 
-  mtr_start(&mtr);
+  mtr_start(&mtr);  // 开始 MTR
 
   space_id_t space_max_id = mtr_read_ulint(
-      dict_hdr_get(&mtr) + DICT_HDR_MAX_SPACE_ID, MLOG_4BYTES, &mtr);
+      dict_hdr_get(&mtr) + DICT_HDR_MAX_SPACE_ID, MLOG_4BYTES, &mtr);  // 从系统头读取最大 space_id
 
-  mtr_commit(&mtr);
+  mtr_commit(&mtr);  // 提交 MTR
 
-  fil_set_max_space_id_if_bigger(space_max_id);
+  fil_set_max_space_id_if_bigger(space_max_id);  // 如果读取的 space_id 更大，则更新最大 space_id
 
-  dict_sys_mutex_exit();
+  dict_sys_mutex_exit();  // 退出字典系统互斥锁
 
-  ib::info(ER_IB_MSG_532) << "Reading DD tablespace files";
+  ib::info(ER_IB_MSG_532) << "Reading DD tablespace files";  // 打印日志信息，表示正在读取 DD 表空间文件
 
   if (dc->fetch_global_components(&tablespaces)) {
-    /* Failed to fetch the tablespaces from the DD. */
+    /* Failed to fetch the tablespaces from the DD. */  // 从 DD 中获取表空间失败
 
-    return (DD_FAILURE);
+    return (DD_FAILURE);  // 返回失败
   }
 
-  Validate_files validator;
-  dberr_t err = validator.validate(tablespaces);
+  Validate_files validator;  // 创建文件验证器对象
+  dberr_t err = validator.validate(tablespaces);  // 验证表空间文件
 
-  return (err == DB_SUCCESS ? DD_SUCCESS : DD_FAILURE);
+  return (err == DB_SUCCESS ? DD_SUCCESS : DD_FAILURE);  // 根据验证结果返回成功或失败
 }
 
 /** Create metadata for a predefined tablespace at server initialization.
@@ -4304,13 +4304,13 @@ data dictionary.
 @retval false                           Success - no errors. */
 static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
                                   uint version [[maybe_unused]]) {
-  THD *thd = current_thd;
+  THD *thd = current_thd;  // 获取当前线程的 THD 对象
 
   switch (dict_recovery_mode) {
     case DICT_RECOVERY_INITIALIZE_TABLESPACES:
-      break;
+      break;  // 如果是初始化表空间模式，直接跳过
     case DICT_RECOVERY_RESTART_SERVER:
-      [[fallthrough]];
+      [[fallthrough]];  // 如果是重启服务器模式，继续执行下一个 case
     case DICT_RECOVERY_INITIALIZE_SERVER:
       if (dict_sys->dynamic_metadata == nullptr) {
         dict_sys->dynamic_metadata =
@@ -4333,7 +4333,7 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
 
   switch (dict_recovery_mode) {
     case DICT_RECOVERY_INITIALIZE_SERVER:
-      return (false);
+      return (false);  // 如果是初始化服务器模式，直接返回成功
     case DICT_RECOVERY_INITIALIZE_TABLESPACES: {
       dd::cache::Dictionary_client *client = dd::get_dd_client(thd); // 获取字典客户端
       dd::cache::Dictionary_client::Auto_releaser releaser(client); // 自动释放字典客户端
@@ -4368,7 +4368,7 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
         return (true); // 修复克隆表失败
       }
 
-      srv_dict_recover_on_restart(); // 在重启时恢复字典
+      srv_dict_recover_on_restart(); // 在重启时恢复字典(commit&rollback)
   }
 
   srv_start_threads(dict_recovery_mode != DICT_RECOVERY_RESTART_SERVER); // 启动线程
@@ -6183,16 +6183,16 @@ static bool innobase_flush_logs(handlerton *hton, bool binlog_group_flush) {
 /** Commits a transaction in an InnoDB database. */
 void innobase_commit_low(trx_t *trx) /*!< in: transaction handle */
 {
-  if (trx_is_started(trx)) {
-    const dberr_t error [[maybe_unused]] = trx_commit_for_mysql(trx);
+  if (trx_is_started(trx)) {  // 如果事务已启动
+    const dberr_t error [[maybe_unused]] = trx_commit_for_mysql(trx);  // 提交事务
     // This is ut_ad not ut_a, because previously we did not have an assert
     // and nobody has noticed for a long time, so probably there is no much
     // harm in silencing this error. OTOH we believe it should no longer happen
     // after adding `true` as a second argument to TrxInInnoDB constructor call,
     // so we'd like to learn if the error can still happen.
-    ut_ad(DB_SUCCESS == error);
+    ut_ad(DB_SUCCESS == error);  // 断言事务提交成功
   }
-  trx->will_lock = 0;
+  trx->will_lock = 0;  // 将事务的将要加锁标志设置为 0
 }
 
 /** Stores the current binlog coordinates in the trx system header

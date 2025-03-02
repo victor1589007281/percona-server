@@ -2811,14 +2811,14 @@ struct metadata_applier {
 
 /** Apply the dynamic metadata to all tables */
 static void apply_dynamic_metadata() {
-  const metadata_applier applier;
+  const metadata_applier applier;  // 创建元数据应用器对象
 
-  dict_sys->for_each_table(applier);
+  dict_sys->for_each_table(applier);  // 遍历所有表并应用动态元数据
 
-  if (srv_dict_metadata != nullptr) {
-    srv_dict_metadata->apply();
-    ut::delete_(srv_dict_metadata);
-    srv_dict_metadata = nullptr;
+  if (srv_dict_metadata != nullptr) {  // 如果全局字典元数据不为空
+    srv_dict_metadata->apply();  // 应用全局字典元数据
+    ut::delete_(srv_dict_metadata);  // 删除全局字典元数据对象
+    srv_dict_metadata = nullptr;  // 将全局字典元数据指针置为空
   }
 }
 

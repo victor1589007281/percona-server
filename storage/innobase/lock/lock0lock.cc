@@ -3433,68 +3433,68 @@ struct TableLockGetNode {
 /** Creates a table lock object and adds it as the last in the lock queue
  of the table. Does NOT check for deadlocks or lock compatibility.
  @return own: new lock object */
-static inline lock_t *lock_table_create(
-    dict_table_t *table, /*!< in/out: database table
-                         in dictionary cache */
-    ulint type_mode,     /*!< in: lock mode possibly ORed with
-                       LOCK_WAIT */
-    trx_t *trx)          /*!< in: trx */
+ static inline lock_t *lock_table_create(
+  dict_table_t *table, /*!< in/out: database table
+                       in dictionary cache */
+  ulint type_mode,     /*!< in: lock mode possibly ORed with
+                     LOCK_WAIT */
+  trx_t *trx)          /*!< in: trx */
 {
-  lock_t *lock;
-
-  ut_ad(table && trx);
-  ut_ad(locksys::owns_table_shard(*table));
-  ut_ad(trx_mutex_own(trx));
-  ut_ad(trx_can_be_handled_by_current_thread(trx));
-
-  check_trx_state(trx);
-  ++table->count_by_mode[type_mode & LOCK_MODE_MASK];
+  lock_t *lock;  // 定义锁对象
+  
+  ut_ad(table && trx);  // 断言表和事务对象不为空
+  ut_ad(locksys::owns_table_shard(*table));  // 断言当前线程持有表的锁分片
+  ut_ad(trx_mutex_own(trx));  // 断言当前线程持有事务的互斥锁
+  ut_ad(trx_can_be_handled_by_current_thread(trx));  // 断言当前线程可以处理该事务
+  
+  check_trx_state(trx);  // 检查事务状态
+  ++table->count_by_mode[type_mode & LOCK_MODE_MASK];  // 增加表中对应锁模式的计数
   /* For AUTOINC locking we reuse the lock instance only if
   there is no wait involved else we allocate the waiting lock
-  from the transaction lock heap. */
-  if (type_mode == LOCK_AUTO_INC) {
-    lock = table->autoinc_lock;
-    ut_ad(table->autoinc_trx == nullptr);
-    table->autoinc_trx = trx;
-
-    ib_vector_push(trx->lock.autoinc_locks, &lock);
-
-  } else if (trx->lock.table_cached < trx->lock.table_pool.size()) {
-    lock = trx->lock.table_pool[trx->lock.table_cached++];
-  } else {
-    auto ptr = mem_heap_alloc(trx->lock.lock_heap, sizeof(*lock));
-    ut_a(ut::is_aligned_as<lock_t>(ptr));
-    lock = static_cast<lock_t *>(ptr);
+  from the transaction lock heap. */  // 对于 AUTOINC 锁，如果没有等待，则重用锁实例，否则从事务锁堆中分配等待锁
+  if (type_mode == LOCK_AUTO_INC) {  // 如果锁模式是 AUTOINC
+    lock = table->autoinc_lock;  // 获取表的 AUTOINC 锁
+    ut_ad(table->autoinc_trx == nullptr);  // 断言表的 AUTOINC 事务为空
+    table->autoinc_trx = trx;  // 设置表的 AUTOINC 事务为当前事务
+  
+    ib_vector_push(trx->lock.autoinc_locks, &lock);  // 将锁推入事务的 AUTOINC 锁向量
+  
+  } else if (trx->lock.table_cached < trx->lock.table_pool.size()) {  // 如果事务的缓存表锁未用完
+    lock = trx->lock.table_pool[trx->lock.table_cached++];  // 从事务的缓存表锁池中获取锁
+  } else {  // 否则
+    auto ptr = mem_heap_alloc(trx->lock.lock_heap, sizeof(*lock));  // 从事务的锁堆中分配内存
+    ut_a(ut::is_aligned_as<lock_t>(ptr));  // 断言内存对齐
+    lock = static_cast<lock_t *>(ptr);  // 将分配的内存转换为锁对象
   }
-  lock->type_mode = uint32_t(type_mode | LOCK_TABLE);
-  lock->trx = trx;
-  ut_d(lock->m_seq = lock_sys->m_seq.fetch_add(1));
-
-  lock->tab_lock.table = table;
-
-  ut_ad(table->n_ref_count > 0 || !table->can_be_evicted);
-
+  lock->type_mode = uint32_t(type_mode | LOCK_TABLE);  // 设置锁的类型和模式
+  lock->trx = trx;  // 设置锁所属的事务
+  ut_d(lock->m_seq = lock_sys->m_seq.fetch_add(1));  // 在调试模式下设置锁的序列号
+  
+  lock->tab_lock.table = table;  // 设置锁关联的表
+  
+  ut_ad(table->n_ref_count > 0 || !table->can_be_evicted);  // 断言表的引用计数大于 0 或表不能被驱逐
+  
 #ifdef HAVE_PSI_THREAD_INTERFACE
 #ifdef HAVE_PSI_DATA_LOCK_INTERFACE
   /* The performance schema THREAD_ID and EVENT_ID
-  are used only when DATA_LOCKS are exposed.  */
+  are used only when DATA_LOCKS are exposed.  */  // 性能模式的 THREAD_ID 和 EVENT_ID 仅在暴露 DATA_LOCKS 时使用
   PSI_THREAD_CALL(get_current_thread_event_id)
-  (&lock->m_psi_internal_thread_id, &lock->m_psi_event_id);
+  (&lock->m_psi_internal_thread_id, &lock->m_psi_event_id);  // 获取当前线程的事件 ID
 #endif /* HAVE_PSI_DATA_LOCK_INTERFACE */
 #endif /* HAVE_PSI_THREAD_INTERFACE */
-
-  locksys::add_to_trx_locks(lock);
-
-  ut_list_append(table->locks, lock);
-
-  if (type_mode & LOCK_WAIT) {
-    lock_set_lock_and_trx_wait(lock);
+  
+  locksys::add_to_trx_locks(lock);  // 将锁添加到事务的锁列表中
+  
+  ut_list_append(table->locks, lock);  // 将锁添加到表的锁队列中
+  
+  if (type_mode & LOCK_WAIT) {  // 如果锁模式包含 LOCK_WAIT
+    lock_set_lock_and_trx_wait(lock);  // 设置锁和事务的等待状态
   }
-
-  MONITOR_INC(MONITOR_TABLELOCK_CREATED);
-  MONITOR_INC(MONITOR_NUM_TABLELOCK);
-
-  return (lock);
+  
+  MONITOR_INC(MONITOR_TABLELOCK_CREATED);  // 增加表锁创建的监控计数
+  MONITOR_INC(MONITOR_NUM_TABLELOCK);  // 增加表锁数量的监控计数
+  
+  return (lock);  // 返回创建的锁对象
 }
 
 /** Pops autoinc lock requests from the transaction's autoinc_locks. We
@@ -3825,20 +3825,20 @@ dberr_t lock_table(ulint flags, /*!< in: if BTR_NO_LOCKING_FLAG bit is set,
 @param[in,out] table Table
 @param[in,out] trx Transaction */
 void lock_table_ix_resurrect(dict_table_t *table, trx_t *trx) {
-  ut_ad(trx->is_recovered);
+  ut_ad(trx->is_recovered);  // 断言事务是已恢复的事务
 
-  if (lock_table_has(trx, table, LOCK_IX)) {
-    return;
+  if (lock_table_has(trx, table, LOCK_IX)) {  // 如果事务已经持有该表的 IX 锁
+    return;  // 直接返回
   }
-  locksys::Shard_latch_guard table_latch_guard{UT_LOCATION_HERE, *table};
+  locksys::Shard_latch_guard table_latch_guard{UT_LOCATION_HERE, *table};  // 获取表的锁闩保护
   /* We have to check if the new lock is compatible with any locks
-  other transactions have in the table lock queue. */
+  other transactions have in the table lock queue. */  // 检查新锁是否与表锁队列中其他事务持有的锁兼容
 
-  ut_ad(!lock_table_other_has_incompatible(trx, LOCK_WAIT, table, LOCK_IX));
+  ut_ad(!lock_table_other_has_incompatible(trx, LOCK_WAIT, table, LOCK_IX));  // 断言没有其他事务持有与该锁不兼容的锁
 
-  trx_mutex_enter(trx);
-  lock_table_create(table, LOCK_IX, trx);
-  trx_mutex_exit(trx);
+  trx_mutex_enter(trx);  // 进入事务互斥锁
+  lock_table_create(table, LOCK_IX, trx);  // 为表创建 IX 锁
+  trx_mutex_exit(trx);  // 退出事务互斥锁
 }
 
 /** Checks if a waiting table lock request still has to wait in a queue.

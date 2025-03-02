@@ -125,28 +125,55 @@ doing the purge. Similarly, during a rollback, a record can be removed
 if the stored roll ptr in the undo log points to a trx already (being) purged,
 or if the roll ptr is NULL, i.e., it was a fresh insert. */
 
+/* 如何撤销行操作？
+(1) 对于插入操作，我们已经在 undo 日志中存储了聚集索引记录的前缀。使用它，我们查找聚集记录，并使用该记录查找二级索引中的记录。插入操作可能未完成，例如，如果数据库崩溃。我们可能需要查看 trx id 和 roll ptr，以确保聚集索引中的记录确实是写入 undo 日志记录的那个记录。我们可以使用从原始插入操作中获得的框架。
+(2) 删除标记：我们可以使用从原始删除标记操作中获得的框架。我们只需要检查 trx id。
+(3) 更新：这可能是最复杂的。我们必须使用从原始更新操作中获得的框架。
+
+如果同一个事务反复删除并插入相同的行会发生什么？那么行 id 和 roll ptr 都会改变。如果行 id 不是聚集索引中的排序字段怎么办？也许我们必须将其写入 undo 日志。好吧，也许不需要，因为如果我们按行 id 和 trx id 降序排列，那么唯一未删除的副本就是索引中的第一个。我们在行操作中的搜索总是将游标定位在结果集中的第一条记录之前。但是，如果没有为表定义键，那么行 id 按升序排列是可取的。因此，只有在聚集索引中行 id 不是排序字段时，才按降序存储行 id。
+
+注意：删除和插入可能导致二级索引中存在相同的记录。这在 B-tree 中是个问题吗？是的。更新也可能导致这种情况，除非 trx id 和 roll ptr 包含在排序字段中。
+(1) 在聚集索引中修复：在 B-tree 的节点指针中包含行 id、trx id 和 roll ptr。
+(2) 在二级索引中修复：在节点指针中包含所有字段，如果插入一个条目，检查它是否等于右邻居，如果是，则更新右邻居：邻居必须被删除标记，将其设置为未标记并写入当前事务的 trx id。
+
+如果同一个事务反复更新同一行，更新二级索引字段或不更新会怎样？更新聚集索引排序字段会怎样？
+
+(1) 如果不更新二级索引且不更新聚集索引排序字段。那么二级索引记录保持不变，但二级索引记录中的 trx id 可能小于聚集索引记录中的 trx id。这不是问题吗？
+(2) 如果更新二级索引排序字段但不更新聚集索引：那么在二级索引中有删除标记的记录，它们在排序字段中不同。没问题。
+(3) 更新聚集索引排序字段但不更新二级索引，且二级索引是唯一的。那么二级索引中的记录仅在聚集索引排序字段中更新。
+(4)
+
+重复记录的问题：
+修复 1：向所有索引添加一个 trx op no 字段。问题：如果具有较大 trx id 的事务插入并删除标记了类似的行，我们的事务再次插入类似的行，并且具有更大 id 的事务删除标记它。那么如果 trx id 影响字母顺序，行在索引中的位置应该改变。
+
+修复 2：如果插入遇到类似的行被删除标记，我们将插入转换为对删除标记行的“更新”。然后我们必须写入更新的 undo 信息。问题：如果清除操作尝试删除删除标记的行怎么办？
+
+我们可以将数据库行版本视为一个链表，该链表从聚集索引中的记录开始，并通过 roll ptr 通过 undo 日志链接。二级索引记录是引用，它们告诉在聚集索引中的记录的链表中可以找到什么类型的记录。
+
+如何进行清除？如果链表变为空，即行已被标记为删除并且其 roll ptr 指向我们正在处理的 undo 日志中的记录，则可以从聚集索引中删除记录。同样，在回滚期间，如果存储在 undo 日志中的 roll ptr 指向已经（正在）清除的事务，或者如果 roll ptr 为 NULL，即它是新插入的，则可以删除记录。 */
+
 undo_node_t *row_undo_node_create(trx_t *trx, que_thr_t *parent,
                                   mem_heap_t *heap, bool partial_rollback) {
-  undo_node_t *undo;
+  undo_node_t *undo;  // 定义撤销节点指针
 
   ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE) ||
-        trx_state_eq(trx, TRX_STATE_PREPARED));
-  ut_ad(parent);
+        trx_state_eq(trx, TRX_STATE_PREPARED));  // 断言事务状态为活动状态或准备状态
+  ut_ad(parent);  // 断言父线程不为空
 
-  undo = static_cast<undo_node_t *>(mem_heap_alloc(heap, sizeof(undo_node_t)));
+  undo = static_cast<undo_node_t *>(mem_heap_alloc(heap, sizeof(undo_node_t)));  // 在内存堆中分配撤销节点结构体
 
-  undo->common.type = QUE_NODE_UNDO;
-  undo->common.parent = parent;
+  undo->common.type = QUE_NODE_UNDO;  // 设置节点的类型为撤销节点
+  undo->common.parent = parent;  // 设置节点的父节点
 
-  undo->state = UNDO_NODE_FETCH_NEXT;
-  undo->trx = trx;
+  undo->state = UNDO_NODE_FETCH_NEXT;  // 设置撤销节点的状态为获取下一个
+  undo->trx = trx;  // 将事务赋值给撤销节点的事务字段
 
-  undo->partial = partial_rollback;
-  undo->pcur.init();
+  undo->partial = partial_rollback;  // 设置部分回滚标志
+  undo->pcur.init();  // 初始化撤销节点的游标
 
-  undo->heap = mem_heap_create(256, UT_LOCATION_HERE);
+  undo->heap = mem_heap_create(256, UT_LOCATION_HERE);  // 创建撤销节点的内存堆
 
-  return (undo);
+  return (undo);  // 返回创建的撤销节点
 }
 
 /** Looks for the clustered index record when node has the row reference.

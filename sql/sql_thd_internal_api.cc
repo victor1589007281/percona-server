@@ -92,23 +92,25 @@ THD *create_internal_thd() {
   return thd;
 }
 
+/** Destroy an internal THD object.
+@param[in]  thd   The THD object to destroy */
 void destroy_internal_thd(THD *thd) {
-  assert(thd->system_thread == SYSTEM_THREAD_BACKGROUND);
+  assert(thd->system_thread == SYSTEM_THREAD_BACKGROUND);  // 断言该 THD 对象是后台线程
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_thread *psi;
-  psi = PSI_THREAD_CALL(get_thread)();
-  if (psi != nullptr) {
+  PSI_thread *psi;  // 定义 PSI 线程对象
+  psi = PSI_THREAD_CALL(get_thread)();  // 获取当前线程的 PSI 线程对象
+  if (psi != nullptr) {  // 如果 PSI 线程对象不为空
     /*
       Dissociate this THD from the background thread instrumentation.
-    */
-    PSI_THREAD_CALL(set_thread_THD)(psi, nullptr);
-    thd->set_psi(nullptr);
+    */  // 将该 THD 对象与后台线程的 PSI 线程对象解耦
+    PSI_THREAD_CALL(set_thread_THD)(psi, nullptr);  // 将 PSI 线程对象的 THD 设置为空
+    thd->set_psi(nullptr);  // 将 THD 对象的 PSI 线程对象设置为空
   }
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
-  thd->release_resources();
-  delete thd;
+  thd->release_resources();  // 释放 THD 对象的资源
+  delete thd;  // 删除 THD 对象
 }
 
 void thd_init(THD *thd, char *stack_start) {

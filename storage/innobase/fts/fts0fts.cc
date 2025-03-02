@@ -3218,31 +3218,44 @@ dberr_t fts_create_doc_id(dict_table_t *table, dtuple_t *row,
   return (error);
 }
 
+/*
+FTS 事务（Full-Text Search Transaction）是 InnoDB 存储引擎中用于处理全文搜索（Full-Text Search）相关操作的事务。
+全文搜索是 MySQL 提供的一种高级搜索功能，允许用户在文本字段中进行复杂的搜索操作，例如查找包含特定单词或短语的记录。
+
+在 InnoDB 中，FTS 事务主要用于管理全文索引的更新和维护。当涉及到全文索引的表进行插入、更新或删除操作时，InnoDB 需要确保这些操作能够正确地反映到全文索引中。
+FTS 事务负责处理这些操作，并确保在事务提交时，全文索引能够正确地更新。
+
+具体来说，FTS 事务会跟踪事务中对全文索引表的修改，并在事务提交时将这些修改应用到全文索引中。这包括将新插入的文档添加到全文索引中，或者从索引中删除已删除的文档。
+FTS 事务还负责处理事务回滚的情况，确保在事务回滚时，全文索引能够恢复到事务开始之前的状态。
+
+总结来说，FTS 事务是 InnoDB 中用于管理全文索引更新和维护的机制，确保全文索引能够与表数据保持一致。
+*/
 /** The given transaction is about to be committed; do whatever is necessary
  from the FTS system's POV.
  @return DB_SUCCESS or error code */
-dberr_t fts_commit(trx_t *trx) /*!< in: transaction */
-{
-  const ib_rbt_node_t *node;
-  dberr_t error;
-  ib_rbt_t *tables;
-  fts_savepoint_t *savepoint;
-
-  savepoint =
-      static_cast<fts_savepoint_t *>(ib_vector_last(trx->fts_trx->savepoints));
-  tables = savepoint->tables;
-
-  for (node = rbt_first(tables), error = DB_SUCCESS;
-       node != nullptr && error == DB_SUCCESS; node = rbt_next(tables, node)) {
-    fts_trx_table_t **ftt;
-
-    ftt = rbt_value(fts_trx_table_t *, node);
-
-    error = fts_commit_table(*ftt);
-  }
-
-  return (error);
-}
+ dberr_t fts_commit(trx_t *trx) /*!< in: transaction */
+ {
+   const ib_rbt_node_t *node;  // 定义红黑树节点指针
+   dberr_t error;  // 定义错误码
+   ib_rbt_t *tables;  // 定义红黑树指针
+   fts_savepoint_t *savepoint;  // 定义 FTS 保存点指针
+ 
+   savepoint =
+       static_cast<fts_savepoint_t *>(ib_vector_last(trx->fts_trx->savepoints));  // 获取事务的最后一个 FTS 保存点
+   tables = savepoint->tables;  // 获取保存点中的表集合
+ 
+   for (node = rbt_first(tables), error = DB_SUCCESS;  // 遍历红黑树中的第一个节点，初始化错误码为成功
+        node != nullptr && error == DB_SUCCESS;  // 当节点不为空且错误码为成功时继续循环
+        node = rbt_next(tables, node)) {  // 获取红黑树中的下一个节点
+     fts_trx_table_t **ftt;  // 定义 FTS 事务表指针
+ 
+     ftt = rbt_value(fts_trx_table_t *, node);  // 获取红黑树节点中的 FTS 事务表
+ 
+     error = fts_commit_table(*ftt);  // 提交 FTS 事务表
+   }
+ 
+   return (error);  // 返回错误码
+ }
 
 /** Initialize a document. */
 void fts_doc_init(fts_doc_t *doc) /*!< in: doc to initialize */

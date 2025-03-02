@@ -1111,9 +1111,10 @@ void srv_wake_purge_thread_if_not_active(void);
  thread stays suspended (we do not protect our operation with the kernel
  mutex, for performance reasons). */
 void srv_active_wake_master_thread_low(void);
+/** Wake up the master thread if the server is not in read-only mode. */
 static inline void srv_active_wake_master_thread() {
-  if (!srv_read_only_mode) {
-    srv_active_wake_master_thread_low();
+  if (!srv_read_only_mode) {  // 如果服务器不是只读模式
+    srv_active_wake_master_thread_low();  // 调用低级别的唤醒主线程函数
   }
 }
 /** Wakes up the master thread if it is suspended or being suspended. */

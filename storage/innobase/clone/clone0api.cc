@@ -2239,41 +2239,41 @@ bool Fixup_data::fix_one_object(THD *thd, const dd::Tablespace *tablespace,
 } /* namespace */
 
 bool fix_cloned_tables(THD *thd) {
-  std::string fixup_file(CLONE_INNODB_FIXUP_FILE);
+  std::string fixup_file(CLONE_INNODB_FIXUP_FILE);  // 定义克隆修复文件的路径
 
-  /* Check if table fix up is needed. */
-  if (!file_exists(fixup_file)) {
-    return (false);
+  /* Check if table fix up is needed. */  // 检查是否需要修复表
+  if (!file_exists(fixup_file)) {  // 如果修复文件不存在
+    return (false);  // 返回 false，表示不需要修复
   }
 
-  auto dc = dd::get_dd_client(thd);
-  Releaser releaser(dc);
+  auto dc = dd::get_dd_client(thd);  // 获取字典客户端
+  Releaser releaser(dc);  // 自动释放字典客户端
 
-  Fixup_data clone_fixup(true, false);
+  Fixup_data clone_fixup(true, false);  // 创建修复数据对象
 
-  ib::info(ER_IB_CLONE_SQL) << "Clone Fixup: check and create schema directory";
-  DD_Objs<dd::Schema> schemas;
+  ib::info(ER_IB_CLONE_SQL) << "Clone Fixup: check and create schema directory";  // 打印日志信息，表示正在检查和创建 schema 目录
+  DD_Objs<dd::Schema> schemas;  // 定义 schema 对象集合
 
-  if (dc->fetch_global_components(&schemas) || clone_fixup.fix(thd, schemas)) {
-    return (true);
+  if (dc->fetch_global_components(&schemas) || clone_fixup.fix(thd, schemas)) {  // 获取全局 schema 并修复
+    return (true);  // 如果失败，返回 true
   }
 
   ib::info(ER_IB_CLONE_SQL)
-      << "Clone Fixup: create empty MyIsam and CSV tables";
-  DD_Objs<dd::Table> tables;
+      << "Clone Fixup: create empty MyIsam and CSV tables";  // 打印日志信息，表示正在创建空的 MyISAM 和 CSV 表
+  DD_Objs<dd::Table> tables;  // 定义表对象集合
 
-  if (dc->fetch_global_components(&tables) || clone_fixup.fix(thd, tables)) {
-    return (true);
+  if (dc->fetch_global_components(&tables) || clone_fixup.fix(thd, tables)) {  // 获取全局表并修复
+    return (true);  // 如果失败，返回 true
   }
 
-  ib::info(ER_IB_CLONE_SQL) << "Clone Fixup: replication configuration tables";
-  if (clone_fixup.fix_config_tables(thd)) {
-    return (true);
+  ib::info(ER_IB_CLONE_SQL) << "Clone Fixup: replication configuration tables";  // 打印日志信息，表示正在修复复制配置表
+  if (clone_fixup.fix_config_tables(thd)) {  // 修复配置表
+    return (true);  // 如果失败，返回 true
   }
 
-  ib::info(ER_IB_CLONE_SQL) << "Clone Fixup: finished successfully";
-  remove_file(fixup_file);
-  return (false);
+  ib::info(ER_IB_CLONE_SQL) << "Clone Fixup: finished successfully";  // 打印日志信息，表示修复成功
+  remove_file(fixup_file);  // 删除修复文件
+  return (false);  // 返回 false，表示修复成功
 }
 
 static bool clone_execute_query(THD *thd, const char *sql_stmt,

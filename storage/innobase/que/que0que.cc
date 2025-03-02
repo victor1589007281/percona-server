@@ -51,6 +51,19 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "my_dbug.h"
 
+
+/**
+ * @file que0que.cc
+ * @brief Query graph execution and management in InnoDB.
+ * @brief InnoDB 中查询图的执行和管理。
+ *
+ * This file contains the implementation of query graph execution and management
+ * in InnoDB. Query graphs are used to represent and execute SQL queries,
+ * including stored procedures, loops, and control structures.
+ * 该文件包含了 InnoDB 中查询图执行和管理的实现。查询图用于表示和执行 SQL 查询，
+ * 包括存储过程、循环和控制结构。
+ */
+
 /* Short introduction to query graphs
    ==================================
 
@@ -60,9 +73,16 @@ que_thr_t contains two fields that control query graph execution: run_node
 and prev_node. run_node is the next node to execute and prev_node is the
 last node executed.
 
+查询图由以各种方式相互连接的节点组成。执行从 que_run_threads() 开始，该函数接受一个 que_thr_t 参数。
+que_thr_t 包含两个控制查询图执行的字段：run_node 和 prev_node。run_node 是下一个要执行的节点，
+prev_node 是最后执行的节点。
+
 Each node has a pointer to a 'next' statement, i.e., its brother, and a
 pointer to its parent node. The next pointer is NULL in the last statement
 of a block.
+
+每个节点都有一个指向“下一个”语句的指针（即它的兄弟节点），以及一个指向其父节点的指针。
+在块的最后一个语句中，next 指针为 NULL。
 
 Loop nodes contain a link to the first statement of the enclosed statement
 list. While the loop runs, que_thr_step() checks if execution to the loop
@@ -72,12 +92,21 @@ statement node in the loop. If it came from one of the statement nodes in
 the loop, then it checks if the statement node has another statement node
 following it, and runs it if so.
 
+循环节点包含指向其内部语句列表的第一个语句的链接。当循环运行时，que_thr_step() 会检查执行是从循环节点的父节点
+还是从循环内部的某个语句节点返回的。如果是从循环节点的父节点返回的，则开始执行循环中的第一个语句节点。
+如果是从循环内部的某个语句节点返回的，则检查该语句节点是否有后续的语句节点，如果有则执行它。
+
 To signify loop ending, the loop statements (see e.g. while_step()) set
 que_thr_t->run_node to the loop node's parent node. This is noticed on the
 next call of que_thr_step() and execution proceeds to the node pointed to by
 the loop node's 'next' pointer.
 
+为了表示循环结束，循环语句（例如 while_step()）将 que_thr_t->run_node 设置为循环节点的父节点。
+这会在下一次调用 que_thr_step() 时被注意到，执行将继续到循环节点的 'next' 指针所指向的节点。
+
 For example, the code:
+
+例如，以下代码：
 
 X := 1;
 WHILE X < 5 LOOP
@@ -87,6 +116,8 @@ X := 5
 
 will result in the following node hierarchy, with the X-axis indicating
 'next' links and the Y-axis indicating parent/child links:
+
+将生成以下节点层次结构，X 轴表示 'next' 链接，Y 轴表示父子链接：
 
 A - W - A
     |
@@ -98,7 +129,11 @@ A = assign_node_t, W = while_node_t. */
 /* How a stored procedure containing COMMIT or ROLLBACK commands
 is executed?
 
+包含 COMMIT 或 ROLLBACK 命令的存储过程是如何执行的？
+
 The commit or rollback can be seen as a subprocedure call.
+
+提交或回滚可以看作是一个子过程调用。
 
 When the transaction starts to handle a rollback or commit.
 It builds a query graph which, when executed, will roll back
@@ -107,79 +142,92 @@ is moved to the TRX_QUE_ROLLING_BACK or TRX_QUE_COMMITTING state.
 If specified, the SQL cursors opened by the transaction are closed.
 When the execution of the graph completes, it is like returning
 from a subprocedure: the query thread which requested the operation
-starts running again. */
+starts running again.
+
+当事务开始处理回滚或提交时，它会构建一个查询图，该查询图在执行时将回滚或提交未完成的事务。
+事务会进入 TRX_QUE_ROLLING_BACK 或 TRX_QUE_COMMITTING 状态。如果指定了，
+事务打开的 SQL 游标将被关闭。当查询图执行完成时，就像从子过程返回一样：
+请求该操作的查询线程将再次开始运行。 */
 
 /** Moves a thread from another state to the QUE_THR_RUNNING state. Increments
  the n_active_thrs counters of the query graph and transaction.
  ***NOTE***: This is the only function in which such a transition is allowed
  to happen! */
+/** 将线程从其他状态移动到 QUE_THR_RUNNING 状态。增加查询图和事务的 n_active_thrs 计数器。
+ ***注意***：这是唯一允许进行此类转换的函数！ */
 static void que_thr_move_to_run_state(
-    que_thr_t *thr); /*!< in: an query thread */
+    que_thr_t *thr); /*!< in: an query thread */ /*!< in: 查询线程 */
 
 /** Creates a query graph fork node.
  @return own: fork node */
+/** 创建一个查询图的分叉节点。
+ @return own: 分叉节点 */
 que_fork_t *que_fork_create(
     que_t *graph,       /*!< in: graph, if NULL then this
                         fork node is assumed to be the
-                        graph root */
-    que_node_t *parent, /*!< in: parent node */
-    ulint fork_type,    /*!< in: fork type */
-    mem_heap_t *heap)   /*!< in: memory heap where created */
+                        graph root */ /*!< in: 查询图，如果为 NULL，则当前分叉节点被视为查询图的根节点 */
+    que_node_t *parent, /*!< in: parent node */ /*!< in: 父节点 */
+    ulint fork_type,    /*!< in: fork type */ /*!< in: 分叉类型 */
+    mem_heap_t *heap)   /*!< in: memory heap where created */ /*!< in: 用于分配节点的内存堆 */
 {
   que_fork_t *fork;
 
-  ut_ad(heap);
+  ut_ad(heap);  // 断言：确保内存堆不为空
 
-  fork = static_cast<que_fork_t *>(mem_heap_zalloc(heap, sizeof(*fork)));
+  fork = static_cast<que_fork_t *>(mem_heap_zalloc(heap, sizeof(*fork)));  // 在内存堆中分配分叉节点的内存
 
-  fork->heap = heap;
+  fork->heap = heap;  // 设置分叉节点的内存堆
 
-  fork->fork_type = fork_type;
+  fork->fork_type = fork_type;  // 设置分叉类型
 
-  fork->common.parent = parent;
+  fork->common.parent = parent;  // 设置父节点
 
-  fork->common.type = QUE_NODE_FORK;
+  fork->common.type = QUE_NODE_FORK;  // 设置节点类型为分叉节点
 
-  fork->state = QUE_FORK_COMMAND_WAIT;
+  fork->state = QUE_FORK_COMMAND_WAIT;  // 设置分叉节点的状态为等待命令
 
-  fork->graph = (graph != nullptr) ? graph : fork;
+  fork->graph = (graph != nullptr) ? graph : fork;  // 设置查询图，如果 graph 为 NULL，则当前分叉节点为查询图的根节点
 
-  UT_LIST_INIT(fork->thrs);
+  UT_LIST_INIT(fork->thrs);  // 初始化分叉节点的线程列表
 
-  return (fork);
+  return (fork);  // 返回新创建的分叉节点
 }
 
-/** Creates a query graph thread node.
-@param[in]      parent          parent node, i.e., a fork node
-@param[in]      heap            memory heap where created
-@param[in]      prebuilt        row prebuilt structure
-@return own: query thread node */
+/**
+ * @brief 创建一个查询图线程节点。
+ * @brief Creates a query graph thread node.
+ *
+ * @param[in] parent 父节点，即一个分叉节点
+ * @param[in] heap 用于分配节点的内存堆
+ * @param[in] prebuilt 行预构建结构
+ * @return own: 查询线程节点
+ */
 que_thr_t *que_thr_create(que_fork_t *parent, mem_heap_t *heap,
                           row_prebuilt_t *prebuilt) {
   que_thr_t *thr;
 
-  ut_ad(parent != nullptr);
-  ut_ad(heap != nullptr);
+  ut_ad(parent != nullptr);  // 断言：确保父节点不为空
+  ut_ad(heap != nullptr);    // 断言：确保内存堆不为空
 
-  thr = static_cast<que_thr_t *>(mem_heap_zalloc(heap, sizeof(*thr)));
+  thr = static_cast<que_thr_t *>(mem_heap_zalloc(heap, sizeof(*thr)));  // 在内存堆中分配线程节点的内存
 
-  thr->graph = parent->graph;
+  thr->graph = parent->graph;  // 设置线程节点的查询图
 
-  thr->common.parent = parent;
+  thr->common.parent = parent;  // 设置线程节点的父节点
 
-  thr->magic_n = QUE_THR_MAGIC_N;
+  thr->magic_n = QUE_THR_MAGIC_N;  // 设置线程节点的魔数
 
-  thr->common.type = QUE_NODE_THR;
+  thr->common.type = QUE_NODE_THR;  // 设置节点类型为线程节点
 
-  thr->state = QUE_THR_COMMAND_WAIT;
+  thr->state = QUE_THR_COMMAND_WAIT;  // 设置线程节点的状态为等待命令
 
-  thr->lock_state = QUE_THR_LOCK_NOLOCK;
+  thr->lock_state = QUE_THR_LOCK_NOLOCK;  // 设置线程节点的锁状态为无锁
 
-  thr->prebuilt = prebuilt;
+  thr->prebuilt = prebuilt;  // 设置线程节点的行预构建结构
 
-  UT_LIST_ADD_LAST(parent->thrs, thr);
+  UT_LIST_ADD_LAST(parent->thrs, thr);  // 将线程节点添加到父节点的线程列表末尾
 
-  return (thr);
+  return (thr);  // 返回新创建的线程节点
 }
 
 /** Moves a suspended query thread to the QUE_THR_RUNNING state and may release
@@ -268,24 +316,31 @@ que_thr_t *que_fork_scheduler_round_robin(
   return (thr);
 }
 
-/** Starts execution of a command in a query fork. Picks a query thread which
- is not in the QUE_THR_RUNNING state and moves it to that state. If none
- can be chosen, a situation which may arise in parallelized fetches, NULL
- is returned.
- @return a query thread of the graph moved to QUE_THR_RUNNING state, or
- NULL; the query thread should be executed by que_run_threads by the
- caller */
-que_thr_t *que_fork_start_command(que_fork_t *fork) /*!< in: a query fork */
+
+/**
+ * @brief 启动查询分叉中的命令执行。选择一个未处于 QUE_THR_RUNNING 状态的查询线程并将其移动到该状态。
+ *        如果没有可选的线程（可能在并行化获取时发生），则返回 NULL。
+ * @brief Starts execution of a command in a query fork. Picks a query thread which
+ *        is not in the QUE_THR_RUNNING state and moves it to that state. If none
+ *        can be chosen, a situation which may arise in parallelized fetches, NULL
+ *        is returned.
+ *
+ * @return 移动到 QUE_THR_RUNNING 状态的查询线程，或 NULL；调用者应通过 que_run_threads 执行该查询线程
+ * @return a query thread of the graph moved to QUE_THR_RUNNING state, or
+ *         NULL; the query thread should be executed by que_run_threads by the
+ *         caller
+ */
+que_thr_t *que_fork_start_command(que_fork_t *fork) /*!< in: 查询分叉 */ /*!< in: a query fork */
 {
-  que_thr_t *suspended_thr = nullptr;
-  que_thr_t *completed_thr = nullptr;
+  que_thr_t *suspended_thr = nullptr;  // 挂起的线程
+  que_thr_t *completed_thr = nullptr;  // 已完成的线程
 
-  fork->state = QUE_FORK_ACTIVE;
+  fork->state = QUE_FORK_ACTIVE;  // 设置分叉状态为活跃
 
-  fork->last_sel_node = nullptr;
+  fork->last_sel_node = nullptr;  // 重置最后一个选择节点
 
-  suspended_thr = nullptr;
-  completed_thr = nullptr;
+  suspended_thr = nullptr;  // 初始化挂起的线程为 NULL
+  completed_thr = nullptr;  // 初始化已完成的线程为 NULL
 
   /* Choose the query thread to run: usually there is just one thread,
   but in a parallelized select, which necessarily is non-scrollable,
@@ -305,23 +360,24 @@ que_thr_t *que_fork_start_command(que_fork_t *fork) /*!< in: a query fork */
         /* We have to send the initial message to query thread
         to start it */
 
-        que_thr_init_command(thr);
+        que_thr_init_command(thr);  // 初始化线程命令
 
-        return (thr);
+        return (thr);  // 返回该线程
 
       case QUE_THR_SUSPENDED:
         /* In this case the execution of the thread was
         suspended: no initial message is needed because
         execution can continue from where it was left */
         if (!suspended_thr) {
-          suspended_thr = thr;
+          suspended_thr = thr;  // 记录第一个挂起的线程
         }
 
         break;
 
       case QUE_THR_COMPLETED:
+        /* If a completed thread is found, record the first one */
         if (!completed_thr) {
-          completed_thr = thr;
+          completed_thr = thr;  // 记录第一个已完成的线程
         }
 
         break;
@@ -329,22 +385,26 @@ que_thr_t *que_fork_start_command(que_fork_t *fork) /*!< in: a query fork */
       case QUE_THR_RUNNING:
       case QUE_THR_LOCK_WAIT:
       case QUE_THR_PROCEDURE_WAIT:
-        ut_error;
+        ut_error;  // 如果线程处于这些状态，触发错误
     }
   }
+
   que_thr_t *thr;
   if (suspended_thr) {
+    /* If there is a suspended thread, select it and move it to the running state */
     thr = suspended_thr;
-    que_thr_move_to_run_state(thr);
+    que_thr_move_to_run_state(thr);  // 将挂起的线程移动到运行状态
 
   } else if (completed_thr) {
+    /* If there is a completed thread, select it and reinitialize its command */
     thr = completed_thr;
-    que_thr_init_command(thr);
+    que_thr_init_command(thr);  // 重新初始化已完成的线程
   } else {
+    /* If no available thread is found, trigger an error */
     ut_error;
   }
 
-  return (thr);
+  return (thr);  // 返回选择的线程
 }
 
 /** Calls que_graph_free_recursive for statements in a statement list. */
@@ -837,204 +897,210 @@ que_node_t *que_node_get_containing_loop_node(que_node_t *node) /*!< in: node */
 }
 #endif /* UNIV_DEBUG */
 
-/** Performs an execution step on a query thread.
- @return query thread to run next: it may differ from the input
- parameter if, e.g., a subprocedure call is made */
-static inline que_thr_t *que_thr_step(que_thr_t *thr) /*!< in: query thread */
+/**
+ * @brief 在查询线程上执行一个步骤。
+ * @brief Performs an execution step on a query thread.
+ *
+ * @return 下一个要运行的查询线程：它可能与输入参数不同，例如，如果进行了子过程调用
+ * @return query thread to run next: it may differ from the input
+ *         parameter if, e.g., a subprocedure call is made
+ */
+static inline que_thr_t *que_thr_step(que_thr_t *thr) /*!< in: 查询线程 */ /*!< in: query thread */
 {
-  que_node_t *node;
-  que_thr_t *old_thr;
-  trx_t *trx;
-  ulint type;
+  que_node_t *node;  // 当前执行的节点
+  que_thr_t *old_thr;  // 旧的查询线程
+  trx_t *trx;  // 事务对象
+  ulint type;  // 节点类型
 
-  trx = thr_get_trx(thr);
+  trx = thr_get_trx(thr);  // 获取查询线程所属的事务
 
-  ut_ad(thr->state == QUE_THR_RUNNING);
-  ut_a(trx->error_state == DB_SUCCESS);
+  ut_ad(thr->state == QUE_THR_RUNNING);  // 断言：确保线程处于运行状态
+  ut_a(trx->error_state == DB_SUCCESS);  // 断言：确保事务没有错误
 
-  thr->resource++;
+  thr->resource++;  // 增加线程的资源计数
 
-  node = thr->run_node;
-  type = que_node_get_type(node);
+  node = thr->run_node;  // 获取当前运行的节点
+  type = que_node_get_type(node);  // 获取节点的类型
 
-  old_thr = thr;
+  old_thr = thr;  // 保存当前的查询线程
 
   DBUG_PRINT("ib_que", ("Execute %u (%s) at %p", unsigned(type),
-                        que_node_type_string(node), (const void *)node));
+                        que_node_type_string(node), (const void *)node));  // 调试信息：打印当前执行的节点类型和地址
 
   if (type & QUE_NODE_CONTROL_STAT) {
+    // 如果节点是控制语句（如 WHILE、IF 等）
     if ((thr->prev_node != que_node_get_parent(node)) &&
         que_node_get_next(thr->prev_node)) {
       /* The control statements, like WHILE, always pass the
       control to the next child statement if there is any
       child left */
 
-      thr->run_node = que_node_get_next(thr->prev_node);
+      thr->run_node = que_node_get_next(thr->prev_node);  // 设置下一个要运行的节点
 
     } else if (type == QUE_NODE_IF) {
-      if_step(thr);
+      if_step(thr);  // 执行 IF 语句
     } else if (type == QUE_NODE_FOR) {
-      for_step(thr);
+      for_step(thr);  // 执行 FOR 语句
     } else if (type == QUE_NODE_PROC) {
       /* We can access trx->undo_no without reserving
       trx->undo_mutex, because there cannot be active query
       threads doing updating or inserting at the moment! */
 
       if (thr->prev_node == que_node_get_parent(node)) {
-        trx->last_sql_stat_start.least_undo_no = trx->undo_no;
+        trx->last_sql_stat_start.least_undo_no = trx->undo_no;  // 记录事务的 undo_no
       }
 
-      proc_step(thr);
+      proc_step(thr);  // 执行存储过程步骤
     } else if (type == QUE_NODE_WHILE) {
-      while_step(thr);
+      while_step(thr);  // 执行 WHILE 语句
     } else {
-      ut_error;
+      ut_error;  // 如果节点类型未知，触发错误
     }
   } else if (type == QUE_NODE_ASSIGNMENT) {
-    assign_step(thr);
+    assign_step(thr);  // 执行赋值语句
   } else if (type == QUE_NODE_SELECT) {
-    thr = row_sel_step(thr);
+    thr = row_sel_step(thr);  // 执行 SELECT 语句
   } else if (type == QUE_NODE_INSERT) {
-    thr = row_ins_step(thr);
+    thr = row_ins_step(thr);  // 执行 INSERT 语句
   } else if (type == QUE_NODE_UPDATE) {
-    thr = row_upd_step(thr);
+    thr = row_upd_step(thr);  // 执行 UPDATE 语句
   } else if (type == QUE_NODE_FETCH) {
-    thr = fetch_step(thr);
+    thr = fetch_step(thr);  // 执行 FETCH 语句
   } else if (type == QUE_NODE_OPEN) {
-    thr = open_step(thr);
+    thr = open_step(thr);  // 执行 OPEN 语句
   } else if (type == QUE_NODE_FUNC) {
-    proc_eval_step(thr);
+    proc_eval_step(thr);  // 执行函数调用
 
   } else if (type == QUE_NODE_LOCK) {
-    ut_error;
+    ut_error;  // 如果节点类型是 LOCK，触发错误
   } else if (type == QUE_NODE_THR) {
-    thr = que_thr_node_step(thr);
+    thr = que_thr_node_step(thr);  // 执行线程节点步骤
   } else if (type == QUE_NODE_COMMIT) {
-    thr = trx_commit_step(thr);
+    thr = trx_commit_step(thr);  // 执行 COMMIT 语句
   } else if (type == QUE_NODE_UNDO) {
-    thr = row_undo_step(thr);
+    thr = row_undo_step(thr);  // 执行 UNDO 语句
   } else if (type == QUE_NODE_PURGE) {
-    thr = row_purge_step(thr);
+    thr = row_purge_step(thr);  // 执行 PURGE 语句
   } else if (type == QUE_NODE_RETURN) {
-    thr = return_step(thr);
+    thr = return_step(thr);  // 执行 RETURN 语句
   } else if (type == QUE_NODE_EXIT) {
-    thr = exit_step(thr);
+    thr = exit_step(thr);  // 执行 EXIT 语句
   } else if (type == QUE_NODE_ROLLBACK) {
-    thr = trx_rollback_step(thr);
+    thr = trx_rollback_step(thr);  // 执行 ROLLBACK 语句
   } else {
-    ut_error;
+    ut_error;  // 如果节点类型未知，触发错误
   }
 
   if (type == QUE_NODE_EXIT) {
-    old_thr->prev_node = que_node_get_containing_loop_node(node);
+    old_thr->prev_node = que_node_get_containing_loop_node(node);  // 如果节点是 EXIT，设置前一个节点为包含的循环节点
   } else {
-    old_thr->prev_node = node;
+    old_thr->prev_node = node;  // 否则，设置前一个节点为当前节点
   }
 
   if (thr) {
-    ut_a(thr_get_trx(thr)->error_state == DB_SUCCESS);
+    ut_a(thr_get_trx(thr)->error_state == DB_SUCCESS);  // 断言：确保事务没有错误
   }
 
-  return (thr);
+  return (thr);  // 返回下一个要运行的查询线程
 }
 
 /** Run a query thread until it finishes or encounters e.g. a lock wait. */
 static void que_run_threads_low(que_thr_t *thr) /*!< in: query thread */
 {
-  trx_t *trx;
-  que_thr_t *next_thr;
+  trx_t *trx;  // 定义事务对象
+  que_thr_t *next_thr;  // 定义下一个查询线程对象
 
-  ut_ad(thr->state == QUE_THR_RUNNING);
-  ut_a(thr_get_trx(thr)->error_state == DB_SUCCESS);
-  ut_ad(!trx_mutex_own(thr_get_trx(thr)));
+  ut_ad(thr->state == QUE_THR_RUNNING);  // 断言查询线程状态为运行中
+  ut_a(thr_get_trx(thr)->error_state == DB_SUCCESS);  // 断言事务的错误状态为成功
+  ut_ad(!trx_mutex_own(thr_get_trx(thr)));  // 断言当前线程不持有事务的互斥锁
 
   /* cumul_resource counts how much resources the OS thread (NOT the
-  query thread) has spent in this function */
+  query thread) has spent in this function */  // cumul_resource 计算操作系统线程（而不是查询线程）在此函数中花费了多少资源
 
-  trx = thr_get_trx(thr);
+  trx = thr_get_trx(thr);  // 获取查询线程的事务对象
 
   do {
     /* Check that there is enough space in the log to accommodate
     possible log entries by this query step; if the operation can
     touch more than about 4 pages, checks must be made also within
-    the query step! */
+    the query step! */  // 检查日志中是否有足够的空间来容纳此查询步骤可能产生的日志条目；如果操作可能涉及超过 4 页，则还必须在查询步骤内进行检查！
 
-    log_free_check();
+    log_free_check();  // 检查日志空间
 
     /* Perform the actual query step: note that the query thread
-    may change if, e.g., a subprocedure call is made */
+    may change if, e.g., a subprocedure call is made */  // 执行实际的查询步骤：注意，如果进行了子过程调用，查询线程可能会更改
 
     /*-------------------------*/
-    next_thr = que_thr_step(thr);
+    next_thr = que_thr_step(thr);  // 执行查询步骤并获取下一个查询线程
     /*-------------------------*/
 
-    trx_mutex_enter(trx);
+    trx_mutex_enter(trx);  // 进入事务的互斥锁
 
-    ut_a(next_thr == nullptr || trx->error_state == DB_SUCCESS);
+    ut_a(next_thr == nullptr || trx->error_state == DB_SUCCESS);  // 断言下一个查询线程为空或事务的错误状态为成功
 
-    if (next_thr != thr) {
-      ut_a(next_thr == nullptr);
+    if (next_thr != thr) {  // 如果下一个查询线程不是当前线程
+      ut_a(next_thr == nullptr);  // 断言下一个查询线程为空
 
       /* This can change next_thr to a non-NULL value
-      if there was a lock wait that already completed. */
+      if there was a lock wait that already completed. */  // 如果有一个已经完成的锁等待，这可以将 next_thr 更改为非空值
 
-      que_thr_dec_refer_count(thr, &next_thr);
+      que_thr_dec_refer_count(thr, &next_thr);  // 减少查询线程的引用计数
 
-      if (next_thr != nullptr) {
-        thr = next_thr;
+      if (next_thr != nullptr) {  // 如果下一个查询线程不为空
+        thr = next_thr;  // 将当前查询线程设置为下一个查询线程
       }
     }
 
-    ut_ad(trx == thr_get_trx(thr));
+    ut_ad(trx == thr_get_trx(thr));  // 断言事务对象与查询线程的事务对象一致
 
-    trx_mutex_exit(trx);
+    trx_mutex_exit(trx);  // 退出事务的互斥锁
 
-  } while (next_thr != nullptr);
+  } while (next_thr != nullptr);  // 当下一个查询线程不为空时继续循环
 }
 
 /** Run a query thread. Handles lock waits. */
 void que_run_threads(que_thr_t *thr) /*!< in: query thread */
 {
-  ut_ad(!trx_mutex_own(thr_get_trx(thr)));
+  ut_ad(!trx_mutex_own(thr_get_trx(thr)));  // 断言当前线程不持有事务的互斥锁
 
 loop:
-  ut_a(thr_get_trx(thr)->error_state == DB_SUCCESS);
+  ut_a(thr_get_trx(thr)->error_state == DB_SUCCESS);  // 断言事务的错误状态为成功
 
-  que_run_threads_low(thr);
+  que_run_threads_low(thr);  // 运行查询线程的低级处理逻辑
 
-  switch (thr->state) {
-    case QUE_THR_RUNNING:
+  switch (thr->state) {  // 根据线程状态进行分支处理
+    case QUE_THR_RUNNING:  // 如果线程状态为运行中
       /* There probably was a lock wait, but it already ended
-      before we came here: continue running thr */
+      before we came here: continue running thr */  // 可能存在锁等待，但在我们到达之前已经结束，继续运行线程
 
-      goto loop;
+      goto loop;  // 跳转到 loop 标签，继续处理
 
-    case QUE_THR_LOCK_WAIT:
-      lock_wait_suspend_thread(thr);
+    case QUE_THR_LOCK_WAIT:  // 如果线程状态为锁等待
+      lock_wait_suspend_thread(thr);  // 挂起线程以等待锁
 
-      trx_mutex_enter(thr_get_trx(thr));
+      trx_mutex_enter(thr_get_trx(thr));  // 进入事务的互斥锁
 
-      ut_a(thr_get_trx(thr)->id != 0);
+      ut_a(thr_get_trx(thr)->id != 0);  // 断言事务 ID 不为 0
 
-      if (thr_get_trx(thr)->error_state != DB_SUCCESS) {
+      if (thr_get_trx(thr)->error_state != DB_SUCCESS) {  // 如果事务的错误状态不为成功
         /* thr was chosen as a deadlock victim or there was
-        a lock wait timeout */
+        a lock wait timeout */  // 线程被选为死锁受害者或锁等待超时
 
-        que_thr_dec_refer_count(thr, nullptr);
-        trx_mutex_exit(thr_get_trx(thr));
-        break;
+        que_thr_dec_refer_count(thr, nullptr);  // 减少线程的引用计数
+        trx_mutex_exit(thr_get_trx(thr));  // 退出事务的互斥锁
+        break;  // 跳出 switch 语句
       }
 
-      trx_mutex_exit(thr_get_trx(thr));
-      goto loop;
+      trx_mutex_exit(thr_get_trx(thr));  // 退出事务的互斥锁
+      goto loop;  // 跳转到 loop 标签，继续处理
 
-    case QUE_THR_COMPLETED:
-    case QUE_THR_COMMAND_WAIT:
-      /* Do nothing */
-      break;
+    case QUE_THR_COMPLETED:  // 如果线程状态为已完成
+    case QUE_THR_COMMAND_WAIT:  // 如果线程状态为命令等待
+      /* Do nothing */  // 不做任何处理
+      break;  // 跳出 switch 语句
 
-    default:
-      ut_error;
+    default:  // 如果线程状态为其他情况
+      ut_error;  // 触发错误
   }
 }
 

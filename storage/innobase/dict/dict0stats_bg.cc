@@ -353,37 +353,37 @@ void dict_stats_disabled_debug_update(THD *, SYS_VAR *, void *,
 the auto recalc list and proceeds them, eventually recalculating their
 statistics. */
 void dict_stats_thread() {
-  ut_a(!srv_read_only_mode);
-  THD *thd = create_internal_thd();
+  ut_a(!srv_read_only_mode);  // 断言服务器不是只读模式
+  THD *thd = create_internal_thd();  // 创建内部 THD 对象
 
-  while (!SHUTTING_DOWN()) {
+  while (!SHUTTING_DOWN()) {  // 当服务器未关闭时继续循环
     /* Wake up periodically even if not signaled. This is
     because we may lose an event - if the below call to
     dict_stats_process_entry_from_recalc_pool() puts the entry back
     in the list, the os_event_set() will be lost by the subsequent
-    os_event_reset(). */
-    os_event_wait_time(dict_stats_event, MIN_RECALC_INTERVAL);
+    os_event_reset(). */  // 即使没有信号，也要定期唤醒。这是因为我们可能会丢失一个事件 - 如果下面的 dict_stats_process_entry_from_recalc_pool() 调用将条目放回列表中，os_event_set() 将被随后的 os_event_reset() 丢失。
+    os_event_wait_time(dict_stats_event, MIN_RECALC_INTERVAL);  // 等待字典统计事件，最多等待 MIN_RECALC_INTERVAL 时间
 
 #ifdef UNIV_DEBUG
-    while (innodb_dict_stats_disabled_debug) {
-      os_event_set(dict_stats_disabled_event);
-      if (SHUTTING_DOWN()) {
-        break;
+    while (innodb_dict_stats_disabled_debug) {  // 在调试模式下，如果字典统计被禁用
+      os_event_set(dict_stats_disabled_event);  // 设置字典统计禁用事件
+      if (SHUTTING_DOWN()) {  // 如果服务器正在关闭
+        break;  // 跳出循环
       }
-      os_event_wait_time(dict_stats_event, std::chrono::milliseconds{100});
+      os_event_wait_time(dict_stats_event, std::chrono::milliseconds{100});  // 等待字典统计事件，最多等待 100 毫秒
     }
 #endif /* UNIV_DEBUG */
 
-    if (SHUTTING_DOWN()) {
-      break;
+    if (SHUTTING_DOWN()) {  // 如果服务器正在关闭
+      break;  // 跳出循环
     }
 
-    dict_stats_process_entry_from_recalc_pool(thd);
+    dict_stats_process_entry_from_recalc_pool(thd);  // 从重新计算池中处理条目
 
-    os_event_reset(dict_stats_event);
+    os_event_reset(dict_stats_event);  // 重置字典统计事件
   }
 
-  destroy_internal_thd(thd);
+  destroy_internal_thd(thd);  // 销毁内部 THD 对象
 }
 
 /** Shutdown the dict stats thread. */

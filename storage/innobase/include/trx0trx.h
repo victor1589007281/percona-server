@@ -1408,11 +1408,15 @@ static inline uint64_t TRX_WEIGHT(const trx_t *t) {
 }
 
 #ifdef UNIV_DEBUG
+/** Start a transaction if it has not been started yet.
+@param[in]      t       transaction
+@param[in]      rw      true if the transaction is read-write
+@param[in]      loc     location where the transaction is started */
 static inline void trx_start_if_not_started_xa(trx_t *t, bool rw,
                                                ut::Location loc) {
-  t->start_line = loc.line;
-  t->start_file = loc.filename;
-  trx_start_if_not_started_xa_low(t, rw);
+  t->start_line = loc.line;  // 设置事务的起始行号
+  t->start_file = loc.filename;  // 设置事务的起始文件名
+  trx_start_if_not_started_xa_low(t, rw);  // 调用低级别的启动事务函数
 }
 
 static inline void trx_start_if_not_started(trx_t *t, bool rw, ut::Location l) {

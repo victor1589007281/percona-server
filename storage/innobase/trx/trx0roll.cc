@@ -350,13 +350,13 @@ static trx_named_savept_t *trx_savepoint_find(
 
 /** Frees a single savepoint struct. */
 static void trx_roll_savepoint_free(
-    trx_t *trx,                /*!< in: transaction handle */
-    trx_named_savept_t *savep) /*!< in: savepoint to free */
+  trx_t *trx,                /*!< in: transaction handle */
+  trx_named_savept_t *savep) /*!< in: savepoint to free */
 {
-  UT_LIST_REMOVE(trx->trx_savepoints, savep);
+UT_LIST_REMOVE(trx->trx_savepoints, savep);  // 从事务的保存点列表中移除指定的保存点
 
-  ut::free(savep->name);
-  ut::free(savep);
+ut::free(savep->name);  // 释放保存点的名称内存
+ut::free(savep);  // 释放保存点结构体的内存
 }
 
 /** Frees savepoint structs starting from savep.
@@ -364,14 +364,14 @@ static void trx_roll_savepoint_free(
 @param[in] savep Free all savepoints starting with this savepoint i, if savep is
 nullptr free all save points */
 void trx_roll_savepoints_free(trx_t *trx, trx_named_savept_t *savep) {
-  while (savep != nullptr) {
-    trx_named_savept_t *next_savep;
+  while (savep != nullptr) {  // 当 savep 不为空时继续循环
+    trx_named_savept_t *next_savep;  // 定义下一个保存点指针
 
-    next_savep = UT_LIST_GET_NEXT(trx_savepoints, savep);
+    next_savep = UT_LIST_GET_NEXT(trx_savepoints, savep);  // 获取下一个保存点
 
-    trx_roll_savepoint_free(trx, savep);
+    trx_roll_savepoint_free(trx, savep);  // 释放当前保存点
 
-    savep = next_savep;
+    savep = next_savep;  // 将当前保存点设置为下一个保存点
   }
 }
 
@@ -712,7 +712,7 @@ static bool trx_rollback_or_clean_resurrected(
       break; // 跳出 switch 语句
   }
 
-  ut_error; // 触发错误
+  ut_error; // 触发错误：ut_error 是一个宏，用于触发一个错误断言，表示代码执行到了不应该到达的地方
 }
 
 /** Rollback or clean up any incomplete transactions which were
@@ -1009,21 +1009,21 @@ trx_undo_rec_t *trx_roll_pop_top_rec_of_trx(
 @param[in]      partial_rollback        true if partial rollback
 @return the query graph */
 static que_t *trx_roll_graph_build(trx_t *trx, bool partial_rollback) {
-  mem_heap_t *heap;
-  que_fork_t *fork;
-  que_thr_t *thr;
+  mem_heap_t *heap;  // 定义内存堆指针
+  que_fork_t *fork;  // 定义查询分叉指针
+  que_thr_t *thr;  // 定义查询线程指针
 
-  ut_ad(trx_mutex_own(trx));
+  ut_ad(trx_mutex_own(trx));  // 断言当前线程持有事务的互斥锁
 
-  heap = mem_heap_create(512, UT_LOCATION_HERE);
-  fork = que_fork_create(nullptr, nullptr, QUE_FORK_ROLLBACK, heap);
-  fork->trx = trx;
+  heap = mem_heap_create(512, UT_LOCATION_HERE);  // 创建内存堆
+  fork = que_fork_create(nullptr, nullptr, QUE_FORK_ROLLBACK, heap);  // 创建查询分叉
+  fork->trx = trx;  // 将事务赋值给查询分叉的事务字段
 
-  thr = que_thr_create(fork, heap, nullptr);
+  thr = que_thr_create(fork, heap, nullptr);  // 创建查询线程
 
-  thr->child = row_undo_node_create(trx, thr, heap, partial_rollback);
+  thr->child = row_undo_node_create(trx, thr, heap, partial_rollback);  // 创建撤销节点并赋值给查询线程的子节点
 
-  return (fork);
+  return (fork);  // 返回查询分叉
 }
 
 /** Starts a rollback operation, creates the UNDO graph that will do the
@@ -1036,39 +1036,39 @@ static que_t *trx_roll_graph_build(trx_t *trx, bool partial_rollback) {
 @return query graph thread that will perform the UNDO operations. */
 static que_thr_t *trx_rollback_start(trx_t *trx, ib_id_t roll_limit,
                                      bool partial_rollback) {
-  ut_ad(trx_mutex_own(trx));
+  ut_ad(trx_mutex_own(trx));  // 断言当前线程持有事务的互斥锁
 
-  /* Initialize the rollback field in the transaction */
+  /* Initialize the rollback field in the transaction */  // 初始化事务中的回滚字段
 
-  ut_ad(!trx->roll_limit);
-  ut_ad(!trx->in_rollback);
+  ut_ad(!trx->roll_limit);  // 断言事务的回滚限制为 0
+  ut_ad(!trx->in_rollback);  // 断言事务不在回滚中
 
-  trx->roll_limit = roll_limit;
-  ut_d(trx->in_rollback = true);
+  trx->roll_limit = roll_limit;  // 设置事务的回滚限制
+  ut_d(trx->in_rollback = true);  // 在调试模式下设置事务的回滚标志为 true
 
-  ut_a(trx->roll_limit <= trx->undo_no);
+  ut_a(trx->roll_limit <= trx->undo_no);  // 断言回滚限制小于等于事务的 undo 编号
 
-  trx->pages_undone = 0;
+  trx->pages_undone = 0;  // 初始化已撤销的页面数为 0
 
-  /* Build a 'query' graph which will perform the undo operations */
+  /* Build a 'query' graph which will perform the undo operations */  // 构建一个执行撤销操作的查询图
 
-  que_t *roll_graph = trx_roll_graph_build(trx, partial_rollback);
+  que_t *roll_graph = trx_roll_graph_build(trx, partial_rollback);  // 构建回滚图
 
-  trx->graph = roll_graph;
+  trx->graph = roll_graph;  // 将回滚图赋值给事务的 graph 字段
 
-  trx->lock.que_state = TRX_QUE_ROLLING_BACK;
+  trx->lock.que_state = TRX_QUE_ROLLING_BACK;  // 设置事务的锁队列状态为回滚中
 
-  return (que_fork_start_command(roll_graph));
+  return (que_fork_start_command(roll_graph));  // 启动回滚图的命令并返回查询线程
 }
 
 /** Finishes a transaction rollback. */
 static void trx_rollback_finish(trx_t *trx) /*!< in: transaction */
 {
-  trx_commit(trx);
+  trx_commit(trx);  // 提交事务
 
-  trx->mod_tables.clear();
+  trx->mod_tables.clear();  // 清空事务的修改表集合
 
-  trx->lock.que_state = TRX_QUE_RUNNING;
+  trx->lock.que_state = TRX_QUE_RUNNING;  // 将事务的锁队列状态设置为运行中
 }
 
 /** Creates a rollback command node struct.
@@ -1087,45 +1087,53 @@ roll_node_t *roll_node_create(
   return (node);
 }
 
-/** Performs an execution step for a rollback command node in a query graph.
- @return query thread to run next, or NULL */
-que_thr_t *trx_rollback_step(que_thr_t *thr) /*!< in: query thread */
+/**
+ * @brief 在查询图中执行回滚命令节点的一个步骤。
+ * @brief Performs an execution step for a rollback command node in a query graph.
+ *
+ * @return 下一个要运行的查询线程，或 NULL
+ * @return query thread to run next, or NULL
+ */
+que_thr_t *trx_rollback_step(que_thr_t *thr) /*!< in: 查询线程 */ /*!< in: query thread */
 {
-  roll_node_t *node;
+  roll_node_t *node;  // 回滚节点
 
-  node = static_cast<roll_node_t *>(thr->run_node);
+  node = static_cast<roll_node_t *>(thr->run_node);  // 获取当前运行的节点
 
-  ut_ad(que_node_get_type(node) == QUE_NODE_ROLLBACK);
+  ut_ad(que_node_get_type(node) == QUE_NODE_ROLLBACK);  // 断言：确保节点类型是回滚节点
 
   if (thr->prev_node == que_node_get_parent(node)) {
+    // 如果前一个节点是回滚节点的父节点，设置回滚节点的状态为发送状态
     node->state = ROLL_NODE_SEND;
   }
 
   if (node->state == ROLL_NODE_SEND) {
-    trx_t *trx;
-    ib_id_t roll_limit;
+    // 如果回滚节点处于发送状态
+    trx_t *trx;  // 事务对象
+    ib_id_t roll_limit;  // 回滚限制
 
-    trx = thr_get_trx(thr);
+    trx = thr_get_trx(thr);  // 获取查询线程所属的事务
 
-    trx_mutex_enter(trx);
+    trx_mutex_enter(trx);  // 进入事务的互斥锁
 
-    node->state = ROLL_NODE_WAIT;
+    node->state = ROLL_NODE_WAIT;  // 设置回滚节点的状态为等待状态
 
-    ut_a(node->undo_thr == nullptr);
+    ut_a(node->undo_thr == nullptr);  // 断言：确保回滚节点的 undo 线程为空
 
-    roll_limit = node->partial ? node->savept.least_undo_no : 0;
+    roll_limit = node->partial ? node->savept.least_undo_no : 0;  // 设置回滚限制
 
-    trx_commit_or_rollback_prepare(trx);
+    trx_commit_or_rollback_prepare(trx);  // 准备事务的提交或回滚
 
-    node->undo_thr = trx_rollback_start(trx, roll_limit, node->partial);
+    node->undo_thr = trx_rollback_start(trx, roll_limit, node->partial);  // 启动回滚操作
 
-    trx_mutex_exit(trx);
+    trx_mutex_exit(trx);  // 退出事务的互斥锁
 
   } else {
-    ut_ad(node->state == ROLL_NODE_WAIT);
+    // 如果回滚节点处于等待状态
+    ut_ad(node->state == ROLL_NODE_WAIT);  // 断言：确保回滚节点处于等待状态
 
-    thr->run_node = que_node_get_parent(node);
+    thr->run_node = que_node_get_parent(node);  // 设置下一个要运行的节点为回滚节点的父节点
   }
 
-  return (thr);
+  return (thr);  // 返回下一个要运行的查询线程
 }

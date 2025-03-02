@@ -842,40 +842,40 @@ We do not care if it's flushed or not.
 @return         statistics related to waiting inside */
 static Wait_stats log_wait_for_write(const log_t &log, lsn_t lsn,
                                      bool *interrupted) {
-  os_event_set(log.writer_event);
+  os_event_set(log.writer_event);  // 设置日志写入事件，唤醒日志写入线程
 
   const uint64_t max_spins = log_max_spins_when_waiting_in_user_thread(
-      srv_log_wait_for_write_spin_delay);
+      srv_log_wait_for_write_spin_delay);  // 计算用户线程等待时的最大自旋次数
 
   auto stop_condition = [&log, lsn, interrupted](bool wait) {
-    if (log.write_lsn.load() >= lsn) {
-      *interrupted = false;
-      return true;
+    if (log.write_lsn.load() >= lsn) {  // 如果日志写入的 LSN 大于等于目标 LSN
+      *interrupted = false;  // 设置中断标志为 false
+      return true;  // 返回 true，表示停止等待
     }
 
     if (UNIV_UNLIKELY(
-            log.writer_threads_paused.load(std::memory_order_relaxed))) {
-      *interrupted = true;
-      return true;
+            log.writer_threads_paused.load(std::memory_order_relaxed))) {  // 如果日志写入线程被暂停
+      *interrupted = true;  // 设置中断标志为 true
+      return true;  // 返回 true，表示停止等待
     }
 
-    if (wait) {
-      os_event_set(log.writer_event);
+    if (wait) {  // 如果需要等待
+      os_event_set(log.writer_event);  // 设置日志写入事件，唤醒日志写入线程
     }
 
-    ut_d(log_background_write_threads_active_validate(log));
-    return false;
+    ut_d(log_background_write_threads_active_validate(log));  // 在调试模式下验证后台写入线程是否活跃
+    return false;  // 返回 false，表示继续等待
   };
 
-  const size_t slot = log_compute_write_event_slot(log, lsn);
+  const size_t slot = log_compute_write_event_slot(log, lsn);  // 计算写入事件的槽位
 
   const auto wait_stats =
       os_event_wait_for(log.write_events[slot], max_spins,
-                        get_srv_log_wait_for_write_timeout(), stop_condition);
+                        get_srv_log_wait_for_write_timeout(), stop_condition);  // 等待日志写入事件
 
-  MONITOR_INC_WAIT_STATS(MONITOR_LOG_ON_WRITE_, wait_stats);
+  MONITOR_INC_WAIT_STATS(MONITOR_LOG_ON_WRITE_, wait_stats);  // 增加日志写入等待时间的监控统计
 
-  return wait_stats;
+  return wait_stats;  // 返回等待统计
 }
 
 /** Waits until redo log is flushed up to provided lsn (or greater).
@@ -1082,7 +1082,7 @@ static Wait_stats log_self_write_up_to(log_t &log, lsn_t end_lsn,
 }
 
 Wait_stats log_write_up_to(log_t &log, lsn_t end_lsn, bool flush_to_disk) {
-  ut_a(!srv_read_only_mode);
+  ut_a(!srv_read_only_mode);  // 断言服务器不是只读模式
 
   /* If we were updating log.flushed_to_disk_lsn while parsing redo log
   during recovery, we would have valid value here and we would not need
@@ -1099,60 +1099,60 @@ Wait_stats log_write_up_to(log_t &log, lsn_t end_lsn, bool flush_to_disk) {
   flushing the page. In such case we end up here during recovery.
 
   Note that redo log is actually flushed, because changes to the page
-  are caused by applying the redo. */
+  are caused by applying the redo. */  // 如果我们在恢复期间解析 redo 日志时更新 log.flushed_to_disk_lsn，我们将在此处有一个有效的值，并且不需要因为恢复而显式退出。然而，我们在恢复期间不更新 log.flushed_to_disk（它为零）。另一方面，当我们在恢复期间应用日志记录时，我们修改页面并更新它们的 oldest/newest_modification。修改后的页面变为脏页。当缓冲池的大小太小时，必须从 LRU 中刷新一些页面，以便为下一次读取回收一个空闲页面。当刷新这些脏页时，我们注意到 newest_modification != 0，因此在刷新页面之前，必须将 redo 日志刷新到 newest_modification。在这种情况下，我们在恢复期间最终会来到这里。请注意，redo 日志实际上被刷新了，因为页面的更改是由应用 redo 引起的。
 
-  if (recv_no_ibuf_operations) {
+  if (recv_no_ibuf_operations) {  // 如果恢复期间不允许 ibuf 操作
     /* Recovery is running and no operations on the log files are
     allowed yet, which is implicitly deduced from the fact, that
-    still ibuf merges are disallowed. */
-    return Wait_stats{0};
+    still ibuf merges are disallowed. */  // 恢复正在运行，并且还不允许对日志文件进行操作，这可以从仍然不允许 ibuf 合并的事实中隐式推断出来
+    return Wait_stats{0};  // 返回空的等待统计
   }
 
   /* We do not need to have exact numbers and we do not care if we
   lost some increments for heavy workload. The value only has usage
   when it is low workload and we need to discover that we request
   redo write or flush only from time to time. In such case we prefer
-  to avoid spinning in log threads to save on CPU power usage. */
+  to avoid spinning in log threads to save on CPU power usage. */  // 我们不需要确切的数字，也不关心我们是否在重负载下丢失了一些增量。该值仅在低负载时有用途，我们需要发现我们只是偶尔请求 redo 写入或刷新。在这种情况下，我们更愿意避免在日志线程中旋转以节省 CPU 功耗。
   log.write_to_file_requests_total.store(
       log.write_to_file_requests_total.load(std::memory_order_relaxed) + 1,
-      std::memory_order_relaxed);
+      std::memory_order_relaxed);  // 增加写入文件请求的总数
 
-  ut_a(end_lsn != LSN_MAX);
+  ut_a(end_lsn != LSN_MAX);  // 断言 end_lsn 不等于 LSN_MAX
 
   ut_a(end_lsn % OS_FILE_LOG_BLOCK_SIZE == 0 ||
-       end_lsn % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE);
+       end_lsn % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE);  // 断言 end_lsn 是日志块大小的倍数，或者 end_lsn 的余数大于等于日志块头大小
 
   ut_a(end_lsn % OS_FILE_LOG_BLOCK_SIZE <=
-       OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE);
+       OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE);  // 断言 end_lsn 的余数小于等于日志块大小减去日志块尾部大小
 
-  ut_ad(end_lsn <= log_get_lsn(log));
+  ut_ad(end_lsn <= log_get_lsn(log));  // 断言 end_lsn 小于等于日志的当前 LSN
 
-  Wait_stats wait_stats{0};
-  bool interrupted = false;
+  Wait_stats wait_stats{0};  // 定义等待统计对象
+  bool interrupted = false;  // 定义中断标志
 
 retry:
-  if (log.writer_threads_paused.load(std::memory_order_acquire)) {
-    /* the log writer threads are paused not to waste CPU resource. */
+  if (log.writer_threads_paused.load(std::memory_order_acquire)) {  // 如果日志写入线程被暂停
+    /* the log writer threads are paused not to waste CPU resource. */  // 日志写入线程被暂停以避免浪费 CPU 资源
     wait_stats +=
-        log_self_write_up_to(log, end_lsn, flush_to_disk, &interrupted);
+        log_self_write_up_to(log, end_lsn, flush_to_disk, &interrupted);  // 调用 log_self_write_up_to 函数
 
-    if (UNIV_UNLIKELY(interrupted)) {
-      /* the log writer threads might be working. retry. */
-      goto retry;
+    if (UNIV_UNLIKELY(interrupted)) {  // 如果被中断
+      /* the log writer threads might be working. retry. */  // 日志写入线程可能正在工作，重试
+      goto retry;  // 跳转到 retry 标签
     }
 
-    DEBUG_SYNC_C("log_flushed_by_self");
-    return wait_stats;
+    DEBUG_SYNC_C("log_flushed_by_self");  // 调试同步点
+    return wait_stats;  // 返回等待统计
   }
 
-  /* the log writer threads are working for high concurrency scale */
-  if (flush_to_disk) {
-    if (log.flushed_to_disk_lsn.load() >= end_lsn) {
-      DEBUG_SYNC_C("log_flushed_by_writer");
-      return wait_stats;
+  /* the log writer threads are working for high concurrency scale */  // 日志写入线程正在为高并发工作
+  if (flush_to_disk) {  // 如果需要刷新到磁盘
+    if (log.flushed_to_disk_lsn.load() >= end_lsn) {  // 如果日志已经刷新到磁盘的 LSN 大于等于 end_lsn
+      DEBUG_SYNC_C("log_flushed_by_writer");  // 调试同步点
+      return wait_stats;  // 返回等待统计
     }
 
-    if (srv_flush_log_at_trx_commit != 1) {
+    if (srv_flush_log_at_trx_commit != 1) {  // 如果日志刷新策略不等于 1
       /* We need redo flushed, but because trx != 1, we have
       disabled notifications sent from log_writer to log_flusher.
 
@@ -1163,37 +1163,36 @@ retry:
       However, before we wake up log_flusher, we must ensure that
       log.write_lsn >= lsn. Otherwise log_flusher could flush some
       data which was ready for lsn values smaller than end_lsn and
-      return to sleeping for next 1 second. */
-
-      if (log.write_lsn.load() < end_lsn) {
-        wait_stats += log_wait_for_write(log, end_lsn, &interrupted);
+      return to sleeping for next 1 second. */  // 我们需要 redo 刷新，但因为 trx != 1，我们禁用了从 log_writer 到 log_flusher 的通知。log_flusher 可能正在睡眠 1 秒，我们需要快速响应。log_writer 避免唤醒 log_flusher，所以我们必须在这里自己做。然而，在我们唤醒 log_flusher 之前，我们必须确保 log.write_lsn >= lsn。否则，log_flusher 可能会刷新一些已经准备好但 lsn 值小于 end_lsn 的数据，并返回睡眠状态等待下一个 1 秒。
+      if (log.write_lsn.load() < end_lsn) {  // 如果日志写入的 LSN 小于 end_lsn
+        wait_stats += log_wait_for_write(log, end_lsn, &interrupted);  // 等待日志写入到 end_lsn
       }
     }
 
-    /* Wait until log gets flushed up to end_lsn. */
-    wait_stats += log_wait_for_flush(log, end_lsn, &interrupted);
+    /* Wait until log gets flushed up to end_lsn. */  // 等待日志刷新到 end_lsn
+    wait_stats += log_wait_for_flush(log, end_lsn, &interrupted);  // 等待日志刷新
 
-    if (UNIV_UNLIKELY(interrupted)) {
-      /* the log writer threads might be paused. retry. */
-      goto retry;
+    if (UNIV_UNLIKELY(interrupted)) {  // 如果被中断
+      /* the log writer threads might be paused. retry. */  // 日志写入线程可能被暂停，重试
+      goto retry;  // 跳转到 retry 标签
     }
 
-    DEBUG_SYNC_C("log_flushed_by_writer");
-  } else {
-    if (log.write_lsn.load() >= end_lsn) {
-      return wait_stats;
+    DEBUG_SYNC_C("log_flushed_by_writer");  // 调试同步点
+  } else {  // 如果不需要刷新到磁盘
+    if (log.write_lsn.load() >= end_lsn) {  // 如果日志写入的 LSN 大于等于 end_lsn
+      return wait_stats;  // 返回等待统计
     }
 
-    /* Wait until log gets written up to end_lsn. */
-    wait_stats += log_wait_for_write(log, end_lsn, &interrupted);
+    /* Wait until log gets written up to end_lsn. */  // 等待日志写入到 end_lsn
+    wait_stats += log_wait_for_write(log, end_lsn, &interrupted);  // 等待日志写入
 
-    if (UNIV_UNLIKELY(interrupted)) {
-      /* the log writer threads might be paused. retry. */
-      goto retry;
+    if (UNIV_UNLIKELY(interrupted)) {  // 如果被中断
+      /* the log writer threads might be paused. retry. */  // 日志写入线程可能被暂停，重试
+      goto retry;  // 跳转到 retry 标签
     }
   }
 
-  return wait_stats;
+  return wait_stats;  // 返回等待统计
 }
 
 /** @} */

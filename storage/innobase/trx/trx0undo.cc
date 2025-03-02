@@ -581,49 +581,54 @@ static void trx_undo_write_xid(
                     XIDDATASIZE, mtr);
 }
 
+/** Adds or updates the GTID information in the undo log segment.
+@param[in]      trx             transaction
+@param[in]      prepare         true if called during prepare phase
+@param[in]      rollback        true if called during rollback
+@return DB_SUCCESS or error code */
 dberr_t trx_undo_gtid_add_update_undo(trx_t *trx, bool prepare, bool rollback) {
-  ut_ad(!(prepare && rollback));
-  /* Check if GTID persistence is needed. */
-  auto &gtid_persistor = clone_sys->get_gtid_persistor();
+  ut_ad(!(prepare && rollback));  // 断言 prepare 和 rollback 不能同时为 true
+  /* Check if GTID persistence is needed. */  // 检查是否需要 GTID 持久化
+  auto &gtid_persistor = clone_sys->get_gtid_persistor();  // 获取 GTID 持久化器
 
   /* Caller could request GTID persistence explicitly for non-Innodb operations
-  using an empty transaction. We also allocate undo for such cases. */
-  bool gtid_explicit = false;
+  using an empty transaction. We also allocate undo for such cases. */  // 调用者可以显式请求为非 InnoDB 操作进行 GTID 持久化，使用空事务。我们也会为这种情况分配 undo。
+  bool gtid_explicit = false;  // 定义显式 GTID 请求标志
 
   bool alloc =
-      gtid_persistor.trx_check_set(trx, prepare, rollback, gtid_explicit);
+      gtid_persistor.trx_check_set(trx, prepare, rollback, gtid_explicit);  // 检查并设置事务的 GTID 持久化标志
 
-  auto undo_ptr = &trx->rsegs.m_redo;
+  auto undo_ptr = &trx->rsegs.m_redo;  // 获取事务的 redo 回滚段指针
 
-  /* If update undo is already allocated, nothing to do. */
+  /* If update undo is already allocated, nothing to do. */  // 如果已经分配了更新 undo，则无需执行任何操作
   if (!alloc || undo_ptr->is_update()) {
-    return (DB_SUCCESS);
+    return (DB_SUCCESS);  // 返回成功
   }
 
   /* For GTID persistence we need update undo segment. Allocate update
   undo segment here if it is insert only transaction. If no undo segment
   is allocated yet, then transaction didn't do any modification and
   no GTID would be allotted to it. One exception is the explicit GTID
-  request. */
-  dberr_t db_err = DB_SUCCESS;
+  request. */  // 为了 GTID 持久化，我们需要更新 undo 段。如果事务是仅插入事务，则在此处分配更新 undo 段。如果尚未分配 undo 段，则事务未进行任何修改，也不会为其分配 GTID。一个例外是显式的 GTID 请求。
+  dberr_t db_err = DB_SUCCESS;  // 定义错误码为成功
 
-  if (undo_ptr->is_insert_only() || gtid_explicit) {
-    mutex_enter(&trx->undo_mutex);
-    db_err = trx_undo_assign_undo(trx, undo_ptr, TRX_UNDO_UPDATE);
-    mutex_exit(&trx->undo_mutex);
+  if (undo_ptr->is_insert_only() || gtid_explicit) {  // 如果事务是仅插入事务或显式 GTID 请求
+    mutex_enter(&trx->undo_mutex);  // 进入事务的 undo 互斥锁
+    db_err = trx_undo_assign_undo(trx, undo_ptr, TRX_UNDO_UPDATE);  // 分配更新 undo 段
+    mutex_exit(&trx->undo_mutex);  // 退出事务的 undo 互斥锁
   }
   /* In rare cases we might find no available update undo segment for insert
   only transactions. It is still fine to return error at prepare stage.
   Cannot do it earlier as GTID information is not known before. Keep the
-  debug assert to know if it really happens ever. */
-  if (db_err != DB_SUCCESS) {
-    trx->persists_gtid = false;
+  debug assert to know if it really happens ever. */  // 在极少数情况下，我们可能找不到仅插入事务的可用更新 undo 段。在准备阶段返回错误仍然是可以的。不能更早地执行此操作，因为在此之前 GTID 信息未知。保留调试断言以了解是否真的发生过这种情况。
+  if (db_err != DB_SUCCESS) {  // 如果分配失败
+    trx->persists_gtid = false;  // 设置 GTID 持久化标志为 false
     ib::error(ER_IB_CLONE_GTID_PERSIST)
         << "Could not allocate undo segment"
-        << " slot for persisting GTID. DB Error: " << db_err;
-    ut_d(ut_error);
+        << " slot for persisting GTID. DB Error: " << db_err;  // 打印错误信息
+    ut_d(ut_error);  // 在调试模式下触发错误
   }
-  return (db_err);
+  return (db_err);  // 返回错误码
 }
 
 bool trx_undo_t::gtid_allocated(bool is_prepare) const {
@@ -1954,41 +1959,41 @@ the data can be discarded.
 @param[in,out]  undo_ptr        undo log to clean up
 @param[in]      noredo          whether the undo tablespace is redo logged */
 void trx_undo_insert_cleanup(trx_undo_ptr_t *undo_ptr, bool noredo) {
-  trx_undo_t *undo;
-  trx_rseg_t *rseg;
+  trx_undo_t *undo;  // 定义 undo 日志对象
+  trx_rseg_t *rseg;  // 定义回滚段对象
 
-  undo = undo_ptr->insert_undo;
-  ut_ad(undo != nullptr);
+  undo = undo_ptr->insert_undo;  // 获取插入 undo 日志
+  ut_ad(undo != nullptr);  // 断言插入 undo 日志不为空
 
-  rseg = undo_ptr->rseg;
+  rseg = undo_ptr->rseg;  // 获取回滚段
 
-  ut_ad(noredo == fsp_is_system_temporary(rseg->space_id));
+  ut_ad(noredo == fsp_is_system_temporary(rseg->space_id));  // 断言 noredo 参数与回滚段是否为临时表空间一致
 
-  rseg->latch();
+  rseg->latch();  // 获取回滚段的锁
 
-  UT_LIST_REMOVE(rseg->insert_undo_list, undo);
-  undo_ptr->insert_undo = nullptr;
+  UT_LIST_REMOVE(rseg->insert_undo_list, undo);  // 从回滚段的插入 undo 日志列表中移除该 undo 日志
+  undo_ptr->insert_undo = nullptr;  // 将插入 undo 日志指针置为空
 
-  if (undo->state == TRX_UNDO_CACHED) {
-    UT_LIST_ADD_FIRST(rseg->insert_undo_cached, undo);
+  if (undo->state == TRX_UNDO_CACHED) {  // 如果 undo 日志状态为缓存状态
+    UT_LIST_ADD_FIRST(rseg->insert_undo_cached, undo);  // 将 undo 日志添加到回滚段的缓存插入 undo 日志列表
 
-    MONITOR_INC(MONITOR_NUM_UNDO_SLOT_CACHED);
-  } else {
-    ut_ad(undo->state == TRX_UNDO_TO_FREE);
+    MONITOR_INC(MONITOR_NUM_UNDO_SLOT_CACHED);  // 增加缓存 undo 槽的监控计数
+  } else {  // 否则
+    ut_ad(undo->state == TRX_UNDO_TO_FREE);  // 断言 undo 日志状态为待释放状态
 
-    /* Delete first the undo log segment in the file */
+    /* Delete first the undo log segment in the file */  // 首先删除文件中的 undo 日志段
 
-    rseg->unlatch();
+    rseg->unlatch();  // 释放回滚段的锁
 
-    DEBUG_SYNC_C("innodb_commit_wait_for_truncate");
-    trx_undo_seg_free(undo, noredo);
+    DEBUG_SYNC_C("innodb_commit_wait_for_truncate");  // 调试同步点
+    trx_undo_seg_free(undo, noredo);  // 释放 undo 日志段
 
-    rseg->latch();
+    rseg->latch();  // 重新获取回滚段的锁
 
-    trx_undo_mem_free(undo);
+    trx_undo_mem_free(undo);  // 释放 undo 日志的内存
   }
 
-  rseg->unlatch();
+  rseg->unlatch();  // 释放回滚段的锁
 }
 
 void trx_undo_free_trx_with_prepared_or_active_logs(trx_t *trx, bool prepared) {
