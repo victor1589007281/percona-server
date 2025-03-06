@@ -3217,120 +3217,143 @@ static bool get_table_name_info(st_handler_tablename *table,
 }
 
 /**
-  Get prepared transaction info from InnoDB data structure.
-
-  @param[in,out]  txn_list  Handler layer transaction list.
-  @param[in]      trx       Innodb transaction info.
-  @param[in]      mem_root  Mem_root for space allocation.
-
-  @retval     true          Error, e.g. Memory allocation failure.
-  @retval     false         Success
-*/
-
+ * @brief 从 InnoDB 数据结构中获取已准备事务的信息。
+ * @brief Get prepared transaction info from InnoDB data structure.
+ *
+ * @param[in,out] txn_list Handler 层的事务列表。
+ * @param[in] trx InnoDB 事务信息。
+ * @param[in] mem_root 用于内存分配的内存池。
+ *
+ * @retval true 错误，例如内存分配失败。
+ * @retval false 成功。
+ */
 static bool get_info_about_prepared_transaction(XA_recover_txn *txn_list,
                                                 const trx_t *trx,
                                                 MEM_ROOT *mem_root) {
-  txn_list->id = *trx->xid;
-  txn_list->mod_tables = new (mem_root) List<st_handler_tablename>();
-  if (!txn_list->mod_tables) return true;
+  txn_list->id = *trx->xid;  // 设置事务的 XID
+  txn_list->mod_tables = new (mem_root) List<st_handler_tablename>();  // 分配修改表列表的内存
+  if (!txn_list->mod_tables) return true;  // 如果内存分配失败，返回错误
 
-  for (auto dd_table : trx->mod_tables) {
-    st_handler_tablename *table = new (mem_root) st_handler_tablename();
+  for (auto dd_table : trx->mod_tables) {  // 遍历事务修改的表
+    st_handler_tablename *table = new (mem_root) st_handler_tablename();  // 分配表信息的内存
 
-    if (!table || get_table_name_info(table, dd_table, mem_root) ||
-        txn_list->mod_tables->push_back(table, mem_root))
-      return true;
+    if (!table || get_table_name_info(table, dd_table, mem_root) ||  // 获取表信息
+        txn_list->mod_tables->push_back(table, mem_root))  // 将表信息添加到列表中
+      return true;  // 如果出现错误，返回错误
   }
-  return false;
+  return false;  // 成功返回
 }
 
-/** This function is used to find number of prepared transactions and
- their transaction objects for a recovery.
- @return number of prepared transactions stored in xid_list */
+/**
+ * @brief 查找处于 PREPARED 状态的事务并将其事务对象用于恢复。
+ * @brief Find the number of prepared transactions and their transaction objects for recovery.
+ *
+ * @param txn_list 准备好的事务列表
+ * @param len 事务列表的槽数
+ * @param mem_root 用于分配表名的内存
+ * @return 存储在 xid_list 中的已准备事务的数量
+ * @return Number of prepared transactions stored in xid_list
+ */
 int trx_recover_for_mysql(
     XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
     ulint len,                /*!< in: number of slots in xid_list */
     MEM_ROOT *mem_root)       /*!< in: memory for table names */
 {
-  ulint count = 0;
+  ulint count = 0;  // 已准备事务的计数器
 
-  ut_ad(txn_list);
-  ut_ad(len);
+  ut_ad(txn_list);  // 断言 txn_list 不为空
+  ut_ad(len);       // 断言 len 不为 0
 
   /* We should set those transactions which are in the prepared state
   to the xid_list */
+  /* 我们应该将处于 PREPARED 状态的事务添加到 xid_list 中 */
 
-  trx_sys_mutex_enter();
+  trx_sys_mutex_enter();  // 进入事务系统互斥锁
 
-  for (const trx_t *trx : trx_sys->rw_trx_list) {
-    assert_trx_in_rw_list(trx);
+  for (const trx_t *trx : trx_sys->rw_trx_list) {  // 遍历读写事务列表
+    assert_trx_in_rw_list(trx);  // 断言事务在读写事务列表中
 
     /* The state of a read-write transaction cannot change
     from or to NOT_STARTED while we are holding the
     trx_sys->mutex. It may change to PREPARED, but not if
     trx->is_recovered. */
-    if (trx_state_eq(trx, TRX_STATE_PREPARED)) {
+    /* 当我们持有 trx_sys->mutex 时，读写事务的状态不能从或变为 NOT_STARTED。
+       它可能变为 PREPARED，但如果 trx->is_recovered 为真，则不会。 */
+    if (trx_state_eq(trx, TRX_STATE_PREPARED)) {  // 如果事务处于 PREPARED 状态
       if (get_info_about_prepared_transaction(&txn_list[count], trx, mem_root))
-        break;
+        break;  // 获取事务信息，如果失败则跳出循环
 
       if (count == 0) {
         ib::info(ER_IB_MSG_1207) << "Starting recovery for"
-                                    " XA transactions...";
+                                    " XA transactions...";  // 记录恢复 XA 事务的日志
       }
 
       ib::info(ER_IB_MSG_1208) << "Transaction " << trx_get_id_for_print(trx)
-                               << " in prepared state after recovery";
+                               << " in prepared state after recovery";  // 记录事务 ID 和状态的日志
 
       ib::info(ER_IB_MSG_1209)
-          << "Transaction contains changes to " << trx->undo_no << " rows";
+          << "Transaction contains changes to " << trx->undo_no << " rows";  // 记录事务修改的行数
 
-      count++;
+      count++;  // 增加已准备事务的计数器
 
       if (count == len) {
-        break;
+        break;  // 如果达到 len 的限制，则跳出循环
       }
     }
   }
 
-  trx_sys_mutex_exit();
+  trx_sys_mutex_exit();  // 退出事务系统互斥锁
 
   if (count > 0) {
     ib::info(ER_IB_MSG_1210) << count
                              << " transactions in prepared state"
-                                " after recovery";
+                                " after recovery";  // 记录恢复后处于 PREPARED 状态的事务数量
   }
 
-  return (int(count));
+  return (int(count));  // 返回已准备事务的数量
 }
 
+/**
+ * @brief 恢复处于 PREPARED 状态的 XA 事务，并将其添加到 XA 事务状态列表中。
+ * @brief Recover XA transactions in the PREPARED state and add them to the XA transaction state list.
+ *
+ * @param xa_list XA 事务状态列表
+ * @return 错误码，0 表示成功
+ * @return Error code, 0 indicates success
+ */
 int trx_recover_tc_for_mysql(Xa_state_list &xa_list) {
   /* We should set those transactions which are in the prepared state
   to the xid_list */
+  /* 我们应该将处于 PREPARED 状态的事务添加到 xid_list 中 */
 
-  trx_sys_mutex_enter();
+  trx_sys_mutex_enter();  // 进入事务系统互斥锁
 
-  for (trx_t *trx : trx_sys->rw_trx_list) {
-    assert_trx_in_rw_list(trx);
+  for (trx_t *trx : trx_sys->rw_trx_list) {  // 遍历读写事务列表
+    assert_trx_in_rw_list(trx);  // 断言事务在读写事务列表中
 
     /* The state of a read-write transaction cannot change
     from or to NOT_STARTED while we are holding the
     trx_sys->mutex. It may change to PREPARED, but not if
     trx->is_recovered. */
-    if (trx_state_eq(trx, TRX_STATE_PREPARED)) {
+    /* 当我们持有 trx_sys->mutex 时，读写事务的状态不能从或变为 NOT_STARTED。
+       它可能变为 PREPARED，但如果 trx->is_recovered 为真，则不会。 */
+    if (trx_state_eq(trx, TRX_STATE_PREPARED)) {  // 如果事务处于 PREPARED 状态
       if (trx_is_prepared_in_tc(trx)) {
         /* We found the transaction in 2nd phase of prepare, add to XA
            transaction state list as PREPARED_IN_TC */
+        /* 我们发现事务处于第二阶段准备状态，将其作为 PREPARED_IN_TC 添加到 XA 事务状态列表中 */
         xa_list.add(*trx->xid, enum_ha_recover_xa_state::PREPARED_IN_TC);
       } else {
         /* Otherwise, just add as PREPARED_IN_SE */
+        /* 否则，将其作为 PREPARED_IN_SE 添加到 XA 事务状态列表中 */
         xa_list.add(*trx->xid, enum_ha_recover_xa_state::PREPARED_IN_SE);
       }
     }
   }
 
-  trx_sys_mutex_exit();
+  trx_sys_mutex_exit();  // 退出事务系统互斥锁
 
-  return 0;
+  return 0;  // 返回成功
 }
 
 /** This function is used to find one X/Open XA distributed transaction

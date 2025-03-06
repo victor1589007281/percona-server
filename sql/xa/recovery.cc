@@ -241,48 +241,68 @@ bool xa::recovery::recover_one_ht(THD *, plugin_ref plugin, void *arg) {
 }
 
 namespace {
+/**
+ * @brief 恢复一个内部 XA 事务。
+ * @brief Recover one internal XA transaction.
+ *
+ * @param info 恢复信息
+ * @param ht 存储引擎的 handlerton 结构体
+ * @param xa_trx XA 事务信息
+ * @param xid 事务 ID
+ * @param stats 恢复统计信息
+ */
 void recover_one_internal_trx(xarecover_st const &info, handlerton &ht,
                               XA_recover_txn const &xa_trx, my_xid xid,
                               ::recovery_statistics &stats) {
+  // 检查事务是否在提交列表中，或者是否启用了启发式提交恢复
   if (info.commit_list ? info.commit_list->count(xid) != 0
                        : tc_heuristic_recover == TC_HEURISTIC_RECOVER_COMMIT) {
     enum xa_status_code exec_status;
     if (DBUG_EVALUATE_IF("xa_recovery_error_reporting", true, false))
-      exec_status = ::generate_xa_recovery_error();
+      exec_status = ::generate_xa_recovery_error();  // 调试模式下生成错误
     else
-      exec_status = ht.commit_by_xid(&ht, const_cast<XID *>(&xa_trx.id));
+      exec_status = ht.commit_by_xid(&ht, const_cast<XID *>(&xa_trx.id));  // 提交事务
 
     if (exec_status == XA_OK)
-      ::add_to_stats<STATS_SUCCESS, STATS_COMMITTED>(stats);
+      ::add_to_stats<STATS_SUCCESS, STATS_COMMITTED>(stats);  // 记录成功提交的统计信息
     else {
-      ::add_to_stats<STATS_FAILURE, STATS_COMMITTED>(stats);
+      ::add_to_stats<STATS_FAILURE, STATS_COMMITTED>(stats);  // 记录提交失败的统计信息
       ::report_trx_recovery_error(ER_BINLOG_CRASH_RECOVERY_COMMIT_FAILED, xid,
-                                  ht, exec_status);
+                                  ht, exec_status);  // 报告提交失败的错误
     }
   } else {
     enum xa_status_code exec_status;
     if (DBUG_EVALUATE_IF("xa_recovery_error_reporting", true, false))
-      exec_status = ::generate_xa_recovery_error();
+      exec_status = ::generate_xa_recovery_error();  // 调试模式下生成错误
     else
-      exec_status = ht.rollback_by_xid(&ht, const_cast<XID *>(&xa_trx.id));
+      exec_status = ht.rollback_by_xid(&ht, const_cast<XID *>(&xa_trx.id));  // 回滚事务
 
     if (exec_status == XA_OK)
-      ::add_to_stats<STATS_SUCCESS, STATS_ROLLEDBACK>(stats);
+      ::add_to_stats<STATS_SUCCESS, STATS_ROLLEDBACK>(stats);  // 记录成功回滚的统计信息
     else {
-      ::add_to_stats<STATS_FAILURE, STATS_ROLLEDBACK>(stats);
+      ::add_to_stats<STATS_FAILURE, STATS_ROLLEDBACK>(stats);  // 记录回滚失败的统计信息
       ::report_trx_recovery_error(ER_BINLOG_CRASH_RECOVERY_ROLLBACK_FAILED, xid,
-                                  ht, exec_status);
+                                  ht, exec_status);  // 报告回滚失败的错误
     }
   }
 }
 
+/**
+ * @brief 恢复一个外部 XA 事务。
+ * @brief Recover one external XA transaction.
+ *
+ * @param info 恢复信息
+ * @param ht 存储引擎的 handlerton 结构体
+ * @param xa_trx XA 事务信息
+ * @param stats 恢复统计信息
+ */
 void recover_one_external_trx(xarecover_st const &info, handlerton &ht,
                               XA_recover_txn const &xa_trx,
                               ::recovery_statistics &stats) {
-  auto state{enum_ha_recover_xa_state::NOT_FOUND};
+  auto state{enum_ha_recover_xa_state::NOT_FOUND};  // 初始化事务状态为未找到
 
   if (info.xa_list != nullptr) {
-    state = info.xa_list->find(xa_trx.id);
+    state = info.xa_list->find(xa_trx.id);  // 在 XA 事务列表中查找事务状态
   }
 
   switch (state) {
@@ -291,19 +311,19 @@ void recover_one_external_trx(xarecover_st const &info, handlerton &ht,
       if (ht.commit_by_xid != nullptr) {
         enum xa_status_code exec_status;
         if (DBUG_EVALUATE_IF("xa_recovery_error_reporting", true, false))
-          exec_status = ::generate_xa_recovery_error();
+          exec_status = ::generate_xa_recovery_error();  // 调试模式下生成错误
         else
-          exec_status = ht.commit_by_xid(&ht, const_cast<XID *>(&xa_trx.id));
+          exec_status = ht.commit_by_xid(&ht, const_cast<XID *>(&xa_trx.id));  // 提交事务
 
         if (exec_status == XA_OK) {
-          ::add_to_stats<STATS_SUCCESS, STATS_COMMITTED>(stats);
+          ::add_to_stats<STATS_SUCCESS, STATS_COMMITTED>(stats);  // 记录成功提交的统计信息
           break;
         } else
           ::report_trx_recovery_error(ER_BINLOG_CRASH_RECOVERY_COMMIT_FAILED,
                                       xa_trx.id, ht, exec_status,
-                                      /*is_xa*/ true);
+                                      /*is_xa*/ true);  // 报告提交失败的错误
       }
-      ::add_to_stats<STATS_FAILURE, STATS_COMMITTED>(stats);
+      ::add_to_stats<STATS_FAILURE, STATS_COMMITTED>(stats);  // 记录提交失败的统计信息
       break;
     }
     case enum_ha_recover_xa_state::NOT_FOUND:
@@ -312,19 +332,19 @@ void recover_one_external_trx(xarecover_st const &info, handlerton &ht,
       if (ht.rollback_by_xid != nullptr) {
         enum xa_status_code exec_status;
         if (DBUG_EVALUATE_IF("xa_recovery_error_reporting", true, false))
-          exec_status = ::generate_xa_recovery_error();
+          exec_status = ::generate_xa_recovery_error();  // 调试模式下生成错误
         else
-          exec_status = ht.rollback_by_xid(&ht, const_cast<XID *>(&xa_trx.id));
+          exec_status = ht.rollback_by_xid(&ht, const_cast<XID *>(&xa_trx.id));  // 回滚事务
 
         if (exec_status == XA_OK) {
-          ::add_to_stats<STATS_SUCCESS, STATS_ROLLEDBACK>(stats);
+          ::add_to_stats<STATS_SUCCESS, STATS_ROLLEDBACK>(stats);  // 记录成功回滚的统计信息
           break;
         } else
           ::report_trx_recovery_error(ER_BINLOG_CRASH_RECOVERY_ROLLBACK_FAILED,
                                       xa_trx.id, ht, exec_status,
-                                      /*is_xa*/ true);
+                                      /*is_xa*/ true);  // 报告回滚失败的错误
       }
-      ::add_to_stats<STATS_FAILURE, STATS_ROLLEDBACK>(stats);
+      ::add_to_stats<STATS_FAILURE, STATS_ROLLEDBACK>(stats);  // 记录回滚失败的统计信息
       break;
     }
     case enum_ha_recover_xa_state::PREPARED_IN_TC: {
@@ -333,21 +353,21 @@ void recover_one_external_trx(xarecover_st const &info, handlerton &ht,
         if (ht.set_prepared_in_tc_by_xid != nullptr) {
           enum xa_status_code exec_status;
           if (DBUG_EVALUATE_IF("xa_recovery_error_reporting", true, false))
-            exec_status = ::generate_xa_recovery_error();
+            exec_status = ::generate_xa_recovery_error();  // 调试模式下生成错误
           else
             exec_status = ht.set_prepared_in_tc_by_xid(
-                &ht, const_cast<XID *>(&xa_trx.id));
+                &ht, const_cast<XID *>(&xa_trx.id));  // 设置事务为 TC 准备状态
 
           if (exec_status == XA_OK) {
-            ::add_to_stats<STATS_SUCCESS, STATS_PREPARED>(stats);
+            ::add_to_stats<STATS_SUCCESS, STATS_PREPARED>(stats);  // 记录成功准备的统计信息
             break;
           } else
             ::report_trx_recovery_error(ER_BINLOG_CRASH_RECOVERY_PREPARE_FAILED,
                                         xa_trx.id, ht, exec_status,
-                                        /*is_xa*/ true);
+                                        /*is_xa*/ true);  // 报告准备失败的错误
         }
       }
-      ::add_to_stats<STATS_FAILURE, STATS_PREPARED>(stats);
+      ::add_to_stats<STATS_FAILURE, STATS_PREPARED>(stats);  // 记录准备失败的统计信息
       break;
     }
   }

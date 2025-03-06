@@ -1053,15 +1053,15 @@ top_loop:
 @param[in,out]  mtr             Mini-transaction */
 void btr_free_if_exists(const page_id_t &page_id, const page_size_t &page_size,
                         space_index_t index_id, mtr_t *mtr) {
-  buf_block_t *root = btr_free_root_check(page_id, page_size, index_id, mtr);
+  buf_block_t *root = btr_free_root_check(page_id, page_size, index_id, mtr); // 检查并获取B树的根页面
 
-  if (root == nullptr) {
-    return;
+  if (root == nullptr) { // 如果根页面不存在
+    return; // 返回
   }
 
-  btr_free_but_not_root(root, mtr->get_log_mode(), true);
-  btr_free_root(root, mtr);
-  btr_free_root_invalidate(root, mtr);
+  btr_free_but_not_root(root, mtr->get_log_mode(), true); // 释放根页面以外的B树
+  btr_free_root(root, mtr); // 释放根页面
+  btr_free_root_invalidate(root, mtr); // 使根页面无效
 }
 
 /** Free an index tree in a temporary tablespace.

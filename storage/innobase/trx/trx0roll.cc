@@ -74,66 +74,74 @@ static ulint trx_roll_progress_printed_pct;
 /** Finishes a transaction rollback. */
 static void trx_rollback_finish(trx_t *trx); /*!< in: transaction */
 
-/** Rollback a transaction used in MySQL. */
+/**
+ * @brief 回滚 MySQL 中使用的事务。
+ * @brief Rollback a transaction used in MySQL.
+ *
+ * @param trx 事务句柄
+ * @param savept 保存点的 undo 编号指针，如果请求部分回滚，则为 NULL 表示完全回滚
+ */
 static void trx_rollback_to_savepoint_low(
     trx_t *trx,           /*!< in: transaction handle */
     trx_savept_t *savept) /*!< in: pointer to savepoint undo number, if
                           partial rollback requested, or NULL for
                           complete rollback */
 {
-  que_thr_t *thr;
-  mem_heap_t *heap;
-  roll_node_t *roll_node;
+  que_thr_t *thr;  // 查询线程
+  mem_heap_t *heap;  // 内存堆
+  roll_node_t *roll_node;  // 回滚节点
 
-  heap = mem_heap_create(512, UT_LOCATION_HERE);
+  heap = mem_heap_create(512, UT_LOCATION_HERE);  // 创建内存堆
 
-  roll_node = roll_node_create(heap);
+  roll_node = roll_node_create(heap);  // 创建回滚节点
 
-  if (savept != nullptr) {
-    roll_node->partial = true;
-    roll_node->savept = *savept;
-    check_trx_state(trx);
-  } else {
-    assert_trx_nonlocking_or_in_list(trx);
+  if (savept != nullptr) {  // 如果请求部分回滚
+    roll_node->partial = true;  // 设置回滚节点为部分回滚
+    roll_node->savept = *savept;  // 设置保存点
+    check_trx_state(trx);  // 检查事务状态
+  } else {  // 如果请求完全回滚
+    assert_trx_nonlocking_or_in_list(trx);  // 断言事务是非锁定事务或在列表中
   }
 
-  trx->error_state = DB_SUCCESS;
+  trx->error_state = DB_SUCCESS;  // 设置事务错误状态为成功
 
-  if (trx_is_rseg_updated(trx)) {
+  if (trx_is_rseg_updated(trx)) {  // 如果事务更新了回滚段
     ut_ad(trx->rsegs.m_redo.rseg != nullptr ||
-          trx->rsegs.m_noredo.rseg != nullptr);
+          trx->rsegs.m_noredo.rseg != nullptr);  // 断言 redo 或 noredo 回滚段存在
 
-    thr = pars_complete_graph_for_exec(roll_node, trx, heap, nullptr);
+    thr = pars_complete_graph_for_exec(roll_node, trx, heap, nullptr);  // 完成执行图的解析
 
     ut_a(thr == que_fork_start_command(
-                    static_cast<que_fork_t *>(que_node_get_parent(thr))));
+                    static_cast<que_fork_t *>(que_node_get_parent(thr))));  // 启动查询线程
 
-    que_run_threads(thr);
+    que_run_threads(thr);  // 运行查询线程
 
-    ut_a(roll_node->undo_thr != nullptr);
-    que_run_threads(roll_node->undo_thr);
+    ut_a(roll_node->undo_thr != nullptr);  // 断言 undo 线程存在
+    que_run_threads(roll_node->undo_thr);  // 运行 undo 线程
 
     /* Free the memory reserved by the undo graph. */
-    que_graph_free(static_cast<que_t *>(roll_node->undo_thr->common.parent));
+    /* 释放 undo 图保留的内存。 */
+    que_graph_free(static_cast<que_t *>(roll_node->undo_thr->common.parent));  // 释放 undo 图
   }
 
-  if (savept == nullptr) {
-    trx_rollback_finish(trx);
-    MONITOR_INC(MONITOR_TRX_ROLLBACK);
-  } else {
-    trx->lock.que_state = TRX_QUE_RUNNING;
-    MONITOR_INC(MONITOR_TRX_ROLLBACK_SAVEPOINT);
+  if (savept == nullptr) {  // 如果请求完全回滚
+    trx_rollback_finish(trx);  // 完成事务回滚
+    MONITOR_INC(MONITOR_TRX_ROLLBACK);  // 增加回滚监控计数
+  } else {  // 如果请求部分回滚
+    trx->lock.que_state = TRX_QUE_RUNNING;  // 设置事务队列状态为运行中
+    MONITOR_INC(MONITOR_TRX_ROLLBACK_SAVEPOINT);  // 增加保存点回滚监控计数
   }
 
-  ut_a(trx->error_state == DB_SUCCESS);
-  ut_a(trx->lock.que_state == TRX_QUE_RUNNING);
+  ut_a(trx->error_state == DB_SUCCESS);  // 断言事务错误状态为成功
+  ut_a(trx->lock.que_state == TRX_QUE_RUNNING);  // 断言事务队列状态为运行中
 
-  mem_heap_free(heap);
+  mem_heap_free(heap);  // 释放内存堆
 
   /* There might be work for utility threads.*/
-  srv_active_wake_master_thread();
+  /* 可能会有工作给工具线程。 */
+  srv_active_wake_master_thread();  // 唤醒主线程
 
-  MONITOR_DEC(MONITOR_TRX_ACTIVE);
+  MONITOR_DEC(MONITOR_TRX_ACTIVE);  // 减少活跃事务监控计数
 }
 
 /** Rollback a transaction to a given savepoint or do a complete rollback.
@@ -153,30 +161,44 @@ dberr_t trx_rollback_to_savepoint(
   return (trx->error_state);
 }
 
-/** Rollback a transaction used in MySQL.
- @return error code or DB_SUCCESS */
+/**
+ * @brief 回滚 MySQL 中使用的事务。
+ * @brief Rollback a transaction used in MySQL.
+ *
+ * @param trx 事务对象
+ * @return 错误码或 DB_SUCCESS
+ * @return error code or DB_SUCCESS
+ */
 static dberr_t trx_rollback_for_mysql_low(
     trx_t *trx) /*!< in/out: transaction */
 {
-  trx->op_info = "rollback";
+  trx->op_info = "rollback";  // 设置操作信息为 "rollback"
 
   /* If we are doing the XA recovery of prepared transactions,
   then the transaction object does not have an InnoDB session
   object, and we set a dummy session that we use for all MySQL
   transactions. */
+  /* 如果我们正在恢复已准备的 XA 事务，
+     那么事务对象没有 InnoDB 会话对象，
+     我们设置一个用于所有 MySQL 事务的虚拟会话。 */
 
-  trx_rollback_to_savepoint_low(trx, nullptr);
+  trx_rollback_to_savepoint_low(trx, nullptr);  // 回滚到保存点
 
-  trx->op_info = "";
+  trx->op_info = "";  // 清空操作信息
 
-  ut_a(trx->error_state == DB_SUCCESS);
+  ut_a(trx->error_state == DB_SUCCESS);  // 断言事务状态为成功
 
-  return (trx->error_state);
+  return (trx->error_state);  // 返回事务状态
 }
 
-/** Rollback a transaction used in MySQL
-@param[in, out] trx     transaction
-@return error code or DB_SUCCESS */
+/**
+ * @brief 回滚 MySQL 中使用的事务。
+ * @brief Rollback a transaction used in MySQL.
+ *
+ * @param[in, out] trx 事务对象
+ * @return 错误码或 DB_SUCCESS
+ * @return error code or DB_SUCCESS
+ */
 static dberr_t trx_rollback_low(trx_t *trx) {
   /* We are reading trx->state without mutex protection here,
   because the rollback should either be invoked for:
@@ -187,59 +209,73 @@ static dberr_t trx_rollback_low(trx_t *trx) {
       run by the current thread, in which case it is guaranteed that
       thread owning the transaction, which is being killed, is not
       inside InnoDB (thanks to TRX_FORCE_ROLLBACK and TrxInInnoDB::wait()). */
-  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
+  /* 我们在这里读取 trx->state 而不加互斥锁保护，
+     因为回滚应该被调用用于以下情况：
+    - 与当前线程关联的正在运行的活跃 MySQL 事务，
+    - 或者一个恢复的已准备事务，
+    - 或者一个被当前线程运行的 HP 事务杀死的受害者事务，
+      在这种情况下，保证拥有该事务的线程（正在被杀死）不在 InnoDB 内部
+      （感谢 TRX_FORCE_ROLLBACK 和 TrxInInnoDB::wait()）。 */
+  ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));  // 断言当前线程可以处理该事务或该事务是 HP 受害者
 
-  switch (trx->state.load(std::memory_order_relaxed)) {
-    case TRX_STATE_FORCED_ROLLBACK:
-    case TRX_STATE_NOT_STARTED:
-      trx->will_lock = 0;
-      ut_ad(trx->in_mysql_trx_list);
-      return (DB_SUCCESS);
+  switch (trx->state.load(std::memory_order_relaxed)) {  // 根据事务状态进行分支处理
+    case TRX_STATE_FORCED_ROLLBACK:  // 事务被强制回滚
+    case TRX_STATE_NOT_STARTED:  // 事务未启动
+      trx->will_lock = 0;  // 标记事务不会持有锁
+      ut_ad(trx->in_mysql_trx_list);  // 断言事务在 MySQL 事务列表中
+      return (DB_SUCCESS);  // 返回成功
 
-    case TRX_STATE_ACTIVE:
-      ut_ad(trx->in_mysql_trx_list);
-      assert_trx_nonlocking_or_in_list(trx);
+    case TRX_STATE_ACTIVE:  // 事务处于活跃状态
+      ut_ad(trx->in_mysql_trx_list);  // 断言事务在 MySQL 事务列表中
+      assert_trx_nonlocking_or_in_list(trx);  // 断言事务是非锁定事务或在列表中
       /* Check an validate that undo is available for GTID. */
-      trx_undo_gtid_add_update_undo(trx, false, true);
-      return (trx_rollback_for_mysql_low(trx));
+      /* 检查并验证 GTID 的 undo 是否可用。 */
+      trx_undo_gtid_add_update_undo(trx, false, true);  // 添加更新 undo 日志
+      return (trx_rollback_for_mysql_low(trx));  // 调用低级别回滚函数
 
-    case TRX_STATE_PREPARED:
+    case TRX_STATE_PREPARED:  // 事务处于准备状态
       /* Check an validate that undo is available for GTID. */
-      trx_undo_gtid_add_update_undo(trx, false, true);
-      ut_ad(!trx_is_autocommit_non_locking(trx));
-      if (trx->rsegs.m_redo.rseg != nullptr && trx_is_redo_rseg_updated(trx)) {
+      /* 检查并验证 GTID 的 undo 是否可用。 */
+      trx_undo_gtid_add_update_undo(trx, false, true);  // 添加更新 undo 日志
+      ut_ad(!trx_is_autocommit_non_locking(trx));  // 断言事务不是自动提交的非锁定事务
+      if (trx->rsegs.m_redo.rseg != nullptr && trx_is_redo_rseg_updated(trx)) {  // 如果事务更新了 redo 回滚段
         /* Change the undo log state back from
         TRX_UNDO_PREPARED to TRX_UNDO_ACTIVE
         so that if the system gets killed,
         recovery will perform the rollback. */
+        /* 将 undo 日志的状态从 TRX_UNDO_PREPARED 改回 TRX_UNDO_ACTIVE，
+           以便如果系统崩溃，恢复时将执行回滚。 */
         trx_undo_ptr_t *undo_ptr = &trx->rsegs.m_redo;
 
         mtr_t mtr;
 
-        mtr.start();
+        mtr.start();  // 启动 mini-transaction
 
-        trx->rsegs.m_redo.rseg->latch();
+        trx->rsegs.m_redo.rseg->latch();  // 加锁 redo 回滚段
 
-        if (undo_ptr->insert_undo != nullptr) {
-          trx_undo_set_state_at_prepare(trx, undo_ptr->insert_undo, true, &mtr);
+        if (undo_ptr->insert_undo != nullptr) {  // 如果插入 undo 日志存在
+          trx_undo_set_state_at_prepare(trx, undo_ptr->insert_undo, true, &mtr);  // 设置插入 undo 日志状态
         }
 
-        if (undo_ptr->update_undo != nullptr) {
-          trx_undo_gtid_set(trx, undo_ptr->update_undo, false);
-          trx_undo_set_state_at_prepare(trx, undo_ptr->update_undo, true, &mtr);
+        if (undo_ptr->update_undo != nullptr) {  // 如果更新 undo 日志存在
+          trx_undo_gtid_set(trx, undo_ptr->update_undo, false);  // 设置 GTID
+          trx_undo_set_state_at_prepare(trx, undo_ptr->update_undo, true, &mtr);  // 设置更新 undo 日志状态
         }
-        trx->rsegs.m_redo.rseg->unlatch();
+        trx->rsegs.m_redo.rseg->unlatch();  // 解锁 redo 回滚段
 
         /* Persist the XA ROLLBACK, so that crash
         recovery will replay the rollback in case
         the redo log gets applied past this point. */
-        mtr.commit();
-        ut_ad(mtr.commit_lsn() > 0 || !mtr_t::s_logging.is_enabled());
+        /* 持久化 XA ROLLBACK，以便在崩溃恢复时重放回滚，
+           以防 redo 日志应用超过此点。 */
+        mtr.commit();  // 提交 mini-transaction
+        ut_ad(mtr.commit_lsn() > 0 || !mtr_t::s_logging.is_enabled());  // 断言提交 LSN 大于 0 或日志未启用
       }
 #ifdef ENABLED_DEBUG_SYNC
       if (trx->mysql_thd == nullptr) {
         /* We could be executing XA ROLLBACK after
         XA PREPARE and a server restart. */
+        /* 我们可能在 XA PREPARE 和服务器重启后执行 XA ROLLBACK。 */
       } else if (!trx_is_redo_rseg_updated(trx)) {
         /* innobase_close_connection() may roll back a
         transaction that did not generate any
@@ -249,32 +285,43 @@ static dberr_t trx_rollback_low(trx_t *trx) {
 
         NOTE: InnoDB will not know about the XID
         if no persistent undo log was generated. */
+        /* innobase_close_connection() 可能会回滚一个未生成任何持久 undo 日志的事务。
+           DEBUG_SYNC 会导致断开连接的线程断言失败。
+
+           注意：如果没有生成持久 undo 日志，InnoDB 将不知道 XID。 */
       } else {
-        DEBUG_SYNC_C("trx_xa_rollback");
+        DEBUG_SYNC_C("trx_xa_rollback");  // 调试同步点
       }
 #endif /* ENABLED_DEBUG_SYNC */
-      return (trx_rollback_for_mysql_low(trx));
+      return (trx_rollback_for_mysql_low(trx));  // 调用低级别回滚函数
 
-    case TRX_STATE_COMMITTED_IN_MEMORY:
-      check_trx_state(trx);
+    case TRX_STATE_COMMITTED_IN_MEMORY:  // 事务已在内存中提交
+      check_trx_state(trx);  // 检查事务状态
       break;
   }
 
-  ut_error;
+  ut_error;  // 触发错误
 }
 
-/** Rollback a transaction used in MySQL.
- @return error code or DB_SUCCESS */
+/**
+ * @brief 回滚 MySQL 中使用的事务。
+ * @brief Rollback a transaction used in MySQL.
+ *
+ * @param trx 事务对象
+ * @return 错误码或 DB_SUCCESS
+ * @return error code or DB_SUCCESS
+ */
 dberr_t trx_rollback_for_mysql(trx_t *trx) /*!< in/out: transaction */
 {
   /* Avoid the tracking of async rollback killer
   thread to enter into InnoDB. */
-  if (TrxInInnoDB::is_async_rollback(trx)) {
-    return (trx_rollback_low(trx));
+  /* 避免异步回滚 killer 线程进入 InnoDB 的跟踪。 */
+  if (TrxInInnoDB::is_async_rollback(trx)) {  // 如果事务是异步回滚
+    return (trx_rollback_low(trx));  // 直接调用低级别回滚函数
 
   } else {
-    TrxInInnoDB trx_in_innodb(trx, true);
-    return (trx_rollback_low(trx));
+    TrxInInnoDB trx_in_innodb(trx, true);  // 确保事务在 InnoDB 中
+    return (trx_rollback_low(trx));  // 调用低级别回滚函数
   }
 }
 

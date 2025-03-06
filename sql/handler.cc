@@ -925,19 +925,28 @@ err_no_hton_memory:
   return 1;
 }
 
+/**
+ * @brief 初始化存储引擎子系统。
+ * @brief Initialize the storage engine subsystem.
+ *
+ * @return 错误码，0 表示成功
+ * @return Error code, 0 indicates success
+ */
 int ha_init() {
-  int error = 0;
-  DBUG_TRACE;
+  int error = 0;  // 初始化错误码为 0
+  DBUG_TRACE;  // 调试跟踪
 
   /*
     Check if there is a transaction-capable storage engine besides the
     binary log.
+    检查是否存在除二进制日志外支持事务的存储引擎。
+    ha_init() 函数是存储引擎子系统的初始化函数，负责设置事务相关标志和保存点的分配大小。
   */
   opt_using_transactions =
-      se_plugin_array.size() > static_cast<ulong>(opt_bin_log);
-  savepoint_alloc_size += sizeof(SAVEPOINT);
+      se_plugin_array.size() > static_cast<ulong>(opt_bin_log);  // 设置是否使用事务的标志
+  savepoint_alloc_size += sizeof(SAVEPOINT);  // 增加保存点的分配大小
 
-  return error;
+  return error;  // 返回错误码
 }
 
 void ha_end() {
@@ -9081,17 +9090,21 @@ bool set_tx_isolation(THD *thd, enum_tx_isolation tx_isolation, bool one_shot) {
 }
 
 static bool post_recover_handlerton(THD *, plugin_ref plugin, void *) {
-  handlerton *hton = plugin_data<handlerton *>(plugin);
+  handlerton *hton = plugin_data<handlerton *>(plugin); // 获取插件数据
 
-  if (hton->state == SHOW_OPTION_YES && hton->post_recover)
-    hton->post_recover();
+  if (hton->state == SHOW_OPTION_YES && hton->post_recover) // 如果存储引擎状态为SHOW_OPTION_YES且定义了post_recover函数
+    hton->post_recover(); // 调用存储引擎的post_recover函数
 
-  return false;
+  return false; // 返回false
 }
 
+/**
+ * @brief 在所有存储引擎恢复完成后执行的后处理操作。
+ * @brief Perform post-recovery operations after all storage engines have recovered.
+ */
 void ha_post_recover(void) {
   (void)plugin_foreach(nullptr, post_recover_handlerton,
-                       MYSQL_STORAGE_ENGINE_PLUGIN, nullptr);
+                       MYSQL_STORAGE_ENGINE_PLUGIN, nullptr);  // 遍历所有存储引擎插件并调用 post_recover_handlerton 函数
 }
 
 void handler::ha_set_primary_handler(handler *primary_handler) {

@@ -521,25 +521,26 @@ dberr_t DDL_Log_Table::insert(const DDL_Record &record) {
 void DDL_Log_Table::convert_to_ddl_record(bool is_clustered, rec_t *rec,
                                           const ulint *offsets,
                                           DDL_Record &record) {
-  if (is_clustered) {
-    for (ulint i = 0; i < rec_offs_n_fields(offsets); i++) {
-      const byte *data;
-      ulint len;
+  if (is_clustered) { // 如果是聚簇索引
+    for (ulint i = 0; i < rec_offs_n_fields(offsets); i++) { // 遍历所有字段
+      const byte *data; // 字段数据指针
+      ulint len; // 字段长度
 
-      if (i == DATA_ROLL_PTR || i == DATA_TRX_ID) {
+      if (i == DATA_ROLL_PTR || i == DATA_TRX_ID) { // 跳过ROLL_PTR和TRX_ID字段
         continue;
       }
 
-      const dict_index_t *clust_index = m_table->first_index();
-      data = rec_get_nth_field(clust_index, rec, offsets, i, &len);
+      const dict_index_t *clust_index = m_table->first_index(); // 获取聚簇索引
+      data = rec_get_nth_field(clust_index, rec, offsets, i, &len); // 获取第i个字段的数据和长度
 
-      if (len != UNIV_SQL_NULL) {
-        set_field(data, i, len, record);
+      if (len != UNIV_SQL_NULL) { // 如果字段不为空
+        set_field(data, i, len, record); // 设置字段值到DDL记录
       }
     }
-  } else {
+  } else { // 如果是二级索引
     /* For secondary index, only the ID would be stored */
-    record.set_id(parse_id(m_table->first_index()->next(), rec, offsets));
+    /* 对于二级索引，只存储ID */
+    record.set_id(parse_id(m_table->first_index()->next(), rec, offsets)); // 解析ID并设置到DDL记录
   }
 }
 
@@ -624,42 +625,43 @@ ulint DDL_Log_Table::fetch_value(const byte *data, ulint offset) {
 }
 
 dberr_t DDL_Log_Table::search_all(DDL_Records &records) {
-  mtr_t mtr;
-  btr_pcur_t pcur;
-  rec_t *rec;
-  bool move = true;
-  ulint *offsets;
-  dict_index_t *index = m_table->first_index();
-  dberr_t error = DB_SUCCESS;
+  mtr_t mtr; // 创建mini-transaction对象
+  btr_pcur_t pcur; // 创建B-tree游标对象
+  rec_t *rec; // 创建记录指针
+  bool move = true; // 初始化移动标志为true
+  ulint *offsets; // 创建偏移量指针
+  dict_index_t *index = m_table->first_index(); // 获取表的第一个索引
+  dberr_t error = DB_SUCCESS; // 初始化错误码为成功
 
-  mtr_start(&mtr);
+  mtr_start(&mtr); // 开始mini-transaction
 
   /** Scan the index in decreasing order. */
-  pcur.open_at_side(false, index, BTR_SEARCH_LEAF, true, 0, &mtr);
+  /** 按降序扫描索引。 */
+  pcur.open_at_side(false, index, BTR_SEARCH_LEAF, true, 0, &mtr); // 在索引的叶子节点打开游标
 
-  for (; move == true; move = pcur.move_to_prev(&mtr)) {
-    rec = pcur.get_rec();
+  for (; move == true; move = pcur.move_to_prev(&mtr)) { // 遍历索引记录
+    rec = pcur.get_rec(); // 获取当前记录
 
-    if (page_rec_is_infimum(rec) || page_rec_is_supremum(rec)) {
+    if (page_rec_is_infimum(rec) || page_rec_is_supremum(rec)) { // 跳过infimum和supremum记录
       continue;
     }
 
     offsets = rec_get_offsets(rec, index, nullptr, ULINT_UNDEFINED,
-                              UT_LOCATION_HERE, &m_heap);
+                              UT_LOCATION_HERE, &m_heap); // 获取记录的偏移量
 
-    if (rec_get_deleted_flag(rec, dict_table_is_comp(m_table))) {
+    if (rec_get_deleted_flag(rec, dict_table_is_comp(m_table))) { // 跳过已删除的记录
       continue;
     }
 
-    DDL_Record *record = ut::new_withkey<DDL_Record>(UT_NEW_THIS_FILE_PSI_KEY);
-    convert_to_ddl_record(index->is_clustered(), rec, offsets, *record);
-    records.push_back(record);
+    DDL_Record *record = ut::new_withkey<DDL_Record>(UT_NEW_THIS_FILE_PSI_KEY); // 创建新的DDL记录对象
+    convert_to_ddl_record(index->is_clustered(), rec, offsets, *record); // 将记录转换为DDL记录
+    records.push_back(record); // 将DDL记录添加到记录列表中
   }
 
-  pcur.close();
-  mtr_commit(&mtr);
+  pcur.close(); // 关闭游标
+  mtr_commit(&mtr); // 提交mini-transaction
 
-  return (error);
+  return (error); // 返回错误码
 }
 
 dberr_t DDL_Log_Table::search(ulint thread_id, DDL_Records &records) {
@@ -1471,35 +1473,35 @@ dberr_t Log_DDL::delete_by_id(trx_t *trx, uint64_t id, bool dict_locked) {
 }
 
 dberr_t Log_DDL::replay_all() {
-  ut_ad(is_in_recovery());
+  ut_ad(is_in_recovery()); // 断言当前处于恢复状态
 
-  DDL_Log_Table ddl_log;
-  DDL_Records records;
+  DDL_Log_Table ddl_log; // 创建DDL日志表对象
+  DDL_Records records; // 创建DDL记录对象
 
-  dberr_t err = ddl_log.search_all(records);
-  ut_ad(err == DB_SUCCESS);
+  dberr_t err = ddl_log.search_all(records); // 搜索所有DDL记录
+  ut_ad(err == DB_SUCCESS); // 断言搜索成功
 
-  for (auto record : records) {
-    err = log_ddl->replay(*record);
-    if (err != DB_SUCCESS) {
-      break;
+  for (auto record : records) { // 遍历所有记录
+    err = log_ddl->replay(*record); // 重放每条记录
+    if (err != DB_SUCCESS) { // 如果重放失败
+      break; // 退出循环
     }
   }
 
-  if (err != DB_SUCCESS) {
-    return err;
+  if (err != DB_SUCCESS) { // 如果有错误
+    return err; // 返回错误码
   }
 
-  err = delete_by_ids(records);
-  ut_ad(err == DB_SUCCESS || err == DB_TOO_MANY_CONCURRENT_TRXS);
+  err = delete_by_ids(records); // 删除所有记录
+  ut_ad(err == DB_SUCCESS || err == DB_TOO_MANY_CONCURRENT_TRXS); // 断言删除成功或并发事务过多
 
-  for (auto record : records) {
-    if (record->get_deletable()) {
-      ut::delete_(record);
+  for (auto record : records) { // 遍历所有记录
+    if (record->get_deletable()) { // 如果记录可删除
+      ut::delete_(record); // 删除记录
     }
   }
 
-  return (err);
+  return (err); // 返回错误码
 }
 
 dberr_t Log_DDL::replay_by_thread_id(ulint thread_id) {
@@ -1573,97 +1575,100 @@ dberr_t Log_DDL::delete_by_ids(DDL_Records &records) {
 }
 
 dberr_t Log_DDL::replay(DDL_Record &record) {
-  dberr_t err = DB_SUCCESS;
+  dberr_t err = DB_SUCCESS; // 初始化错误码为成功
 
-  if (srv_print_ddl_logs) {
-    ib::info(ER_IB_MSG_654) << "DDL log replay : " << record;
+  if (srv_print_ddl_logs) { // 如果启用了DDL日志打印
+    ib::info(ER_IB_MSG_654) << "DDL log replay : " << record; // 记录信息：重放DDL日志
   }
 
-  switch (record.get_type()) {
-    case Log_Type::FREE_TREE_LOG:
+  switch (record.get_type()) { // 根据记录类型进行不同的处理
+    case Log_Type::FREE_TREE_LOG: // 如果是释放树日志
       replay_free_tree_log(record.get_space_id(), record.get_page_no(),
-                           record.get_index_id());
+                           record.get_index_id()); // 重放释放树日志
       break;
 
-    case Log_Type::DELETE_SPACE_LOG:
+    case Log_Type::DELETE_SPACE_LOG: // 如果是删除表空间日志
       replay_delete_space_log(record.get_space_id(),
-                              record.get_old_file_path());
+                              record.get_old_file_path()); // 重放删除表空间日志
       break;
 
-    case Log_Type::RENAME_SPACE_LOG:
+    case Log_Type::RENAME_SPACE_LOG: // 如果是重命名表空间日志
       replay_rename_space_log(record.get_space_id(), record.get_old_file_path(),
-                              record.get_new_file_path());
+                              record.get_new_file_path()); // 重放重命名表空间日志
       break;
 
-    case Log_Type::DROP_LOG:
-      replay_drop_log(record.get_table_id());
+    case Log_Type::DROP_LOG: // 如果是删除表日志
+      replay_drop_log(record.get_table_id()); // 重放删除表日志
       break;
 
-    case Log_Type::RENAME_TABLE_LOG:
+    case Log_Type::RENAME_TABLE_LOG: // 如果是重命名表日志
       replay_rename_table_log(record.get_old_file_path(),
-                              record.get_new_file_path());
+                              record.get_new_file_path()); // 重放重命名表日志
       break;
 
-    case Log_Type::REMOVE_CACHE_LOG:
+    case Log_Type::REMOVE_CACHE_LOG: // 如果是移除缓存日志
       replay_remove_cache_log(record.get_table_id(),
-                              record.get_new_file_path());
+                              record.get_new_file_path()); // 重放移除缓存日志
       break;
 
-    case Log_Type::ALTER_ENCRYPT_TABLESPACE_LOG:
-    case Log_Type::ALTER_UNENCRYPT_TABLESPACE_LOG:
-      err = replay_alter_encrypt_space_log(record);
+    case Log_Type::ALTER_ENCRYPT_TABLESPACE_LOG: // 如果是加密表空间日志
+    case Log_Type::ALTER_UNENCRYPT_TABLESPACE_LOG: // 如果是解密表空间日志
+      err = replay_alter_encrypt_space_log(record); // 重放加密/解密表空间日志
       break;
 
-    default:
-      ut_error;
+    default: // 如果是未知类型
+      ut_error; // 触发错误
   }
 
-  return (err);
+  return (err); // 返回错误码
 }
 
 void Log_DDL::replay_free_tree_log(space_id_t space_id, page_no_t page_no,
                                    ulint index_id) {
-  ut_ad(space_id != SPACE_UNKNOWN);
-  ut_ad(page_no != FIL_NULL);
+  ut_ad(space_id != SPACE_UNKNOWN); // 断言space_id不是未知
+  ut_ad(page_no != FIL_NULL); // 断言page_no不是空
 
-  bool found;
-  const page_size_t page_size(fil_space_get_page_size(space_id, &found));
+  bool found; // 定义一个布尔变量found
+  const page_size_t page_size(fil_space_get_page_size(space_id, &found)); // 获取表空间的页面大小
 
   /* Skip if it is a single table tablespace and the .ibd
   file is missing */
-  if (!found) {
-    if (srv_print_ddl_logs) {
+  /* 如果是单表表空间且.ibd文件丢失，则跳过 */
+  if (!found) { // 如果没有找到表空间
+    if (srv_print_ddl_logs) { // 如果启用了DDL日志打印
       ib::info(ER_IB_MSG_655)
-          << "DDL log replay : FREE tablespace " << space_id << " is missing.";
+          << "DDL log replay : FREE tablespace " << space_id << " is missing."; // 记录信息：释放表空间丢失
     }
 
-    return;
+    return; // 返回
   }
 
   /* This is required by dropping hash index afterwards. */
-  dict_sys_mutex_enter();
+  /* 这是为了之后删除哈希索引所需的。 */
+  dict_sys_mutex_enter(); // 进入字典系统互斥锁
 
-  DEBUG_SYNC_C("replay_free_tree_log");
+  DEBUG_SYNC_C("replay_free_tree_log"); // 调试同步
 
-  mtr_t mtr;
-  mtr_start(&mtr);
+  mtr_t mtr; // 定义一个mini-transaction对象
+  mtr_start(&mtr); // 开始mini-transaction
 
-  btr_free_if_exists(page_id_t(space_id, page_no), page_size, index_id, &mtr);
+  btr_free_if_exists(page_id_t(space_id, page_no), page_size, index_id, &mtr); // 如果存在则释放B树
 
-  mtr_commit(&mtr);
+  mtr_commit(&mtr); // 提交mini-transaction
 
-  dict_sys_mutex_exit();
+  dict_sys_mutex_exit(); // 退出字典系统互斥锁
 
-  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++);
+  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++); // 调试注入崩溃
 }
 
 void Log_DDL::replay_delete_space_log(space_id_t space_id,
                                       const char *file_path) {
-  THD *thd = current_thd;
+  THD *thd = current_thd; // 获取当前线程
 
-  if (fsp_is_undo_tablespace(space_id)) {
+  if (fsp_is_undo_tablespace(space_id)) { // 如果是撤销表空间
     /* Serialize this delete with all undo tablespace DDLs. */
-    mutex_enter(&undo::ddl_mutex);
+    /* 将此删除操作与所有撤销表空间的DDL操作序列化。 */
+    mutex_enter(&undo::ddl_mutex); // 进入撤销表空间的DDL互斥锁
 
     /* If this is called during DROP UNDO TABLESPACE, then the undo_space
     is already gone. But if this is called at startup after a crash, that
@@ -1674,78 +1679,90 @@ void Log_DDL::replay_delete_space_log(space_id_t space_id,
     logs to be added during the startup process up till now.  So whether
     we are at runtime or startup, we assert that the undo tablespace is
     empty and delete the undo::Tablespace object if it exists. */
-    undo::spaces->x_lock();
-    space_id_t space_num = undo::id2num(space_id);
-    undo::Tablespace *undo_space = undo::spaces->find(space_num);
-    if (undo_space != nullptr) {
-      ut_a(undo_space->is_empty());
-      undo::spaces->drop(undo_space);
+    /* 如果在DROP UNDO TABLESPACE期间调用此函数，则undo_space已经不存在。
+    但如果在崩溃后启动时调用此函数，则该内存对象可能存在。如果崩溃发生在文件删除之前，
+    则在启动时它会在srv_undo_tablespaces_open()中打开。然后在trx_rsegs_init()中，
+    任何不包含撤销日志的显式撤销表空间都会被设置为空。这防止了在启动过程中添加新的撤销日志。
+    因此，无论是在运行时还是在启动时，我们都断言撤销表空间为空，并删除存在的undo::Tablespace对象。 */
+    undo::spaces->x_lock(); // 加锁撤销表空间
+    space_id_t space_num = undo::id2num(space_id); // 获取撤销表空间编号
+    undo::Tablespace *undo_space = undo::spaces->find(space_num); // 查找撤销表空间
+    if (undo_space != nullptr) { // 如果撤销表空间存在
+      ut_a(undo_space->is_empty()); // 断言撤销表空间为空
+      undo::spaces->drop(undo_space); // 删除撤销表空间
     }
-    undo::spaces->x_unlock();
+    undo::spaces->x_unlock(); // 解锁撤销表空间
   }
 
-  if (thd != nullptr) {
+  if (thd != nullptr) { // 如果当前线程不为空
     /* For general tablespace, MDL on SDI tables is already
     acquired at innobase_drop_tablespace() and for file_per_table
     tablespace, MDL is acquired at row_drop_table_for_mysql() */
-    dict_sys_mutex_enter();
-    dict_sdi_remove_from_cache(space_id, nullptr, true);
-    dict_sys_mutex_exit();
+    /* 对于一般表空间，MDL在innobase_drop_tablespace()中已经获取，
+    对于file_per_table表空间，MDL在row_drop_table_for_mysql()中获取。 */
+    dict_sys_mutex_enter(); // 进入字典系统互斥锁
+    dict_sdi_remove_from_cache(space_id, nullptr, true); // 从缓存中移除SDI
+    dict_sys_mutex_exit(); // 退出字典系统互斥锁
   }
 
   /* A master key rotation blocks all DDLs using backup_lock, so it is assured
   that during CREATE/DROP TABLE, master key will not change. */
+  /* 主密钥轮换使用backup_lock阻止所有DDL操作，因此在CREATE/DROP TABLE期间，主密钥不会更改。 */
 
   DBUG_EXECUTE_IF("ddl_log_replay_delete_space_crash_before_drop",
-                  DBUG_SUICIDE(););
+                  DBUG_SUICIDE();); // 调试代码：在删除之前崩溃
 
   /* Update filename with correct partition case, of needed. */
-  std::string path_str(file_path);
-  std::string space_name;
-  fil_update_partition_name(space_id, 0, false, space_name, path_str);
-  file_path = path_str.c_str();
+  /* 如果需要，使用正确的分区大小写更新文件名。 */
+  std::string path_str(file_path); // 将文件路径转换为字符串
+  std::string space_name; // 定义空间名称字符串
+  fil_update_partition_name(space_id, 0, false, space_name, path_str); // 更新分区名称
+  file_path = path_str.c_str(); // 更新文件路径
 
-  row_drop_tablespace(space_id, file_path);
+  row_drop_tablespace(space_id, file_path); // 删除表空间
 
   /* If this is an undo space_id, allow the undo number for it
   to be reused. */
-  if (fsp_is_undo_tablespace(space_id)) {
-    undo::spaces->x_lock();
-    undo::unuse_space_id(space_id);
-    undo::spaces->x_unlock();
+  /* 如果这是一个撤销表空间ID，允许重新使用撤销编号。 */
+  if (fsp_is_undo_tablespace(space_id)) { // 如果是撤销表空间
+    undo::spaces->x_lock(); // 加锁撤销表空间
+    undo::unuse_space_id(space_id); // 取消使用撤销表空间ID
+    undo::spaces->x_unlock(); // 解锁撤销表空间
 
-    mutex_exit(&undo::ddl_mutex);
+    mutex_exit(&undo::ddl_mutex); // 退出撤销表空间的DDL互斥锁
   }
 
-  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++);
+  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++); // 调试注入崩溃
 }
 
 void Log_DDL::replay_rename_space_log(space_id_t space_id,
                                       const char *old_file_path,
                                       const char *new_file_path) {
-  bool ret;
-  page_id_t page_id(space_id, 0);
+  bool ret; // 定义一个布尔变量ret
+  page_id_t page_id(space_id, 0); // 创建page_id对象
 
-  std::string space_name;
+  std::string space_name; // 定义空间名称字符串
 
-  /* Update old filename with correct partition case, of needed. */
-  std::string old_path(old_file_path);
-  fil_update_partition_name(space_id, 0, false, space_name, old_path);
-  old_file_path = old_path.c_str();
+  /* Update old filename with correct partition case, if needed. */
+  /* 如果需要，使用正确的分区大小写更新旧文件名。 */
+  std::string old_path(old_file_path); // 将旧文件路径转换为字符串
+  fil_update_partition_name(space_id, 0, false, space_name, old_path); // 更新分区名称
+  old_file_path = old_path.c_str(); // 更新旧文件路径
 
-  /* Update new filename with correct partition case, of needed. */
-  std::string new_path(new_file_path);
-  fil_update_partition_name(space_id, 0, false, space_name, new_path);
-  new_file_path = new_path.c_str();
+  /* Update new filename with correct partition case, if needed. */
+  /* 如果需要，使用正确的分区大小写更新新文件名。 */
+  std::string new_path(new_file_path); // 将新文件路径转换为字符串
+  fil_update_partition_name(space_id, 0, false, space_name, new_path); // 更新分区名称
+  new_file_path = new_path.c_str(); // 更新新文件路径
 
-  ret = fil_op_replay_rename_for_ddl(page_id, old_file_path, new_file_path);
+  ret = fil_op_replay_rename_for_ddl(page_id, old_file_path, new_file_path); // 重放重命名操作
 
-  if (!ret && srv_print_ddl_logs) {
+  if (!ret && srv_print_ddl_logs) { // 如果重放失败且启用了DDL日志打印
     ib::info(ER_IB_MSG_656) << "DDL log replay : RENAME from " << old_file_path
-                            << " to " << new_file_path << " failed";
+                            << " to " << new_file_path << " failed"; // 记录信息：重放重命名操作失败
   }
 
-  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++);
+  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++); // 调试注入崩溃
 }
 
 static dberr_t replace_and_insert(DDL_Record *record) {
@@ -1776,130 +1793,140 @@ static dberr_t replace_and_insert(DDL_Record *record) {
 }
 
 dberr_t Log_DDL::replay_alter_encrypt_space_log(DDL_Record &record) {
-  dberr_t error = DB_SUCCESS;
+  dberr_t error = DB_SUCCESS; // 初始化错误码为成功
   /* Normal operation, we shouldn't come here during post_ddl */
-  ut_ad(is_in_recovery());
+  /* 正常操作，我们不应该在post_ddl期间来到这里 */
+  ut_ad(is_in_recovery()); // 断言当前处于恢复状态
 
-  error = replace_and_insert(&record);
-  if (error != DB_SUCCESS) {
-    return error;
+  error = replace_and_insert(&record); // 替换并插入记录
+  if (error != DB_SUCCESS) { // 如果操作失败
+    return error; // 返回错误码
   }
-  ut_ad(record.get_thread_id() == ULINT_MAX);
+  ut_ad(record.get_thread_id() == ULINT_MAX); // 断言记录的线程ID为最大值
 
   /* We could have resume encryption execution one by one for each tablespace
   from here by calling SQL API to run the query. But then it would be blocking
   server bootstrap. We need to resume this encryption in BG thread so we need
   to just make a note of this space and operation here and don't do any real
   operation. */
-  ts_encrypt_ddl_records.push_back(&record);
+  /* 我们可以通过调用SQL API来运行查询，从这里逐个恢复每个表空间的加密执行。
+  但这会阻塞服务器引导。我们需要在后台线程中恢复这个加密，所以我们只需要在这里记录这个空间和操作，
+  而不做任何实际操作。 */
+  ts_encrypt_ddl_records.push_back(&record); // 将记录添加到加密DDL记录列表中
 
   /* Make sure not to delete this record till resume operation finishes.
   This is to make sure that if there is a crash before that, we can resume
   encryption in the next restart. */
-  record.set_deletable(false);
+  /* 确保在恢复操作完成之前不要删除此记录。
+  这是为了确保如果在此之前发生崩溃，我们可以在下次重启时恢复加密。 */
+  record.set_deletable(false); // 设置记录不可删除
 
-  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++);
-  return error;
+  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++); // 调试注入崩溃
+  return error; // 返回错误码
 }
 
 void Log_DDL::replay_drop_log(const table_id_t table_id) {
-  mutex_enter(&dict_persist->mutex);
-  ut_d(dberr_t error =) dict_persist->table_buffer->remove(table_id);
-  ut_ad(error == DB_SUCCESS);
-  mutex_exit(&dict_persist->mutex);
+  mutex_enter(&dict_persist->mutex); // 进入字典持久化互斥锁
+  ut_d(dberr_t error =) dict_persist->table_buffer->remove(table_id); // 从表缓冲区中移除表ID
+  ut_ad(error == DB_SUCCESS); // 断言操作成功
+  mutex_exit(&dict_persist->mutex); // 退出字典持久化互斥锁
 
-  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++);
+  DBUG_INJECT_CRASH("ddl_log_crash_after_replay", crash_after_replay_counter++); // 调试注入崩溃
 }
 
 void Log_DDL::replay_rename_table_log(const char *old_name,
                                       const char *new_name) {
-  if (is_in_recovery()) {
-    if (srv_print_ddl_logs) {
+  if (is_in_recovery()) { // 如果当前处于恢复状态
+    if (srv_print_ddl_logs) { // 如果启用了DDL日志打印
       ib::info(ER_IB_MSG_657) << "DDL log replay : in recovery,"
-                              << " skip RENAME TABLE";
+                              << " skip RENAME TABLE"; // 记录信息：在恢复过程中，跳过重命名表操作
     }
 
-    return;
+    return; // 返回
   }
 
   trx_t *trx;
-  trx = trx_allocate_for_background();
-  trx->mysql_thd = current_thd;
-  trx_start_if_not_started(trx, true, UT_LOCATION_HERE);
+  trx = trx_allocate_for_background(); // 为后台操作分配事务
+  trx->mysql_thd = current_thd; // 设置当前线程
+  trx_start_if_not_started(trx, true, UT_LOCATION_HERE); // 如果事务未启动，则启动事务
 
-  row_mysql_lock_data_dictionary(trx, UT_LOCATION_HERE);
-  trx_set_dict_operation(trx, TRX_DICT_OP_TABLE);
+  row_mysql_lock_data_dictionary(trx, UT_LOCATION_HERE); // 锁定数据字典
+  trx_set_dict_operation(trx, TRX_DICT_OP_TABLE); // 设置事务为表操作
 
   /* Convert partition table name DDL log, if needed. Required if
   upgrading a crashed database. */
-  std::string old_table(old_name);
-  dict_name::rebuild(old_table);
-  old_name = old_table.c_str();
+  /* 如果需要，转换分区表名称DDL日志。如果升级崩溃的数据库，这是必需的。 */
+  std::string old_table(old_name); // 将旧表名转换为字符串
+  dict_name::rebuild(old_table); // 重建表名
+  old_name = old_table.c_str(); // 更新旧表名
 
-  std::string new_table(new_name);
-  dict_name::rebuild(new_table);
-  new_name = new_table.c_str();
+  std::string new_table(new_name); // 将新表名转换为字符串
+  dict_name::rebuild(new_table); // 重建表名
+  new_name = new_table.c_str(); // 更新新表名
 
   dberr_t err;
-  err = row_rename_table_for_mysql(old_name, new_name, nullptr, trx, true);
+  err = row_rename_table_for_mysql(old_name, new_name, nullptr, trx, true); // 重命名表
 
   dict_table_t *table;
-  table = dd_table_open_on_name_in_mem(new_name, true);
-  if (table != nullptr) {
-    dict_table_ddl_release(table);
-    dd_table_close(table, nullptr, nullptr, true);
+  table = dd_table_open_on_name_in_mem(new_name, true); // 在内存中打开新表名对应的表
+  if (table != nullptr) { // 如果表存在
+    dict_table_ddl_release(table); // 释放表的DDL锁
+    dd_table_close(table, nullptr, nullptr, true); // 关闭表
   }
 
-  row_mysql_unlock_data_dictionary(trx);
+  row_mysql_unlock_data_dictionary(trx); // 解锁数据字典
 
-  trx_commit_for_mysql(trx);
-  trx_free_for_background(trx);
+  trx_commit_for_mysql(trx); // 提交事务
+  trx_free_for_background(trx); // 释放事务
 
-  if (err != DB_SUCCESS) {
-    if (srv_print_ddl_logs) {
+  if (err != DB_SUCCESS) { // 如果操作失败
+    if (srv_print_ddl_logs) { // 如果启用了DDL日志打印
       ib::info(ER_IB_MSG_658)
           << "DDL log replay : rename table"
-          << " in cache from " << old_name << " to " << new_name;
+          << " in cache from " << old_name << " to " << new_name; // 记录信息：重命名表在缓存中失败
     }
   } else {
     /* TODO: Once we get rid of dict_operation_lock,
     we may consider to do this in row_rename_table_for_mysql,
     so no need to worry this rename here */
+    /* TODO: 一旦我们摆脱了dict_operation_lock，我们可以考虑在row_rename_table_for_mysql中执行此操作，
+    因此无需在此处担心重命名。 */
     char errstr[512];
 
-    dict_stats_rename_table(old_name, new_name, errstr, sizeof(errstr));
+    dict_stats_rename_table(old_name, new_name, errstr, sizeof(errstr)); // 重命名表的统计信息
   }
 }
 
 void Log_DDL::replay_remove_cache_log(table_id_t table_id,
                                       const char *table_name) {
-  if (is_in_recovery()) {
-    if (srv_print_ddl_logs) {
+  if (is_in_recovery()) { // 如果当前处于恢复状态
+    if (srv_print_ddl_logs) { // 如果启用了DDL日志打印
       ib::info(ER_IB_MSG_659) << "DDL log replay : in recovery,"
-                              << " skip REMOVE CACHE";
+                              << " skip REMOVE CACHE"; // 记录信息：在恢复过程中，跳过移除缓存操作
     }
 
-    return;
+    return; // 返回
   }
 
   dict_table_t *table;
 
-  table = dd_table_open_on_id_in_mem(table_id, false);
+  table = dd_table_open_on_id_in_mem(table_id, false); // 在内存中打开表ID对应的表
 
   /* Convert partition table name DDL log, if needed. Required if
   upgrading a crashed database. */
-  std::string table_str(table_name);
-  dict_name::rebuild(table_str);
-  table_name = table_str.c_str();
+  /* 如果需要，转换分区表名称DDL日志。如果升级崩溃的数据库，这是必需的。 */
+  std::string table_str(table_name); // 将表名转换为字符串
+  dict_name::rebuild(table_str); // 重建表名
+  table_name = table_str.c_str(); // 更新表名
 
-  if (table != nullptr) {
-    ut_ad(strcmp(table->name.m_name, table_name) == 0);
+  if (table != nullptr) { // 如果表存在
+    ut_ad(strcmp(table->name.m_name, table_name) == 0); // 断言表名匹配
 
-    dict_sys_mutex_enter();
-    dd_table_close(table, nullptr, nullptr, true);
-    btr_drop_ahi_for_table(table);
-    dict_table_remove_from_cache(table);
-    dict_sys_mutex_exit();
+    dict_sys_mutex_enter(); // 进入字典系统互斥锁
+    dd_table_close(table, nullptr, nullptr, true); // 关闭表
+    btr_drop_ahi_for_table(table); // 删除表的自适应哈希索引
+    dict_table_remove_from_cache(table); // 从缓存中移除表
+    dict_sys_mutex_exit(); // 退出字典系统互斥锁
   }
 }
 
@@ -1941,21 +1968,21 @@ dberr_t Log_DDL::post_ddl(THD *thd) {
 }
 
 dberr_t Log_DDL::recover() {
-  if (srv_read_only_mode || srv_force_recovery > 0) {
-    return (DB_SUCCESS);
+  if (srv_read_only_mode || srv_force_recovery > 0) { // 如果是只读模式或恢复级别大于0
+    return (DB_SUCCESS); // 返回成功
   }
 
-  ib::info(ER_IB_MSG_662) << "DDL log recovery : begin";
+  ib::info(ER_IB_MSG_662) << "DDL log recovery : begin"; // 记录信息：DDL日志恢复开始
 
-  thread_local_ddl_log_replay = true;
-  s_in_recovery = true;
+  thread_local_ddl_log_replay = true; // 设置线程局部变量，表示正在重放DDL日志
+  s_in_recovery = true; // 设置全局变量，表示正在恢复
 
-  dberr_t err = replay_all();
+  dberr_t err = replay_all(); // 重放所有DDL日志
 
-  thread_local_ddl_log_replay = false;
-  s_in_recovery = false;
+  thread_local_ddl_log_replay = false; // 重置线程局部变量
+  s_in_recovery = false; // 重置全局变量
 
-  ib::info(ER_IB_MSG_663) << "DDL log recovery : end";
+  ib::info(ER_IB_MSG_663) << "DDL log recovery : end"; // 记录信息：DDL日志恢复结束
 
-  return (err);
+  return (err); // 返回错误码
 }

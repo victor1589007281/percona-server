@@ -3675,27 +3675,41 @@ MYSQL_BIN_LOG::~MYSQL_BIN_LOG() { delete m_binlog_file; }
 
 /* this is called only once */
 
+/**
+ * @brief 清理二进制日志相关的资源。
+ * @brief Clean up resources related to the binary log.
+ */
 void MYSQL_BIN_LOG::cleanup() {
-  DBUG_TRACE;
-  if (inited) {
-    inited = false;
+  DBUG_TRACE;  // 调试跟踪
+
+  if (inited) {  // 如果二进制日志已初始化
+    inited = false;  // 标记为未初始化
+
+    // 关闭二进制日志文件，释放相关锁和条件变量
     close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT, true /*need_lock_log=true*/,
           true /*need_lock_index=true*/);
+
+    // 销毁互斥锁
     mysql_mutex_destroy(&LOCK_log);
     mysql_mutex_destroy(&LOCK_index);
     mysql_mutex_destroy(&LOCK_commit);
     mysql_mutex_destroy(&LOCK_sync);
     mysql_mutex_destroy(&LOCK_binlog_end_pos);
     mysql_mutex_destroy(&LOCK_xids);
+
+    // 销毁条件变量
     mysql_cond_destroy(&update_cond);
     mysql_cond_destroy(&m_prep_xids_cond);
+
+    // 如果不是中继日志，则反初始化提交阶段管理器
     if (!is_relay_log) {
       Commit_stage_manager::get_instance().deinit();
     }
   }
 
+  // 删除二进制日志文件对象
   delete m_binlog_file;
-  m_binlog_file = nullptr;
+  m_binlog_file = nullptr;  // 将指针置为空
 }
 
 void MYSQL_BIN_LOG::init_pthread_objects() {
@@ -3976,34 +3990,48 @@ err:
   return true;
 }
 
+/**
+ * @brief 打开二进制日志的索引文件。
+ * @brief Open the index file for the binary log.
+ *
+ * @param index_file_name_arg 索引文件的名称
+ * @param log_name 日志文件的名称
+ * @param need_lock_index 是否需要锁定索引文件
+ * @return 是否发生错误
+ * @return Whether an error occurred
+ */
 bool MYSQL_BIN_LOG::open_index_file(const char *index_file_name_arg,
                                     const char *log_name,
                                     bool need_lock_index) {
-  bool error = false;
-  File index_file_nr = -1;
+  bool error = false;  // 错误标志
+  File index_file_nr = -1;  // 索引文件的文件描述符
+
   if (need_lock_index)
-    mysql_mutex_lock(&LOCK_index);
+    mysql_mutex_lock(&LOCK_index);  // 如果需要锁定索引文件，则加锁
   else
-    mysql_mutex_assert_owner(&LOCK_index);
+    mysql_mutex_assert_owner(&LOCK_index);  // 否则断言当前线程已经持有锁
 
   /*
     First open of this class instance
     Create an index file that will hold all file names uses for logging.
     Add new entries to the end of it.
+    首次打开该类的实例
+    创建一个索引文件，用于保存所有日志文件的名称。
+    将新条目添加到文件的末尾。
   */
-  myf opt = MY_UNPACK_FILENAME;
+  myf opt = MY_UNPACK_FILENAME;  // 文件名解析选项
 
-  if (my_b_inited(&index_file)) goto end;
+  if (my_b_inited(&index_file)) goto end;  // 如果索引文件已经初始化，则跳转到结束
 
   if (!index_file_name_arg) {
-    index_file_name_arg = log_name;  // Use same basename for index file
-    opt = MY_UNPACK_FILENAME | MY_REPLACE_EXT;
+    index_file_name_arg = log_name;  // 如果没有指定索引文件名，则使用日志文件的名称
+    opt = MY_UNPACK_FILENAME | MY_REPLACE_EXT;  // 设置文件名解析选项
   }
   fn_format(index_file_name, index_file_name_arg, mysql_data_home, ".index",
-            opt);
+            opt);  // 格式化索引文件名
 
   if (set_crash_safe_index_file_name(index_file_name_arg)) {
-    error = true;
+    error = true;  // 设置崩溃安全索引文件名失败，标记错误
     goto end;
   }
 
@@ -4011,13 +4039,15 @@ bool MYSQL_BIN_LOG::open_index_file(const char *index_file_name_arg,
     We need move crash_safe_index_file to index_file if the index_file
     does not exist and crash_safe_index_file exists when mysqld server
     restarts.
+    如果索引文件不存在且崩溃安全索引文件存在，则在 MySQL 服务器重启时，
+    需要将崩溃安全索引文件移动到索引文件。
   */
   if (my_access(index_file_name, F_OK) &&
       !my_access(crash_safe_index_file_name, F_OK) &&
       my_rename(crash_safe_index_file_name, index_file_name, MYF(MY_WME))) {
     LogErr(ERROR_LEVEL, ER_BINLOG_CANT_MOVE_TMP_TO_INDEX,
-           "MYSQL_BIN_LOG::open_index_file");
-    error = true;
+           "MYSQL_BIN_LOG::open_index_file");  // 记录错误日志
+    error = true;  // 标记错误
     goto end;
   }
 
@@ -4035,8 +4065,8 @@ bool MYSQL_BIN_LOG::open_index_file(const char *index_file_name_arg,
       TODO: file creation should be done with mysql_file_create()
       not mysql_file_open().
     */
-    if (index_file_nr >= 0) mysql_file_close(index_file_nr, MYF(0));
-    error = true;
+    if (index_file_nr >= 0) mysql_file_close(index_file_nr, MYF(0));  // 关闭文件
+    error = true;  // 标记错误
     goto end;
   }
 
@@ -4046,20 +4076,23 @@ bool MYSQL_BIN_LOG::open_index_file(const char *index_file_name_arg,
     the index but not purged from the file system due to a crash or purge
     any binary log file that was created but not register in the index
     due to a crash.
+    通过清除未注册的二进制日志文件来同步索引。
+    换句话说，清除那些从索引中删除但由于崩溃未从文件系统中清除的二进制日志文件，
+    或者清除那些已创建但由于崩溃未在索引中注册的二进制日志文件。
   */
 
   if (set_purge_index_file_name(index_file_name_arg) ||
       open_purge_index_file(false) ||
       purge_index_entry(nullptr, nullptr, false) || close_purge_index_file() ||
       DBUG_EVALUATE_IF("fault_injection_recovering_index", 1, 0)) {
-    LogErr(ERROR_LEVEL, ER_BINLOG_FAILED_TO_SYNC_INDEX_FILE);
-    error = true;
+    LogErr(ERROR_LEVEL, ER_BINLOG_FAILED_TO_SYNC_INDEX_FILE);  // 记录错误日志
+    error = true;  // 标记错误
     goto end;
   }
 
 end:
-  if (need_lock_index) mysql_mutex_unlock(&LOCK_index);
-  return error;
+  if (need_lock_index) mysql_mutex_unlock(&LOCK_index);  // 如果需要解锁索引文件，则解锁
+  return error;  // 返回错误标志
 }
 
 /**

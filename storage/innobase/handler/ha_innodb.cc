@@ -4385,81 +4385,89 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
 }
 
 /** DDL crash recovery: process the records recovered from "log_ddl" table */
+/** DDL 崩溃恢复：处理从 "log_ddl" 表中恢复的记录 */
 static void innobase_post_recover() {
-  if (srv_force_recovery < SRV_FORCE_NO_TRX_UNDO) {
+  if (srv_force_recovery < SRV_FORCE_NO_TRX_UNDO) { // 如果恢复级别小于 SRV_FORCE_NO_TRX_UNDO
     DBUG_EXECUTE_IF("DDL_Log_remove_inject_startup_error_2",
-                    srv_inject_too_many_concurrent_trxs = true;);
+                    srv_inject_too_many_concurrent_trxs = true;); // 调试代码：注入并发事务过多的错误
 
-    dberr_t err = log_ddl->recover();
+    dberr_t err = log_ddl->recover(); // 从 log_ddl 表中恢复记录
 
     /* Abort post recovery startup if this is not successful. */
-    if (err != DB_SUCCESS) {
-      ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_POST_RECOVER_DDL_LOG_RECOVER);
+    /* 如果恢复不成功，则中止后恢复启动。 */
+    if (err != DB_SUCCESS) { // 如果恢复失败
+      ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_POST_RECOVER_DDL_LOG_RECOVER); // 记录致命错误并中止
     }
   }
 
-  fil_free_scanned_files();
+  fil_free_scanned_files(); // 释放扫描的文件
 
   /* If undo tablespaces are to be encrypted, encrypt them now */
-  if (srv_undo_log_encrypt) {
-    ut_ad(Encryption::check_keyring());
+  /* 如果撤销表空间需要加密，现在进行加密 */
+  if (srv_undo_log_encrypt) { // 如果撤销日志需要加密
+    ut_ad(Encryption::check_keyring()); // 检查加密密钥环
 
     /* There would be at least 2 UNDO tablespaces */
-    ut_ad(undo::spaces->size() >= FSP_IMPLICIT_UNDO_TABLESPACES);
+    /* 至少会有两个撤销表空间 */
+    ut_ad(undo::spaces->size() >= FSP_IMPLICIT_UNDO_TABLESPACES); // 确保撤销表空间数量不少于两个
 
-    if (srv_read_only_mode) {
-      ib::error(ER_IB_MSG_1051);
-      srv_undo_log_encrypt = false;
+    if (srv_read_only_mode) { // 如果是只读模式
+      ib::error(ER_IB_MSG_1051); // 记录错误
+      srv_undo_log_encrypt = false; // 禁用撤销日志加密
     } else {
       /* Enable encryption for UNDO tablespaces */
-      mutex_enter(&undo::ddl_mutex);
-      if (srv_enable_undo_encryption(nullptr)) {
-        srv_undo_log_encrypt = false;
-        ut_d(ut_error);
+      /* 启用撤销表空间的加密 */
+      mutex_enter(&undo::ddl_mutex); // 进入撤销表空间的DDL互斥锁
+      if (srv_enable_undo_encryption(nullptr)) { // 启用撤销表空间加密
+        srv_undo_log_encrypt = false; // 如果失败，禁用撤销日志加密
+        ut_d(ut_error); // 调试代码：记录错误
       }
-      mutex_exit(&undo::ddl_mutex);
+      mutex_exit(&undo::ddl_mutex); // 退出撤销表空间的DDL互斥锁
 
       /* We have to ensure that the first page of the undo tablespaces gets
        flushed to disk.  Otherwise during recovery, since we read the first
        page without applying the redo logs, it will be determined that
        encryption is off. */
-      buf_flush_sync_all_buf_pools();
+      /* 我们必须确保撤销表空间的第一页被刷新到磁盘。否则在恢复期间，由于我们在不应用重做日志的情况下读取第一页，会被认为加密是关闭的。 */
+      buf_flush_sync_all_buf_pools(); // 同步刷新所有缓冲池
     }
   }
 
   /* If redo log is to be encrypted, encrypt it now */
-  if (srv_redo_log_encrypt) {
-    ut_ad(Encryption::check_keyring());
+  /* 如果重做日志需要加密，现在进行加密 */
+  if (srv_redo_log_encrypt) { // 如果重做日志需要加密
+    ut_ad(Encryption::check_keyring()); // 检查加密密钥环
 
-    if (srv_read_only_mode) {
-      ib::error(ER_IB_MSG_LOG_FILES_CANNOT_ENCRYPT_IN_READ_ONLY);
-      srv_redo_log_encrypt = false;
+    if (srv_read_only_mode) { // 如果是只读模式
+      ib::error(ER_IB_MSG_LOG_FILES_CANNOT_ENCRYPT_IN_READ_ONLY); // 记录错误
+      srv_redo_log_encrypt = false; // 禁用重做日志加密
     } else {
       /* Enable encryption for REDO log */
-      if (srv_enable_redo_encryption()) {
-        srv_redo_log_encrypt = false;
-        ut_d(ut_error);
+      /* 启用重做日志的加密 */
+      if (srv_enable_redo_encryption()) { // 启用重做日志加密
+        srv_redo_log_encrypt = false; // 如果失败，禁用重做日志加密
+        ut_d(ut_error); // 调试代码：记录错误
       }
     }
   }
 
-  if (srv_read_only_mode || srv_force_recovery >= SRV_FORCE_NO_BACKGROUND) {
-    purge_sys->state = PURGE_STATE_DISABLED;
-    return;
+  if (srv_read_only_mode || srv_force_recovery >= SRV_FORCE_NO_BACKGROUND) { // 如果是只读模式或恢复级别大于等于 SRV_FORCE_NO_BACKGROUND
+    purge_sys->state = PURGE_STATE_DISABLED; // 禁用清除系统
+    return; // 返回
   }
 
-  Auto_THD thd;
-  if (dd_tablespace_update_cache(thd.thd)) {
-    ut_d(ut_error);
+  Auto_THD thd; // 自动线程处理
+  if (dd_tablespace_update_cache(thd.thd)) { // 更新表空间缓存
+    ut_d(ut_error); // 调试代码：记录错误
   }
 
-  srv_start_threads_after_ddl_recovery();
+  srv_start_threads_after_ddl_recovery(); // 在DDL恢复后启动线程
 
-  ut_a(innodb_inited);
+  ut_a(innodb_inited); // 确保InnoDB已初始化
 
-  if (!opt_initialize) {
-    if (!log_pfs_create_tables()) {
-      ib::warn(ER_IB_MSG_LOG_PFS_CREATE_TABLES_FAILED);
+  if (!opt_initialize) { // 如果不是初始化选项
+    if (!log_pfs_create_tables()) { // 创建PFS日志表
+      ib::warn(ER_IB_MSG_LOG_PFS_CREATE_TABLES_FAILED); // 记录警告
     }
   }
 }
@@ -6553,31 +6561,39 @@ static int innobase_rollback(handlerton *hton, /*!< in: InnoDB handlerton */
   return convert_error_code_to_mysql(error, 0, trx->mysql_thd);
 }
 
-/** Rolls back a transaction
- @return 0 or error number */
+/**
+ * @brief 回滚一个事务。
+ * @brief Rolls back a transaction.
+ *
+ * @param trx 事务对象
+ * @return 0 或错误码
+ * @return 0 or error number
+ */
 static int innobase_rollback_trx(trx_t *trx) /*!< in: transaction */
 {
-  dberr_t error = DB_SUCCESS;
+  dberr_t error = DB_SUCCESS;  // 初始化错误码为成功
 
-  DBUG_TRACE;
-  DBUG_PRINT("trans", ("aborting transaction"));
+  DBUG_TRACE;  // 调试跟踪
+  DBUG_PRINT("trans", ("aborting transaction"));  // 打印调试信息
 
-  innobase_srv_conc_force_exit_innodb(trx);
+  innobase_srv_conc_force_exit_innodb(trx);  // 强制退出 InnoDB 并发控制
 
   /* If we had reserved the auto-inc lock for some table (if
   we come here to roll back the latest SQL statement) we
   release it now before a possibly lengthy rollback */
+  /* 如果我们为某个表保留了自增锁（如果我们是来回滚最新的 SQL 语句），
+     我们现在在可能耗时的回滚之前释放它 */
   if (!TrxInInnoDB::is_aborted(trx)) {
-    lock_unlock_table_autoinc(trx);
+    lock_unlock_table_autoinc(trx);  // 释放自增锁
   }
 
-  if (trx_is_rseg_updated(trx)) {
-    error = trx_rollback_for_mysql(trx);
+  if (trx_is_rseg_updated(trx)) {  // 如果事务更新了回滚段
+    error = trx_rollback_for_mysql(trx);  // 回滚事务
   } else {
-    trx->will_lock = 0;
+    trx->will_lock = 0;  // 否则，标记事务不会持有锁
   }
 
-  return convert_error_code_to_mysql(error, 0, trx->mysql_thd);
+  return convert_error_code_to_mysql(error, 0, trx->mysql_thd);  // 将错误码转换为 MySQL 错误码
 }
 
 /** Rolls back a transaction to a savepoint.
@@ -20873,21 +20889,30 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
   return (0);
 }
 
-/** This function is used to recover X/Open XA distributed transactions.
- @return number of prepared transactions stored in xid_list */
+/**
+ * @brief 恢复 X/Open XA 分布式事务。
+ * @brief Recover X/Open XA distributed transactions.
+ *
+ * @param hton InnoDB handlerton 结构体
+ * @param txn_list 准备好的事务列表
+ * @param len 事务列表的槽数
+ * @param mem_root 用于分配表名的内存
+ * @return 存储在 xid_list 中的已准备事务的数量
+ * @return Number of prepared transactions stored in xid_list
+ */
 static int innobase_xa_recover(
-    handlerton *hton,         /*!< in: InnoDB handlerton */
-    XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
-    uint len,                 /*!< in: number of slots in xid_list */
-    MEM_ROOT *mem_root)       /*!< in: memory for table names */
+  handlerton *hton,         /*!< in: InnoDB handlerton */
+  XA_recover_txn *txn_list, /*!< in/out: prepared transactions */
+  uint len,                 /*!< in: number of slots in xid_list */
+  MEM_ROOT *mem_root)       /*!< in: memory for table names */
 {
-  assert(hton == innodb_hton_ptr);
+assert(hton == innodb_hton_ptr);  // 断言 hton 是 InnoDB 的 handlerton 结构体
 
-  if (len == 0 || txn_list == nullptr) {
-    return (0);
-  }
+if (len == 0 || txn_list == nullptr) {
+  return (0);  // 如果 len 为 0 或 txn_list 为空，返回 0
+}
 
-  return (trx_recover_for_mysql(txn_list, len, mem_root));
+return (trx_recover_for_mysql(txn_list, len, mem_root));  // 调用 trx_recover_for_mysql 恢复事务
 }
 
 static int innobase_xa_recover_prepared_in_tc(handlerton *hton,
@@ -20897,56 +20922,69 @@ static int innobase_xa_recover_prepared_in_tc(handlerton *hton,
   return (trx_recover_tc_for_mysql(xa_list));
 }
 
-/** This function is used to commit one X/Open XA distributed transaction
- which is in the prepared state
- @return 0 or error number */
+/**
+ * @brief 提交一个处于 PREPARED 状态的 X/Open XA 分布式事务。
+ * @brief Commit one X/Open XA distributed transaction which is in the prepared state.
+ *
+ * @param hton InnoDB handlerton 结构体
+ * @param xid X/Open XA 事务标识符
+ * @return 0 或错误码
+ * @return 0 or error number
+ */
 static xa_status_code innobase_commit_by_xid(
     handlerton *hton, XID *xid) /*!< in: X/Open XA transaction identification */
 {
-  assert(hton == innodb_hton_ptr);
+  assert(hton == innodb_hton_ptr);  // 断言 hton 是 InnoDB 的 handlerton 结构体
 
-  trx_t *trx = trx_get_trx_by_xid(xid);
+  trx_t *trx = trx_get_trx_by_xid(xid);  // 根据 XID 获取事务对象
 
-  if (trx != nullptr) {
-    TrxInInnoDB trx_in_innodb(trx);
+  if (trx != nullptr) {  // 如果事务对象存在
+    TrxInInnoDB trx_in_innodb(trx);  // 确保事务在 InnoDB 中
 
-    innobase_commit_low(trx);
-    ut_ad(trx->mysql_thd == nullptr);
+    innobase_commit_low(trx);  // 提交事务
+    ut_ad(trx->mysql_thd == nullptr);  // 断言事务的 MySQL 线程句柄为空
     /* use cases are: disconnected xa, slave xa, recovery */
-    trx_deregister_from_2pc(trx);
-    ut_ad(!trx->will_lock); /* trx cache requirement */
-    trx_free_for_background(trx);
+    /* 使用场景包括：断开的 XA、从库的 XA、恢复 */
+    trx_deregister_from_2pc(trx);  // 从事务两阶段提交系统中注销事务
+    ut_ad(!trx->will_lock); /* trx cache requirement */  // 断言事务不会持有锁
+    trx_free_for_background(trx);  // 释放事务资源
 
-    return (XA_OK);
+    return (XA_OK);  // 返回提交成功
   } else {
-    return (XAER_NOTA);
+    return (XAER_NOTA);  // 如果事务不存在，返回 XAER_NOTA
   }
 }
 
-/** This function is used to rollback one X/Open XA distributed transaction
- which is in the prepared state
- @return 0 or error number */
+/**
+ * @brief 回滚一个处于 PREPARED 状态的 X/Open XA 分布式事务。
+ * @brief Rollback one X/Open XA distributed transaction which is in the prepared state.
+ *
+ * @param hton InnoDB handlerton 结构体
+ * @param xid X/Open XA 事务标识符
+ * @return 0 或错误码
+ * @return 0 or error number
+ */
 static xa_status_code innobase_rollback_by_xid(
     handlerton *hton, /*!< in: InnoDB handlerton */
     XID *xid)         /*!< in: X/Open XA transaction
                       identification */
 {
-  assert(hton == innodb_hton_ptr);
+  assert(hton == innodb_hton_ptr);  // 断言 hton 是 InnoDB 的 handlerton 结构体
 
-  trx_t *trx = trx_get_trx_by_xid(xid);
+  trx_t *trx = trx_get_trx_by_xid(xid);  // 根据 XID 获取事务对象
 
-  if (trx != nullptr) {
-    TrxInInnoDB trx_in_innodb(trx);
+  if (trx != nullptr) {  // 如果事务对象存在
+    TrxInInnoDB trx_in_innodb(trx);  // 确保事务在 InnoDB 中
 
-    int ret = innobase_rollback_trx(trx);
+    int ret = innobase_rollback_trx(trx);  // 回滚事务
 
-    trx_deregister_from_2pc(trx);
-    ut_ad(!trx->will_lock);
-    trx_free_for_background(trx);
+    trx_deregister_from_2pc(trx);  // 从事务两阶段提交系统中注销事务
+    ut_ad(!trx->will_lock);  // 断言事务不会持有锁
+    trx_free_for_background(trx);  // 释放事务资源
 
-    return (ret != 0 ? XAER_RMERR : XA_OK);
+    return (ret != 0 ? XAER_RMERR : XA_OK);  // 返回回滚结果
   } else {
-    return (XAER_NOTA);
+    return (XAER_NOTA);  // 如果事务不存在，返回 XAER_NOTA
   }
 }
 

@@ -169,9 +169,16 @@ Recovered_xa_transactions &Recovered_xa_transactions::instance() {
   return *m_instance;
 }
 
+/**
+ * @brief 初始化恢复的 XA 事务管理器。
+ * @brief Initialize the recovered XA transactions manager.
+ *
+ * @return 是否初始化失败
+ * @return Whether initialization failed
+ */
 bool Recovered_xa_transactions::init() {
-  m_instance = new (std::nothrow) Recovered_xa_transactions();
-  return m_instance == nullptr;
+  m_instance = new (std::nothrow) Recovered_xa_transactions();  // 分配内存并创建实例
+  return m_instance == nullptr;  // 返回是否初始化失败
 }
 
 void Recovered_xa_transactions::destroy() {

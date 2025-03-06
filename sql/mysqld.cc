@@ -7152,7 +7152,7 @@ static int init_server_components() {
       tc_log = &tc_log_mmap;  // 设置事务日志为内存映射日志
   }
 
-  if (Recovered_xa_transactions::init()) {  // 初始化恢复的XA事务
+  if (Recovered_xa_transactions::init()) {  // 初始化XA事务管理器
     LogErr(ERROR_LEVEL, ER_OOM);  // 如果初始化失败，记录内存不足错误
     unireg_abort(MYSQLD_ABORT_EXIT);  // 终止程序
   }

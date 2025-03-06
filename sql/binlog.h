@@ -506,7 +506,15 @@ class MYSQL_BIN_LOG : public TC_LOG {
 
   bool snapshot_lock_acquired;
 
-  int open(const char *opt_name) override { return open_binlog(opt_name); }
+/**
+ * @brief 打开二进制日志文件。
+ * @brief Open the binary log file.
+ *
+ * @param opt_name 二进制日志文件的名称
+ * @return 错误码，0 表示成功
+ * @return Error code, 0 indicates success
+ */
+int open(const char *opt_name) override { return open_binlog(opt_name); }
 
   /**
     Enter a stage of the ordered commit procedure.
