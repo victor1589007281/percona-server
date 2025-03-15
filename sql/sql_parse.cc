@@ -3183,28 +3183,28 @@ static inline void binlog_gtid_end_transaction(THD *thd) {
 */
 
 int mysql_execute_command(THD *thd, bool first_level) {
-  int res = false;
-  LEX *const lex = thd->lex;
+  int res = false;  // 初始化结果为false，表示没有错误
+  LEX *const lex = thd->lex;  // 获取当前线程的LEX对象
   /* first Query_block (have special meaning for many of non-SELECTcommands) */
-  Query_block *const query_block = lex->query_block;
+  Query_block *const query_block = lex->query_block;  // 获取查询块
   /* first table of first Query_block */
-  Table_ref *const first_table = query_block->get_table_list();
+  Table_ref *const first_table = query_block->get_table_list();  // 获取查询块中的第一个表
   /* list of all tables in query */
-  Table_ref *all_tables;
+  Table_ref *all_tables;  // 所有表的列表
   // keep GTID violation state in order to roll it back on statement failure
-  bool gtid_consistency_violation_state = thd->has_gtid_consistency_violation;
-  assert(query_block->master_query_expression() == lex->unit);
-  DBUG_TRACE;
+  bool gtid_consistency_violation_state = thd->has_gtid_consistency_violation;  // 保存GTID一致性状态
+  assert(query_block->master_query_expression() == lex->unit);  // 断言查询块的主查询表达式等于LEX的unit
+  DBUG_TRACE;  // 调试跟踪
   /* EXPLAIN OTHER isn't explainable command, but can have describe flag. */
   assert(!lex->is_explain() || is_explainable_query(lex->sql_command) ||
-         lex->sql_command == SQLCOM_EXPLAIN_OTHER);
+         lex->sql_command == SQLCOM_EXPLAIN_OTHER);  // 断言EXPLAIN OTHER不是可解释的命令，但可以有描述标志
 
   assert(!thd->m_transactional_ddl.inited() ||
-         thd->in_active_multi_stmt_transaction());
+         thd->in_active_multi_stmt_transaction());  // 断言没有初始化事务性DDL或者处于多语句事务中
 
-  bool early_error_on_rep_command{false};
+  bool early_error_on_rep_command{false};  // 初始化早期错误标志为false
 
-  CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_execute_command");
+  CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_execute_command");  // 条件同步点，用于调试
 
   /*
     If there is a CREATE TABLE...START TRANSACTION command which
@@ -3215,15 +3215,15 @@ int mysql_execute_command(THD *thd, bool first_level) {
   if (thd->m_transactional_ddl.inited() && lex->sql_command != SQLCOM_COMMIT &&
       lex->sql_command != SQLCOM_ROLLBACK &&
       lex->sql_command != SQLCOM_BINLOG_BASE64_EVENT) {
-    my_error(ER_STATEMENT_NOT_ALLOWED_AFTER_START_TRANSACTION, MYF(0));
-    binlog_gtid_end_transaction(thd);
-    return 1;
+    my_error(ER_STATEMENT_NOT_ALLOWED_AFTER_START_TRANSACTION, MYF(0));  // 如果存在未提交的事务性DDL，则只允许BINLOG INSERT、COMMIT或ROLLBACK命令
+    binlog_gtid_end_transaction(thd);  // 结束GTID事务
+    return 1;  // 返回错误
   }
 
-  thd->work_part_info = nullptr;
+  thd->work_part_info = nullptr;  // 初始化工作分区信息为空
 
   if (thd->optimizer_switch_flag(OPTIMIZER_SWITCH_SUBQUERY_TO_DERIVED))
-    lex->add_statement_options(OPTION_NO_CONST_TABLES);
+    lex->add_statement_options(OPTION_NO_CONST_TABLES);  // 如果启用了子查询转换为派生表的优化器开关，则添加无常量表选项
 
   /*
     Each statement or replication event which might produce deadlock
@@ -3231,7 +3231,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
     the next statement transaction rollback request should be fulfilled
     already.
   */
-  assert(!thd->transaction_rollback_request || thd->in_sub_stmt);
+  assert(!thd->transaction_rollback_request || thd->in_sub_stmt);  // 断言没有事务回滚请求或者处于子语句中
   /*
     In many cases first table of main Query_block have special meaning =>
     check that it is first table in global list and relink it first in
@@ -3247,14 +3247,14 @@ int mysql_execute_command(THD *thd, bool first_level) {
     assert(first_table == all_tables);
     assert(first_table == all_tables && first_table != 0);
   */
-  lex->first_lists_tables_same();
+  lex->first_lists_tables_same();  // 确保主查询块中的第一个表与全局列表中的第一个表相同
   /* should be assigned after making first tables same */
-  all_tables = lex->query_tables;
+  all_tables = lex->query_tables;  // 获取查询中的所有表
   /* set context for commands which do not use setup_tables */
   query_block->context.resolve_in_table_list_only(
-      query_block->get_table_list());
+      query_block->get_table_list());  // 为不使用setup_tables的命令设置上下文
 
-  thd->get_stmt_da()->reset_diagnostics_area();
+  thd->get_stmt_da()->reset_diagnostics_area();  // 重置诊断区域
   if ((thd->lex->keep_diagnostics != DA_KEEP_PARSE_ERROR) &&
       (thd->lex->keep_diagnostics != DA_KEEP_DIAGNOSTICS)) {
     /*
@@ -3263,25 +3263,25 @@ int mysql_execute_command(THD *thd, bool first_level) {
       For diagnostic statements we need to keep the conditions
       around so we can inspec them.
     */
-    thd->get_stmt_da()->reset_condition_info(thd);
+    thd->get_stmt_da()->reset_condition_info(thd);  // 如果没有解析错误且不是诊断语句，则从诊断区域中移除SQL条件
   }
 
   if (thd->resource_group_ctx()->m_warn != 0) {
-    auto res_grp_name = thd->resource_group_ctx()->m_switch_resource_group_str;
+    auto res_grp_name = thd->resource_group_ctx()->m_switch_resource_group_str;  // 获取资源组名称
     switch (thd->resource_group_ctx()->m_warn) {
       case WARN_RESOURCE_GROUP_UNSUPPORTED: {
-        auto res_grp_mgr = resourcegroups::Resource_group_mgr::instance();
+        auto res_grp_mgr = resourcegroups::Resource_group_mgr::instance();  // 获取资源组管理器实例
         push_warning_printf(thd, Sql_condition::SL_WARNING,
                             ER_FEATURE_UNSUPPORTED,
                             ER_THD(thd, ER_FEATURE_UNSUPPORTED),
-                            "Resource groups", res_grp_mgr->unsupport_reason());
+                            "Resource groups", res_grp_mgr->unsupport_reason());  // 推送资源组不支持的警告
         break;
       }
       case WARN_RESOURCE_GROUP_UNSUPPORTED_HINT:
         push_warning_printf(thd, Sql_condition::SL_WARNING,
                             ER_WARN_UNSUPPORTED_HINT,
                             ER_THD(thd, ER_WARN_UNSUPPORTED_HINT),
-                            "Subquery or Stored procedure or Trigger");
+                            "Subquery or Stored procedure or Trigger");  // 推送资源组提示不支持的警告
         break;
       case WARN_RESOURCE_GROUP_TYPE_MISMATCH: {
         ulonglong pfs_thread_id = 0;
@@ -3291,39 +3291,39 @@ int mysql_execute_command(THD *thd, bool first_level) {
           is enabled.
         */
 #ifdef HAVE_PSI_THREAD_INTERFACE
-        pfs_thread_id = PSI_THREAD_CALL(get_current_thread_internal_id)();
+        pfs_thread_id = PSI_THREAD_CALL(get_current_thread_internal_id)();  // 获取当前线程的内部ID
 #endif  // HAVE_PSI_THREAD_INTERFACE
         push_warning_printf(thd, Sql_condition::SL_WARNING,
                             ER_RESOURCE_GROUP_BIND_FAILED,
                             ER_THD(thd, ER_RESOURCE_GROUP_BIND_FAILED),
                             res_grp_name, pfs_thread_id,
                             "System resource group can't be bound"
-                            " with a session thread");
+                            " with a session thread");  // 推送资源组绑定失败的警告
         break;
       }
       case WARN_RESOURCE_GROUP_NOT_EXISTS:
         push_warning_printf(
             thd, Sql_condition::SL_WARNING, ER_RESOURCE_GROUP_NOT_EXISTS,
-            ER_THD(thd, ER_RESOURCE_GROUP_NOT_EXISTS), res_grp_name);
+            ER_THD(thd, ER_RESOURCE_GROUP_NOT_EXISTS), res_grp_name);  // 推送资源组不存在的警告
         break;
       case WARN_RESOURCE_GROUP_ACCESS_DENIED:
         push_warning_printf(thd, Sql_condition::SL_WARNING,
                             ER_SPECIFIC_ACCESS_DENIED_ERROR,
                             ER_THD(thd, ER_SPECIFIC_ACCESS_DENIED_ERROR),
                             "SUPER OR RESOURCE_GROUP_ADMIN OR "
-                            "RESOURCE_GROUP_USER");
+                            "RESOURCE_GROUP_USER");  // 推送资源组访问被拒绝的警告
     }
-    thd->resource_group_ctx()->m_warn = 0;
-    res_grp_name[0] = '\0';
+    thd->resource_group_ctx()->m_warn = 0;  // 重置资源组警告标志
+    res_grp_name[0] = '\0';  // 清空资源组名称
   }
 
   if (unlikely(thd->get_protocol()->has_client_capability(CLIENT_NO_SCHEMA))) {
-    push_warning(thd, ER_WARN_DEPRECATED_CLIENT_NO_SCHEMA_OPTION);
+    push_warning(thd, ER_WARN_DEPRECATED_CLIENT_NO_SCHEMA_OPTION);  // 如果客户端不支持模式，则推送警告
   }
 
   if (unlikely(thd->slave_thread)) {
     if (!check_database_filters(thd, thd->db().str, lex->sql_command)) {
-      binlog_gtid_end_transaction(thd);
+      binlog_gtid_end_transaction(thd);  // 检查数据库过滤器，如果不需要执行则结束GTID事务
       return 0;
     }
 
@@ -3334,10 +3334,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
       */
       Table_ref *trigger_table = nullptr;
       (void)get_table_for_trigger(thd, lex->spname->m_db, lex->spname->m_name,
-                                  true, &trigger_table);
+                                  true, &trigger_table);  // 获取触发器对应的表
       if (trigger_table != nullptr) {
-        lex->add_to_query_tables(trigger_table);
-        all_tables = trigger_table;
+        lex->add_to_query_tables(trigger_table);  // 将触发器表添加到查询表列表中
+        all_tables = trigger_table;  // 更新所有表列表
       } else {
         /*
           If table name cannot be loaded,
@@ -3346,12 +3346,12 @@ int mysql_execute_command(THD *thd, bool first_level) {
           according to slave filtering rules.
           Returning success without producing any errors in this case.
         */
-        binlog_gtid_end_transaction(thd);
+        binlog_gtid_end_transaction(thd);  // 如果无法加载表名，则结束GTID事务并返回成功
         return 0;
       }
 
       // force searching in slave.cc:tables_ok()
-      all_tables->updating = true;
+      all_tables->updating = true;  // 强制在slave.cc:tables_ok()中搜索
     }
 
     /*
@@ -3369,25 +3369,25 @@ int mysql_execute_command(THD *thd, bool first_level) {
       exist for old masters.
     */
     if (lex->sql_command == SQLCOM_UPDATE_MULTI && thd->table_map_for_update) {
-      table_map table_map_for_update = thd->table_map_for_update;
+      table_map table_map_for_update = thd->table_map_for_update;  // 获取更新表映射
       uint nr = 0;
       Table_ref *table;
       for (table = all_tables; table; table = table->next_global, nr++) {
         if (table_map_for_update & ((table_map)1 << nr))
-          table->updating = true;
+          table->updating = true;  // 标记需要更新的表
         else
-          table->updating = false;
+          table->updating = false;  // 标记不需要更新的表
       }
 
       if (all_tables_not_ok(thd, all_tables)) {
         /* we warn the slave SQL thread */
-        my_error(ER_SLAVE_IGNORED_TABLE, MYF(0));
-        binlog_gtid_end_transaction(thd);
+        my_error(ER_SLAVE_IGNORED_TABLE, MYF(0));  // 如果表不满足过滤规则，则警告从库SQL线程
+        binlog_gtid_end_transaction(thd);  // 结束GTID事务
         return 0;
       }
 
       for (table = all_tables; table; table = table->next_global)
-        table->updating = true;
+        table->updating = true;  // 标记所有表为需要更新
     }
 
     /*
@@ -3409,25 +3409,25 @@ int mysql_execute_command(THD *thd, bool first_level) {
           lex->drop_if_exists) &&
         all_tables_not_ok(thd, all_tables)) {
       /* we warn the slave SQL thread */
-      my_error(ER_SLAVE_IGNORED_TABLE, MYF(0));
-      binlog_gtid_end_transaction(thd);
+      my_error(ER_SLAVE_IGNORED_TABLE, MYF(0));  // 如果表不满足过滤规则，则警告从库SQL线程
+      binlog_gtid_end_transaction(thd);  // 结束GTID事务
       return 0;
     }
     /*
        Execute deferred events first
     */
-    if (slave_execute_deferred_events(thd)) return -1;
+    if (slave_execute_deferred_events(thd)) return -1;  // 执行延迟事件
 
-    int ret = launch_hook_trans_begin(thd, all_tables);
+    int ret = launch_hook_trans_begin(thd, all_tables);  // 启动事务钩子
     if (ret) {
-      my_error(ret, MYF(0));
+      my_error(ret, MYF(0));  // 如果启动事务钩子失败，则返回错误
       return -1;
     }
 
   } else {
-    int ret = launch_hook_trans_begin(thd, all_tables);
+    int ret = launch_hook_trans_begin(thd, all_tables);  // 启动事务钩子
     if (ret) {
-      my_error(ret, MYF(0));
+      my_error(ret, MYF(0));  // 如果启动事务钩子失败，则返回错误
       return -1;
     }
 
@@ -3436,41 +3436,41 @@ int mysql_execute_command(THD *thd, bool first_level) {
       tables. Except for the replication thread and the 'super' users.
     */
     if (deny_updates_if_read_only_option(thd, all_tables)) {
-      thd->diff_access_denied_errors++;
-      err_readonly(thd);
+      thd->diff_access_denied_errors++;  // 如果只读选项被设置，则拒绝更改非临时表的操作
+      err_readonly(thd);  // 返回只读错误
       return -1;
     }
   } /* endif unlikely slave */
 
-  thd->status_var.com_stat[lex->sql_command]++;
+  thd->status_var.com_stat[lex->sql_command]++;  // 增加命令统计
 
   Opt_trace_start ots(thd, all_tables, lex->sql_command, &lex->var_list,
                       thd->query().str, thd->query().length, nullptr,
-                      thd->variables.character_set_client);
+                      thd->variables.character_set_client);  // 启动优化器跟踪
 
-  Opt_trace_object trace_command(&thd->opt_trace);
-  Opt_trace_array trace_command_steps(&thd->opt_trace, "steps");
+  Opt_trace_object trace_command(&thd->opt_trace);  // 创建优化器跟踪对象
+  Opt_trace_array trace_command_steps(&thd->opt_trace, "steps");  // 创建优化器跟踪步骤数组
 
   if (lex->m_sql_cmd && lex->m_sql_cmd->owner())
-    lex->m_sql_cmd->owner()->trace_parameter_types(thd);
+    lex->m_sql_cmd->owner()->trace_parameter_types(thd);  // 跟踪SQL命令的参数类型
 
   assert(thd->get_transaction()->cannot_safely_rollback(
-             Transaction_ctx::STMT) == false);
+             Transaction_ctx::STMT) == false);  // 断言当前事务可以安全回滚
 
   switch (gtid_pre_statement_checks(thd)) {
     case GTID_STATEMENT_EXECUTE:
-      break;
+      break;  // 如果GTID检查通过，则继续执行
     case GTID_STATEMENT_CANCEL:
-      return -1;
+      return -1;  // 如果GTID检查取消，则返回错误
     case GTID_STATEMENT_SKIP:
-      my_ok(thd);
-      binlog_gtid_end_transaction(thd);
+      my_ok(thd);  // 如果GTID检查跳过，则返回成功
+      binlog_gtid_end_transaction(thd);  // 结束GTID事务
       return 0;
   }
 
   if (check_and_report_require_row_format_violation(thd) ||
       run_post_replication_filters_actions(thd))
-    return -1;
+    return -1;  // 检查并报告行格式违规，或者执行复制过滤器后的操作
 
   /*
     End a active transaction so that this command will have it's
@@ -3483,38 +3483,38 @@ int mysql_execute_command(THD *thd, bool first_level) {
       Note that this should never happen inside of stored functions
       or triggers as all such statements prohibited there.
     */
-    assert(!thd->in_sub_stmt);
+    assert(!thd->in_sub_stmt);  // 断言不在子语句中
     /* Statement transaction still should not be started. */
-    assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));
+    assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));  // 断言语句事务未启动
 
     /*
       Implicit commit is not allowed with an active XA transaction.
       In this case we should not release metadata locks as the XA transaction
       will not be rolled back. Therefore we simply return here.
     */
-    if (trans_check_state(thd)) return -1;
+    if (trans_check_state(thd)) return -1;  // 检查事务状态，如果不允许隐式提交，则返回错误
 
     /* Commit the normal transaction if one is active. */
-    if (trans_commit_implicit(thd)) return -1;
+    if (trans_commit_implicit(thd)) return -1;  // 提交当前事务，如果失败则返回错误
     /* Release metadata locks acquired in this transaction. */
-    thd->mdl_context.release_transactional_locks();
+    thd->mdl_context.release_transactional_locks();  // 释放事务中获取的元数据锁
   }
 
-  DEBUG_SYNC(thd, "after_implicit_pre_commit");
+  DEBUG_SYNC(thd, "after_implicit_pre_commit");  // 调试同步点，用于调试
 
-  if (gtid_pre_statement_post_implicit_commit_checks(thd)) return -1;
+  if (gtid_pre_statement_post_implicit_commit_checks(thd)) return -1;  // 执行GTID隐式提交后的检查，如果失败则返回错误
 
   if (mysql_audit_notify(thd,
                          first_level ? MYSQL_AUDIT_QUERY_START
                                      : MYSQL_AUDIT_QUERY_NESTED_START,
                          first_level ? "MYSQL_AUDIT_QUERY_START"
                                      : "MYSQL_AUDIT_QUERY_NESTED_START")) {
-    return 1;
+    return 1;  // 通知审计系统查询开始，如果失败则返回错误
   }
 
 #ifndef NDEBUG
   if (lex->sql_command != SQLCOM_SET_OPTION)
-    DEBUG_SYNC(thd, "before_execute_sql_command");
+    DEBUG_SYNC(thd, "before_execute_sql_command");  // 如果不是设置选项命令，则设置调试同步点
 #endif
 
   /*
@@ -3523,8 +3523,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
    */
   if (lex->create_info && lex->create_info->m_transactional_ddl &&
       !thd->slave_thread) {
-    Disable_binlog_guard binlog_guard(thd);
-    if (trans_begin(thd, MYSQL_START_TRANS_OPT_READ_WRITE)) return true;
+    Disable_binlog_guard binlog_guard(thd);  // 禁用二进制日志
+    if (trans_begin(thd, MYSQL_START_TRANS_OPT_READ_WRITE)) return true;  // 开始新的事务
   }
 
   /*
@@ -3534,7 +3534,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
   */
   Disable_autocommit_guard autocommit_guard(
       sqlcom_needs_autocommit_off(lex) && !thd->is_plugin_fake_ddl() ? thd
-                                                                     : nullptr);
+                                                                     : nullptr);  // 禁用自动提交
 
   /*
     Check if we are in a read-only transaction and we're trying to
@@ -3544,8 +3544,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
   */
   if (thd->tx_read_only &&
       (sql_command_flags[lex->sql_command] & CF_DISALLOW_IN_RO_TRANS)) {
-    thd->diff_access_denied_errors++;
-    my_error(ER_CANT_EXECUTE_IN_READ_ONLY_TRANSACTION, MYF(0));
+    thd->diff_access_denied_errors++;  // 增加访问被拒绝的错误计数
+    my_error(ER_CANT_EXECUTE_IN_READ_ONLY_TRANSACTION, MYF(0));  // 返回只读事务中不允许执行的错误
     goto error;
   }
 
@@ -3562,14 +3562,14 @@ int mysql_execute_command(THD *thd, bool first_level) {
     HANDLER doesn't require any privileges anyway.
   */
   if (sql_command_flags[lex->sql_command] & CF_HA_CLOSE)
-    mysql_ha_rm_tables(thd, all_tables);
+    mysql_ha_rm_tables(thd, all_tables);  // 关闭由HANDLER打开的表
 
   /*
     Check that the command is allowed on the PROTOCOL_PLUGIN
   */
   if (thd->get_protocol()->type() == Protocol::PROTOCOL_PLUGIN &&
       !(sql_command_flags[lex->sql_command] & CF_ALLOW_PROTOCOL_PLUGIN)) {
-    my_error(ER_PLUGGABLE_PROTOCOL_COMMAND_NOT_SUPPORTED, MYF(0));
+    my_error(ER_PLUGGABLE_PROTOCOL_COMMAND_NOT_SUPPORTED, MYF(0));  // 返回协议插件不支持的命令错误
     goto error;
   }
 
@@ -3578,21 +3578,21 @@ int mysql_execute_command(THD *thd, bool first_level) {
     for statements which need this.
   */
   if (sql_command_flags[lex->sql_command] & CF_PREOPEN_TMP_TABLES) {
-    if (open_temporary_tables(thd, all_tables)) goto error;
+    if (open_temporary_tables(thd, all_tables)) goto error;  // 预打开临时表
   }
 
   // Save original info for EXPLAIN FOR CONNECTION
   if (!thd->in_sub_stmt)
     thd->query_plan.set_query_plan(lex->sql_command, lex,
-                                   !thd->stmt_arena->is_regular());
+                                   !thd->stmt_arena->is_regular());  // 保存原始信息用于EXPLAIN FOR CONNECTION
 
   /* Update system variables specified in SET_VAR hints. */
   if (lex->opt_hints_global && lex->opt_hints_global->sys_var_hint)
-    lex->opt_hints_global->sys_var_hint->update_vars(thd);
+    lex->opt_hints_global->sys_var_hint->update_vars(thd);  // 更新由SET_VAR提示指定的系统变量
 
   /* Check if the statement fulfill the requirements on ACL CACHE */
   if (!command_satisfy_acl_cache_requirement(lex->sql_command)) {
-    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--skip-grant-tables");
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--skip-grant-tables");  // 检查是否满足ACL缓存的要求
     goto error;
   }
 
@@ -3600,7 +3600,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
       "force_rollback_in_replica_on_transactional_ddl_commit",
       if (thd->m_transactional_ddl.inited() &&
           thd->lex->sql_command == SQLCOM_COMMIT) {
-        lex->sql_command = SQLCOM_ROLLBACK;
+        lex->sql_command = SQLCOM_ROLLBACK;  // 强制在副本上回滚事务性DDL提交
       });
 
   /*
@@ -3611,24 +3611,24 @@ int mysql_execute_command(THD *thd, bool first_level) {
 
   switch (lex->sql_command) {
     case SQLCOM_PREPARE: {
-      mysql_sql_stmt_prepare(thd);
+      mysql_sql_stmt_prepare(thd);  // 执行PREPARE命令
       break;
     }
     case SQLCOM_EXECUTE: {
-      mysql_sql_stmt_execute(thd);
+      mysql_sql_stmt_execute(thd);  // 执行EXECUTE命令
       break;
     }
     case SQLCOM_DEALLOCATE_PREPARE: {
-      mysql_sql_stmt_close(thd);
+      mysql_sql_stmt_close(thd);  // 执行DEALLOCATE PREPARE命令
       break;
     }
 
     case SQLCOM_EMPTY_QUERY:
-      my_ok(thd);
+      my_ok(thd);  // 执行空查询命令
       break;
 
     case SQLCOM_HELP:
-      res = mysqld_help(thd, lex->help_arg);
+      res = mysqld_help(thd, lex->help_arg);  // 执行HELP命令
       break;
 
     case SQLCOM_PURGE: {
@@ -3636,11 +3636,11 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (!sctx->check_access(SUPER_ACL) &&
           !sctx->has_global_grant(STRING_WITH_LEN("BINLOG_ADMIN")).first) {
         my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-                 "SUPER or BINLOG_ADMIN");
+                 "SUPER or BINLOG_ADMIN");  // 检查是否有SUPER或BINLOG_ADMIN权限
         goto error;
       }
       /* PURGE MASTER LOGS TO 'file' */
-      res = purge_source_logs_to_file(thd, lex->to_log);
+      res = purge_source_logs_to_file(thd, lex->to_log);  // 执行PURGE MASTER LOGS命令
       break;
     }
     case SQLCOM_PURGE_BEFORE: {
@@ -3649,13 +3649,13 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (!sctx->check_access(SUPER_ACL) &&
           !sctx->has_global_grant(STRING_WITH_LEN("BINLOG_ADMIN")).first) {
         my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-                 "SUPER or BINLOG_ADMIN");
+                 "SUPER or BINLOG_ADMIN");  // 检查是否有SUPER或BINLOG_ADMIN权限
         goto error;
       }
       /* PURGE MASTER LOGS BEFORE 'data' */
       it = lex->purge_value_list.head();
       if ((!it->fixed && it->fix_fields(lex->thd, &it)) || it->check_cols(1)) {
-        my_error(ER_WRONG_ARGUMENTS, MYF(0), "PURGE LOGS BEFORE");
+        my_error(ER_WRONG_ARGUMENTS, MYF(0), "PURGE LOGS BEFORE");  // 检查参数是否正确
         goto error;
       }
       it = new Item_func_unix_timestamp(it);
@@ -3666,7 +3666,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
       it->quick_fix_field();
       time_t purge_time = static_cast<time_t>(it->val_int());
       if (thd->is_error()) goto error;
-      res = purge_source_logs_before_date(thd, purge_time);
+      res = purge_source_logs_before_date(thd, purge_time);  // 执行PURGE MASTER LOGS BEFORE命令
       break;
     }
     case SQLCOM_CHANGE_MASTER: {
@@ -3675,10 +3675,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
           !sctx->has_global_grant(STRING_WITH_LEN("REPLICATION_SLAVE_ADMIN"))
                .first) {
         my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-                 "SUPER or REPLICATION_SLAVE_ADMIN");
+                 "SUPER or REPLICATION_SLAVE_ADMIN");  // 检查是否有SUPER或REPLICATION_SLAVE_ADMIN权限
         goto error;
       }
-      res = change_master_cmd(thd);
+      res = change_master_cmd(thd);  // 执行CHANGE MASTER命令
       break;
     }
     case SQLCOM_START_GROUP_REPLICATION: {
@@ -3687,11 +3687,11 @@ int mysql_execute_command(THD *thd, bool first_level) {
           !sctx->has_global_grant(STRING_WITH_LEN("GROUP_REPLICATION_ADMIN"))
                .first) {
         my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-                 "SUPER or GROUP_REPLICATION_ADMIN");
+                 "SUPER or GROUP_REPLICATION_ADMIN");  // 检查是否有SUPER或GROUP_REPLICATION_ADMIN权限
         goto error;
       }
       if (lex->slave_connection.password && !lex->slave_connection.user) {
-        my_error(ER_GROUP_REPLICATION_USER_MANDATORY_MSG, MYF(0));
+        my_error(ER_GROUP_REPLICATION_USER_MANDATORY_MSG, MYF(0));  // 检查是否有用户信息
         goto error;
       }
 
@@ -3708,13 +3708,13 @@ int mysql_execute_command(THD *thd, bool first_level) {
       */
       if (thd->locked_tables_mode || thd->in_active_multi_stmt_transaction() ||
           thd->in_sub_stmt) {
-        my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));
+        my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));  // 检查是否有锁表或活动事务
         goto error;
       }
 
       if (thd->variables.gtid_next.type == ASSIGNED_GTID &&
           thd->owned_gtid.sidno > 0) {
-        my_error(ER_CANT_EXECUTE_COMMAND_WITH_ASSIGNED_GTID_NEXT, MYF(0));
+        my_error(ER_CANT_EXECUTE_COMMAND_WITH_ASSIGNED_GTID_NEXT, MYF(0));  // 检查是否有分配的GTID
         early_error_on_rep_command = true;
         goto error;
       }
@@ -3723,53 +3723,53 @@ int mysql_execute_command(THD *thd, bool first_level) {
         my_error(ER_GROUP_REPLICATION_COMMAND_FAILURE, MYF(0),
                  "START GROUP_REPLICATION",
                  "This server is being provisioned by CLONE INSTANCE, "
-                 "please wait until it is complete.");
+                 "please wait until it is complete.");  // 检查是否正在克隆实例
         goto error;
       }
 
       char *error_message = nullptr;
-      res = group_replication_start(&error_message, thd);
+      res = group_replication_start(&error_message, thd);  // 启动组复制
 
       // To reduce server dependency, server errors are not used here
       switch (res) {
         case 1:  // GROUP_REPLICATION_CONFIGURATION_ERROR
-          my_error(ER_GROUP_REPLICATION_CONFIGURATION, MYF(0));
+          my_error(ER_GROUP_REPLICATION_CONFIGURATION, MYF(0));  // 组复制配置错误
           goto error;
         case 2:  // GROUP_REPLICATION_ALREADY_RUNNING
-          my_error(ER_GROUP_REPLICATION_RUNNING, MYF(0));
+          my_error(ER_GROUP_REPLICATION_RUNNING, MYF(0));  // 组复制已经在运行
           goto error;
         case 3:  // GROUP_REPLICATION_REPLICATION_APPLIER_INIT_ERROR
-          my_error(ER_GROUP_REPLICATION_APPLIER_INIT_ERROR, MYF(0));
+          my_error(ER_GROUP_REPLICATION_APPLIER_INIT_ERROR, MYF(0));  // 组复制应用线程初始化错误
           goto error;
         case 4:  // GROUP_REPLICATION_COMMUNICATION_LAYER_SESSION_ERROR
           my_error(ER_GROUP_REPLICATION_COMMUNICATION_LAYER_SESSION_ERROR,
-                   MYF(0));
+                   MYF(0));  // 组复制通信层会话错误
           goto error;
         case 5:  // GROUP_REPLICATION_COMMUNICATION_LAYER_JOIN_ERROR
-          my_error(ER_GROUP_REPLICATION_COMMUNICATION_LAYER_JOIN_ERROR, MYF(0));
+          my_error(ER_GROUP_REPLICATION_COMMUNICATION_LAYER_JOIN_ERROR, MYF(0));  // 组复制通信层加入错误
           goto error;
         case 7:  // GROUP_REPLICATION_MAX_GROUP_SIZE
-          my_error(ER_GROUP_REPLICATION_MAX_GROUP_SIZE, MYF(0));
+          my_error(ER_GROUP_REPLICATION_MAX_GROUP_SIZE, MYF(0));  // 组复制最大组大小错误
           goto error;
         case 8:  // GROUP_REPLICATION_COMMAND_FAILURE
           if (error_message == nullptr) {
             my_error(ER_GROUP_REPLICATION_COMMAND_FAILURE, MYF(0),
                      "START GROUP_REPLICATION",
-                     "Please check error log for additional details.");
+                     "Please check error log for additional details.");  // 组复制命令失败
           } else {
             my_error(ER_GROUP_REPLICATION_COMMAND_FAILURE, MYF(0),
-                     "START GROUP_REPLICATION", error_message);
+                     "START GROUP_REPLICATION", error_message);  // 组复制命令失败
             my_free(error_message);
           }
           goto error;
         case 9:  // GROUP_REPLICATION_SERVICE_MESSAGE_INIT_FAILURE
-          my_error(ER_GRP_RPL_MESSAGE_SERVICE_INIT_FAILURE, MYF(0));
+          my_error(ER_GRP_RPL_MESSAGE_SERVICE_INIT_FAILURE, MYF(0));  // 组复制消息服务初始化失败
           goto error;
         case 10:  // GROUP_REPLICATION_RECOVERY_CHANNEL_STILL_RUNNING
-          my_error(ER_GRP_RPL_RECOVERY_CHANNEL_STILL_RUNNING, MYF(0));
+          my_error(ER_GRP_RPL_RECOVERY_CHANNEL_STILL_RUNNING, MYF(0));  // 组复制恢复通道仍在运行
           goto error;
       }
-      my_ok(thd);
+      my_ok(thd);  // 返回成功
       res = 0;
       break;
     }
@@ -3780,7 +3780,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
           !sctx->has_global_grant(STRING_WITH_LEN("GROUP_REPLICATION_ADMIN"))
                .first) {
         my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
-                 "SUPER or GROUP_REPLICATION_ADMIN");
+                 "SUPER or GROUP_REPLICATION_ADMIN");  // 检查是否有SUPER或GROUP_REPLICATION_ADMIN权限
         goto error;
       }
 
@@ -3791,27 +3791,27 @@ int mysql_execute_command(THD *thd, bool first_level) {
       */
       if (thd->locked_tables_mode || thd->in_active_multi_stmt_transaction() ||
           thd->in_sub_stmt) {
-        my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));
+        my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));  // 检查是否有锁表或活动事务
         goto error;
       }
 
       if (thd->variables.gtid_next.type == ASSIGNED_GTID &&
           thd->owned_gtid.sidno > 0) {
-        my_error(ER_CANT_EXECUTE_COMMAND_WITH_ASSIGNED_GTID_NEXT, MYF(0));
+        my_error(ER_CANT_EXECUTE_COMMAND_WITH_ASSIGNED_GTID_NEXT, MYF(0));  // 检查是否有分配的GTID
         early_error_on_rep_command = true;
         goto error;
       }
 
       char *error_message = nullptr;
-      res = group_replication_stop(&error_message);
+      res = group_replication_stop(&error_message);  // 停止组复制
       if (res == 1)  // GROUP_REPLICATION_CONFIGURATION_ERROR
       {
-        my_error(ER_GROUP_REPLICATION_CONFIGURATION, MYF(0));
+        my_error(ER_GROUP_REPLICATION_CONFIGURATION, MYF(0));  // 组复制配置错误
         goto error;
       }
       if (res == 6)  // GROUP_REPLICATION_APPLIER_THREAD_TIMEOUT
       {
-        my_error(ER_GROUP_REPLICATION_STOP_APPLIER_THREAD_TIMEOUT, MYF(0));
+        my_error(ER_GROUP_REPLICATION_STOP_APPLIER_THREAD_TIMEOUT, MYF(0));  // 组复制应用线程超时
         goto error;
       }
       if (res == 8)  // GROUP_REPLICATION_COMMAND_FAILURE
@@ -3819,10 +3819,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
         if (error_message == nullptr) {
           my_error(ER_GROUP_REPLICATION_COMMAND_FAILURE, MYF(0),
                    "STOP GROUP_REPLICATION",
-                   "Please check error log for additonal details.");
+                   "Please check error log for additonal details.");  // 组复制命令失败
         } else {
           my_error(ER_GROUP_REPLICATION_COMMAND_FAILURE, MYF(0),
-                   "STOP GROUP_REPLICATION", error_message);
+                   "STOP GROUP_REPLICATION", error_message);  // 组复制命令失败
           my_free(error_message);
         }
         goto error;
@@ -3830,18 +3830,18 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (res == 11)  // GROUP_REPLICATION_STOP_WITH_RECOVERY_TIMEOUT
         push_warning(thd, Sql_condition::SL_WARNING,
                      ER_GRP_RPL_RECOVERY_CHANNEL_STILL_RUNNING,
-                     ER_THD(thd, ER_GRP_RPL_RECOVERY_CHANNEL_STILL_RUNNING));
+                     ER_THD(thd, ER_GRP_RPL_RECOVERY_CHANNEL_STILL_RUNNING));  // 组复制恢复通道仍在运行
 
       // Allow the command to commit any underlying transaction
-      lex->set_was_replication_command_executed();
-      thd->set_skip_readonly_check();
-      my_ok(thd);
+      lex->set_was_replication_command_executed();  // 允许命令提交任何底层事务
+      thd->set_skip_readonly_check();  // 设置跳过只读检查
+      my_ok(thd);  // 返回成功
       res = 0;
       break;
     }
 
     case SQLCOM_SLAVE_START: {
-      res = start_slave_cmd(thd);
+      res = start_slave_cmd(thd);  // 启动从库复制
       break;
     }
     case SQLCOM_SLAVE_STOP: {
@@ -3861,15 +3861,15 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (thd->locked_tables_mode || thd->in_active_multi_stmt_transaction() ||
           thd->global_read_lock.is_acquired() ||
           thd->backup_tables_lock.is_acquired()) {
-        my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));
+        my_error(ER_LOCK_OR_ACTIVE_TRANSACTION, MYF(0));  // 检查是否有锁表或活动事务
         goto error;
       }
 
-      res = stop_slave_cmd(thd);
+      res = stop_slave_cmd(thd);  // 停止从库复制
       break;
     }
     case SQLCOM_RENAME_TABLE: {
-      assert(first_table == all_tables && first_table != nullptr);
+      assert(first_table == all_tables && first_table != nullptr);  // 断言第一个表等于所有表且不为空
       Table_ref *table;
       for (table = first_table; table; table = table->next_local->next_local) {
         if (check_access(thd, ALTER_ACL | DROP_ACL, table->db,
@@ -3878,7 +3878,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
             check_access(thd, INSERT_ACL | CREATE_ACL, table->next_local->db,
                          &table->next_local->grant.privilege,
                          &table->next_local->grant.m_internal, false, false))
-          goto error;
+          goto error;  // 检查是否有ALTER、DROP、INSERT、CREATE权限
 
         Table_ref old_list = table[0];
         Table_ref new_list = table->next_local[0];
@@ -3887,8 +3887,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
           accomplish. What we do know is that they do *not* want to copy the MDL
           requests, so we overwrite them with uninitialized request.
         */
-        old_list.mdl_request = MDL_request();
-        new_list.mdl_request = MDL_request();
+        old_list.mdl_request = MDL_request();  // 重置旧表的MDL请求
+        new_list.mdl_request = MDL_request();  // 重置新表的MDL请求
 
         if (check_grant(thd, ALTER_ACL | DROP_ACL, &old_list, false, 1,
                         false) ||
@@ -3896,19 +3896,19 @@ int mysql_execute_command(THD *thd, bool first_level) {
                             INSERT_ACL | CREATE_ACL) &&
              check_grant(thd, INSERT_ACL | CREATE_ACL, &new_list, false, 1,
                          false)))
-          goto error;
+          goto error;  // 检查是否有ALTER、DROP、INSERT、CREATE权限
       }
 
-      if (mysql_rename_tables(thd, first_table)) goto error;
+      if (mysql_rename_tables(thd, first_table)) goto error;  // 执行表重命名
       break;
     }
     case SQLCOM_CHECKSUM: {
-      assert(first_table == all_tables && first_table != nullptr);
+      assert(first_table == all_tables && first_table != nullptr);  // 断言第一个表等于所有表且不为空
       if (check_table_access(thd, SELECT_ACL, all_tables, false, UINT_MAX,
                              false))
-        goto error; /* purecov: inspected */
+        goto error; /* purecov: inspected */  // 检查是否有SELECT权限
 
-      res = mysql_checksum_table(thd, first_table, &lex->check_opt);
+      res = mysql_checksum_table(thd, first_table, &lex->check_opt);  // 执行CHECKSUM命令
       break;
     }
     case SQLCOM_REPLACE:
@@ -3925,17 +3925,17 @@ int mysql_execute_command(THD *thd, bool first_level) {
     case SQLCOM_ASSIGN_TO_KEYCACHE:
     case SQLCOM_PRELOAD_KEYS:
     case SQLCOM_LOAD: {
-      assert(first_table == all_tables && first_table != nullptr);
-      assert(lex->m_sql_cmd != nullptr);
-      res = lex->m_sql_cmd->execute(thd);
+      assert(first_table == all_tables && first_table != nullptr);  // 断言第一个表等于所有表且不为空
+      assert(lex->m_sql_cmd != nullptr);  // 断言SQL命令不为空
+      res = lex->m_sql_cmd->execute(thd);  // 执行SQL命令
       break;
     }
     case SQLCOM_DROP_TABLE: {
-      assert(first_table == all_tables && first_table != nullptr);
+      assert(first_table == all_tables && first_table != nullptr);  // 断言第一个表等于所有表且不为空
       if (!lex->drop_temporary) {
         if (check_table_access(thd, DROP_ACL, all_tables, false, UINT_MAX,
                                false))
-          goto error; /* purecov: inspected */
+          goto error; /* purecov: inspected */  // 检查是否有DROP权限
       }
 
       if (thd->variables.binlog_ddl_skip_rewrite) {
@@ -3955,27 +3955,27 @@ int mysql_execute_command(THD *thd, bool first_level) {
               on the mysql version.
             */
 
-            my_error(ER_DROP_MULTI_TABLE, MYF(0), "binlog_ddl_skip_rewrite");
+            my_error(ER_DROP_MULTI_TABLE, MYF(0), "binlog_ddl_skip_rewrite");  // 如果binlog_ddl_skip_rewrite启用，则返回错误
             goto error;
           }
         }
       }
       /* DDL and binlog write order are protected by metadata locks. */
       res = mysql_rm_table(thd, first_table, lex->drop_if_exists,
-                           lex->drop_temporary);
+                           lex->drop_temporary);  // 执行DROP TABLE命令
       /* when dropping temporary tables if @@session_track_state_change is ON
          then send the boolean tracker in the OK packet */
       if (!res && lex->drop_temporary) {
         if (thd->session_tracker.get_tracker(SESSION_STATE_CHANGE_TRACKER)
                 ->is_enabled())
           thd->session_tracker.get_tracker(SESSION_STATE_CHANGE_TRACKER)
-              ->mark_as_changed(thd, {});
+              ->mark_as_changed(thd, {});  // 如果删除临时表且session_track_state_change启用，则发送状态更改跟踪器
       }
     } break;
     case SQLCOM_CHANGE_DB: {
       const LEX_CSTRING db_str = {query_block->db, strlen(query_block->db)};
 
-      if (!mysql_change_db(thd, db_str, false)) my_ok(thd);
+      if (!mysql_change_db(thd, db_str, false)) my_ok(thd);  // 执行CHANGE DATABASE命令
 
       break;
     }
@@ -3985,26 +3985,26 @@ int mysql_execute_command(THD *thd, bool first_level) {
 
       if (check_table_access(thd, SELECT_ACL, all_tables, false, UINT_MAX,
                              false))
-        goto error;
+        goto error;  // 检查是否有SELECT权限
 
-      if (open_tables_for_query(thd, all_tables, false)) goto error;
+      if (open_tables_for_query(thd, all_tables, false)) goto error;  // 打开表
       if (!thd->stmt_arena->is_regular()) {
-        lex->restore_cmd_properties();
-        bind_fields(thd->stmt_arena->item_list());
+        lex->restore_cmd_properties();  // 恢复命令属性
+        bind_fields(thd->stmt_arena->item_list());  // 绑定字段
         if (all_tables != nullptr &&
             !thd->stmt_arena->is_stmt_prepare_or_first_stmt_execute() &&
             query_block->check_privileges_for_subqueries(thd))
-          return true;
+          return true;  // 检查子查询权限
       }
       if (!(res = sql_set_variables(thd, lex_var_list, true)))
-        my_ok(thd);
+        my_ok(thd);  // 执行SET OPTION命令
       else {
         /*
           We encountered some sort of error, but no message was sent.
           Send something semi-generic here since we don't know which
           assignment in the list caused the error.
         */
-        if (!thd->is_error()) my_error(ER_WRONG_ARGUMENTS, MYF(0), "SET");
+        if (!thd->is_error()) my_error(ER_WRONG_ARGUMENTS, MYF(0), "SET");  // 如果发生错误，则返回错误
         goto error;
       }
 
@@ -4014,8 +4014,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
         See mysql-test/include/dbug_crash[_all].inc
       */
       const bool force_server_crash_dbug = false;
-      DBUG_EXECUTE_IF("crash_now", assert(force_server_crash_dbug););
-      DBUG_EXECUTE_IF("crash_now_safe", DBUG_SUICIDE(););
+      DBUG_EXECUTE_IF("crash_now", assert(force_server_crash_dbug););  // 调试时使服务器崩溃
+      DBUG_EXECUTE_IF("crash_now_safe", DBUG_SUICIDE(););  // 调试时安全崩溃
 #endif
 
       break;
@@ -4023,8 +4023,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
     case SQLCOM_SET_PASSWORD: {
       List<set_var_base> *lex_var_list = &lex->var_list;
 
-      assert(lex_var_list->elements == 1);
-      assert(all_tables == nullptr);
+      assert(lex_var_list->elements == 1);  // 断言变量列表只有一个元素
+      assert(all_tables == nullptr);  // 断言没有表
       Userhostpassword_list generated_passwords;
       if (!(res = sql_set_variables(thd, lex_var_list, false))) {
         List_iterator_fast<set_var_base> it(*lex_var_list);
@@ -4037,17 +4037,17 @@ int mysql_execute_command(THD *thd, bool first_level) {
                 std::string(user->user.str, user->user.length),
                 std::string(user->host.str, user->host.length),
                 setpasswd->get_generated_password(), 1};
-            generated_passwords.push_back(p);
+            generated_passwords.push_back(p);  // 生成密码
           }
         }
         if (generated_passwords.size() > 0) {
-          if (send_password_result_set(thd, generated_passwords)) goto error;
+          if (send_password_result_set(thd, generated_passwords)) goto error;  // 发送密码结果集
         }  // end if generated_passwords
-        if (generated_passwords.size() == 0) my_ok(thd);
+        if (generated_passwords.size() == 0) my_ok(thd);  // 如果没有生成密码，则返回成功
       } else {
         // We encountered some sort of error, but no message was sent.
         if (!thd->is_error())
-          my_error(ER_WRONG_ARGUMENTS, MYF(0), "SET PASSWORD");
+          my_error(ER_WRONG_ARGUMENTS, MYF(0), "SET PASSWORD");  // 如果发生错误，则返回错误
         goto error;
       }
 
@@ -4062,29 +4062,29 @@ int mysql_execute_command(THD *thd, bool first_level) {
         false, mysqldump will not work.
       */
       if (thd->variables.option_bits & OPTION_TABLE_LOCK) {
-        assert(!thd->backup_tables_lock.is_acquired());
+        assert(!thd->backup_tables_lock.is_acquired());  // 断言没有备份表锁
         /*
           Can we commit safely? If not, return to avoid releasing
           transactional metadata locks.
         */
-        if (trans_check_state(thd)) return -1;
-        res = trans_commit_implicit(thd);
-        thd->locked_tables_list.unlock_locked_tables(thd);
-        thd->mdl_context.release_transactional_locks();
-        thd->variables.option_bits &= ~(OPTION_TABLE_LOCK);
+        if (trans_check_state(thd)) return -1;  // 检查事务状态
+        res = trans_commit_implicit(thd);  // 提交隐式事务
+        thd->locked_tables_list.unlock_locked_tables(thd);  // 解锁表
+        thd->mdl_context.release_transactional_locks();  // 释放事务元数据锁
+        thd->variables.option_bits &= ~(OPTION_TABLE_LOCK);  // 清除表锁选项
       }
 
       if (thd->backup_tables_lock.is_acquired()) {
-        assert(!(thd->variables.option_bits & OPTION_TABLE_LOCK));
-        assert(!thd->global_read_lock.is_acquired());
+        assert(!(thd->variables.option_bits & OPTION_TABLE_LOCK));  // 断言没有表锁选项
+        assert(!thd->global_read_lock.is_acquired());  // 断言没有全局读锁
 
-        thd->backup_tables_lock.release(thd);
+        thd->backup_tables_lock.release(thd);  // 释放备份表锁
       }
 
       if (thd->global_read_lock.is_acquired())
-        thd->global_read_lock.unlock_global_read_lock(thd);
+        thd->global_read_lock.unlock_global_read_lock(thd);  // 释放全局读锁
       if (res) goto error;
-      my_ok(thd);
+      my_ok(thd);  // 返回成功
       break;
 
     case SQLCOM_LOCK_TABLES:
@@ -4092,18 +4092,18 @@ int mysql_execute_command(THD *thd, bool first_level) {
       Do not allow LOCK TABLES under an active LOCK TABLES FOR BACKUP in the
       same connection.
     */
-      if (thd->backup_tables_lock.abort_if_acquired()) goto error;
+      if (thd->backup_tables_lock.abort_if_acquired()) goto error;  // 如果存在备份表锁，则返回错误
 
       /*
           Can we commit safely? If not, return to avoid releasing
           transactional metadata locks.
         */
-      if (trans_check_state(thd)) return -1;
+      if (trans_check_state(thd)) return -1;  // 检查事务状态
       /* We must end the transaction first, regardless of anything */
-      res = trans_commit_implicit(thd);
-      thd->locked_tables_list.unlock_locked_tables(thd);
+      res = trans_commit_implicit(thd);  // 提交隐式事务
+      thd->locked_tables_list.unlock_locked_tables(thd);  // 解锁表
       /* Release transactional metadata locks. */
-      thd->mdl_context.release_transactional_locks();
+      thd->mdl_context.release_transactional_locks();  // 释放事务元数据锁
       if (res) goto error;
 
       /*
@@ -4116,37 +4116,37 @@ int mysql_execute_command(THD *thd, bool first_level) {
         in a usual way, they would have been closed.
       */
 
-      if (open_temporary_tables(thd, all_tables)) goto error;
+      if (open_temporary_tables(thd, all_tables)) goto error;  // 预打开临时表
 
-      if (lock_tables_precheck(thd, all_tables)) goto error;
+      if (lock_tables_precheck(thd, all_tables)) goto error;  // 检查表锁预条件
 
-      thd->variables.option_bits |= OPTION_TABLE_LOCK;
+      thd->variables.option_bits |= OPTION_TABLE_LOCK;  // 设置表锁选项
 
-      res = lock_tables_open_and_lock_tables(thd, all_tables);
+      res = lock_tables_open_and_lock_tables(thd, all_tables);  // 打开并锁定表
 
       if (res) {
-        thd->variables.option_bits &= ~(OPTION_TABLE_LOCK);
+        thd->variables.option_bits &= ~(OPTION_TABLE_LOCK);  // 清除表锁选项
       } else {
-        my_ok(thd);
+        my_ok(thd);  // 返回成功
       }
       break;
 
     case SQLCOM_IMPORT:
-      res = lex->m_sql_cmd->execute(thd);
+      res = lex->m_sql_cmd->execute(thd);  // 执行IMPORT命令
       break;
 
     case SQLCOM_LOCK_TABLES_FOR_BACKUP:
-      if (!lock_tables_for_backup(thd)) my_ok(thd);
+      if (!lock_tables_for_backup(thd)) my_ok(thd);  // 执行LOCK TABLES FOR BACKUP命令
 
       break;
     case SQLCOM_CREATE_COMPRESSION_DICTIONARY: {
       if (lex->create_info->zip_dict_name->fixed == 0)
-        lex->create_info->zip_dict_name->fix_fields(thd, 0);
+        lex->create_info->zip_dict_name->fix_fields(thd, 0);  // 修复压缩字典名称字段
       String dict_data;
       String *dict_data_ptr =
           lex->create_info->zip_dict_name->val_str_ascii(&dict_data);
       if (dict_data_ptr == nullptr || dict_data_ptr->ptr() == nullptr) {
-        dict_data.set("", 0, &my_charset_bin);
+        dict_data.set("", 0, &my_charset_bin);  // 设置空字典数据
         dict_data_ptr = &dict_data;
       }
 
@@ -4155,14 +4155,14 @@ int mysql_execute_command(THD *thd, bool first_level) {
                dict_data_ptr->length(),
                (lex->create_info->options & HA_LEX_CREATE_IF_NOT_EXISTS) != 0,
                false)) == 0)
-        my_ok(thd);
+        my_ok(thd);  // 创建压缩字典
       break;
     }
     case SQLCOM_DROP_COMPRESSION_DICTIONARY: {
       if ((res = compression_dict::drop_zip_dict(
                thd, lex->ident.str, lex->ident.length, lex->drop_if_exists)) ==
           0)
-        my_ok(thd);
+        my_ok(thd);  // 删除压缩字典
       break;
     }
     case SQLCOM_CREATE_DB: {
@@ -4170,10 +4170,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (!(alias = thd->strmake(lex->name.str, lex->name.length)) ||
           (check_and_convert_db_name(&lex->name, false) !=
            Ident_name_check::OK))
-        break;
+        break;  // 检查数据库名称
       if (check_access(thd, CREATE_ACL, lex->name.str, nullptr, nullptr, true,
                        false))
-        break;
+        break;  // 检查是否有CREATE权限
       /*
         As mysql_create_db() may modify HA_CREATE_INFO structure passed to
         it, we need to use a copy of LEX::create_info to make execution
@@ -4182,57 +4182,57 @@ int mysql_execute_command(THD *thd, bool first_level) {
       HA_CREATE_INFO create_info(*lex->create_info);
       res = mysql_create_db(
           thd, (lower_case_table_names == 2 ? alias : lex->name.str),
-          &create_info);
+          &create_info);  // 创建数据库
       break;
     }
     case SQLCOM_DROP_DB: {
       if (check_and_convert_db_name(&lex->name, false) != Ident_name_check::OK)
-        break;
+        break;  // 检查数据库名称是否合法
       if (check_access(thd, DROP_ACL, lex->name.str, nullptr, nullptr, true,
                        false))
-        break;
-      res = mysql_rm_db(thd, to_lex_cstring(lex->name), lex->drop_if_exists);
+        break;  // 检查是否有DROP权限
+      res = mysql_rm_db(thd, to_lex_cstring(lex->name), lex->drop_if_exists);  // 删除数据库
       break;
     }
     case SQLCOM_ALTER_DB: {
       if (check_and_convert_db_name(&lex->name, false) != Ident_name_check::OK)
-        break;
+        break;  // 检查数据库名称是否合法
       if (check_access(thd, ALTER_ACL, lex->name.str, nullptr, nullptr, true,
                        false))
-        break;
+        break;  // 检查是否有ALTER权限
       /*
         As mysql_alter_db() may modify HA_CREATE_INFO structure passed to
         it, we need to use a copy of LEX::create_info to make execution
         prepared statement- safe.
       */
       HA_CREATE_INFO create_info(*lex->create_info);
-      res = mysql_alter_db(thd, lex->name.str, &create_info);
+      res = mysql_alter_db(thd, lex->name.str, &create_info);  // 修改数据库
       break;
     }
     case SQLCOM_CREATE_EVENT:
     case SQLCOM_ALTER_EVENT:
       do {
-        assert(lex->event_parse_data);
+        assert(lex->event_parse_data);  // 断言事件解析数据存在
         if (lex->table_or_sp_used()) {
           my_error(ER_NOT_SUPPORTED_YET, MYF(0),
                    "Usage of subqueries or stored "
-                   "function calls as part of this statement");
+                   "function calls as part of this statement");  // 不支持子查询或存储函数调用
           break;
         }
 
         // Use the hypergraph optimizer if it's enabled.
         lex->using_hypergraph_optimizer =
-            thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER);
+            thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER);  // 使用超图优化器
 
-        res = sp_process_definer(thd);
+        res = sp_process_definer(thd);  // 处理定义者
         if (res) break;
 
         switch (lex->sql_command) {
           case SQLCOM_CREATE_EVENT: {
             bool if_not_exists =
-                (lex->create_info->options & HA_LEX_CREATE_IF_NOT_EXISTS);
+                (lex->create_info->options & HA_LEX_CREATE_IF_NOT_EXISTS);  // 检查是否存在
             res =
-                Events::create_event(thd, lex->event_parse_data, if_not_exists);
+                Events::create_event(thd, lex->event_parse_data, if_not_exists);  // 创建事件
             break;
           }
           case SQLCOM_ALTER_EVENT: {
@@ -4245,20 +4245,20 @@ int mysql_execute_command(THD *thd, bool first_level) {
             res =
                 Events::update_event(thd, lex->event_parse_data,
                                      lex->spname ? &lex->spname->m_db : nullptr,
-                                     lex->spname ? &name_lex_str : nullptr);
+                                     lex->spname ? &name_lex_str : nullptr);  // 修改事件
             break;
           }
           default:
-            assert(0);
+            assert(0);  // 断言不可能的情况
         }
-        DBUG_PRINT("info", ("DDL error code=%d", res));
-        if (!res && !thd->killed) my_ok(thd);
+        DBUG_PRINT("info", ("DDL error code=%d", res));  // 打印DDL错误代码
+        if (!res && !thd->killed) my_ok(thd);  // 如果没有错误且线程未被终止，则返回成功
 
       } while (false);
       /* Don't do it, if we are inside a SP */
       if (!thd->sp_runtime_ctx) {
-        sp_head::destroy(lex->sphead);
-        lex->sphead = nullptr;
+        sp_head::destroy(lex->sphead);  // 销毁存储过程头
+        lex->sphead = nullptr;  // 清空存储过程头
       }
       /* lex->cleanup() is called outside, no need to call it here */
       break;
@@ -4266,24 +4266,24 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (!(res = Events::drop_event(thd, lex->spname->m_db,
                                      to_lex_cstring(lex->spname->m_name),
                                      lex->drop_if_exists)))
-        my_ok(thd);
+        my_ok(thd);  // 删除事件
       break;
     }
     case SQLCOM_CREATE_FUNCTION:  // UDF function
     {
       if (check_access(thd, INSERT_ACL, "mysql", nullptr, nullptr, true, false))
-        break;
+        break;  // 检查是否有INSERT权限
       if (!(res = mysql_create_function(
                 thd, &lex->udf,
                 lex->create_info->options & HA_LEX_CREATE_IF_NOT_EXISTS)))
-        my_ok(thd);
+        my_ok(thd);  // 创建UDF函数
       break;
     }
     case SQLCOM_CREATE_USER: {
       if (check_access(thd, INSERT_ACL, "mysql", nullptr, nullptr, true,
                        true) &&
           check_global_access(thd, CREATE_USER_ACL))
-        break;
+        break;  // 检查是否有INSERT和CREATE USER权限
       /* Conditionally writes to binlog */
       HA_CREATE_INFO create_info(*lex->create_info);
       if (!(res = mysql_create_user(
@@ -4298,11 +4298,11 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (check_access(thd, DELETE_ACL, "mysql", nullptr, nullptr, true,
                        true) &&
           check_global_access(thd, CREATE_USER_ACL))
-        break;
+        break;  // 检查是否有DELETE和CREATE USER权限
       /* Conditionally writes to binlog */
       if (!(res = mysql_drop_user(thd, lex->users_list, lex->drop_if_exists,
                                   false)))
-        my_ok(thd);
+        my_ok(thd);  // 删除用户
 
       break;
     }
@@ -4310,22 +4310,22 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (check_access(thd, UPDATE_ACL, "mysql", nullptr, nullptr, true,
                        true) &&
           check_global_access(thd, CREATE_USER_ACL))
-        break;
+        break;  // 检查是否有UPDATE和CREATE USER权限
       /* Conditionally writes to binlog */
-      if (!(res = mysql_rename_user(thd, lex->users_list))) my_ok(thd);
+      if (!(res = mysql_rename_user(thd, lex->users_list))) my_ok(thd);  // 重命名用户
       break;
     }
     case SQLCOM_REVOKE_ALL: {
       if (check_access(thd, UPDATE_ACL, "mysql", nullptr, nullptr, true,
                        true) &&
           check_global_access(thd, CREATE_USER_ACL))
-        break;
+        break;  // 检查是否有UPDATE和CREATE USER权限
 
       /* Replicate current user as grantor */
-      thd->binlog_invoker();
+      thd->binlog_invoker();  // 复制当前用户为授权者
 
       /* Conditionally writes to binlog */
-      if (!(res = mysql_revoke_all(thd, lex->users_list))) my_ok(thd);
+      if (!(res = mysql_revoke_all(thd, lex->users_list))) my_ok(thd);  // 撤销所有权限
       break;
     }
     case SQLCOM_REVOKE:
@@ -4333,7 +4333,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
       /* GRANT ... AS preliminery checks */
       if (lex->grant_as.grant_as_used) {
         if ((first_table || query_block->db)) {
-          my_error(ER_UNSUPPORTED_USE_OF_GRANT_AS, MYF(0));
+          my_error(ER_UNSUPPORTED_USE_OF_GRANT_AS, MYF(0));  // 不支持GRANT ... AS语法
           goto error;
         }
       }
@@ -4356,7 +4356,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
                   first_table ? &first_table->grant.privilege : nullptr,
                   first_table ? &first_table->grant.m_internal : nullptr,
                   first_table ? false : true, false)) {
-            goto error;
+            goto error;  // 检查访问权限
           }
         }
         /*
@@ -4375,12 +4375,12 @@ int mysql_execute_command(THD *thd, bool first_level) {
                        first_table ? first_table->db : query_block->db,
                        first_table ? &first_table->grant.privilege : nullptr,
                        first_table ? &first_table->grant.m_internal : nullptr,
-                       first_table ? false : true, true);
+                       first_table ? false : true, true);  // 检查访问权限
         }
       }
 
       /* Replicate current user as grantor */
-      thd->binlog_invoker();
+      thd->binlog_invoker();  // 复制当前用户为授权者
 
       if (thd->security_context()->user().str)  // If not replication
       {
@@ -4389,24 +4389,24 @@ int mysql_execute_command(THD *thd, bool first_level) {
 
         List_iterator<LEX_USER> user_list(lex->users_list);
         while ((tmp_user = user_list++)) {
-          if (!(user = get_current_user(thd, tmp_user))) goto error;
+          if (!(user = get_current_user(thd, tmp_user))) goto error;  // 获取当前用户
           if (specialflag & SPECIAL_NO_RESOLVE &&
               hostname_requires_resolving(user->host.str))
             push_warning(thd, Sql_condition::SL_WARNING,
                          ER_WARN_HOSTNAME_WONT_WORK,
-                         ER_THD(thd, ER_WARN_HOSTNAME_WONT_WORK));
+                         ER_THD(thd, ER_WARN_HOSTNAME_WONT_WORK));  // 推送主机名解析警告
           // Are we trying to change a password of another user
-          assert(user->host.str != nullptr);
+          assert(user->host.str != nullptr);  // 断言主机名不为空
 
           /*
             GRANT/REVOKE PROXY has the target user as a first entry in the list.
            */
-          if (lex->type == TYPE_ENUM_PROXY && first_user) {
+          if (lex->type == TYPE_ENUM_PROxy && first_user) {
             first_user = false;
             if (acl_check_proxy_grant_access(thd, user->host.str,
                                              user->user.str,
                                              lex->grant & GRANT_ACL))
-              goto error;
+              goto error;  // 检查代理授权访问权限
           }
         }
       }
@@ -4416,10 +4416,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
             push_warning_printf(thd, Sql_condition::SL_WARNING,
                                 ER_ILLEGAL_PRIVILEGE_LEVEL,
                                 ER_THD(thd, ER_ILLEGAL_PRIVILEGE_LEVEL),
-                                all_tables->table_name);
+                                all_tables->table_name);  // 推送非法权限级别警告
           } else {
             my_error(ER_ILLEGAL_PRIVILEGE_LEVEL, MYF(0),
-                     all_tables->table_name);
+                     all_tables->table_name);  // 返回非法权限级别错误
             goto error;
           }
         }
@@ -4430,25 +4430,25 @@ int mysql_execute_command(THD *thd, bool first_level) {
                             : lex->grant;
           if (check_grant_routine(thd, grants | GRANT_ACL, all_tables,
                                   lex->type == TYPE_ENUM_PROCEDURE, false))
-            goto error;
+            goto error;  // 检查存储过程或函数的授权
           /* Conditionally writes to binlog */
           res = mysql_routine_grant(
               thd, all_tables, lex->type == TYPE_ENUM_PROCEDURE,
-              lex->users_list, grants, lex->sql_command == SQLCOM_REVOKE, true);
-          if (!res) my_ok(thd);
+              lex->users_list, grants, lex->sql_command == SQLCOM_REVOKE, true);  // 执行存储过程或函数的授权
+          if (!res) my_ok(thd);  // 返回成功
         } else {
           if (check_grant(thd, (lex->grant | lex->grant_tot_col | GRANT_ACL),
                           all_tables, false, UINT_MAX, false))
-            goto error;
+            goto error;  // 检查表授权
           /* Conditionally writes to binlog */
           res =
               mysql_table_grant(thd, all_tables, lex->users_list, lex->columns,
-                                lex->grant, lex->sql_command == SQLCOM_REVOKE);
+                                lex->grant, lex->sql_command == SQLCOM_REVOKE);  // 执行表授权
         }
       } else {
         if (lex->columns.elements ||
             (lex->type && lex->type != TYPE_ENUM_PROXY)) {
-          my_error(ER_ILLEGAL_GRANT_FOR_TABLE, MYF(0));
+          my_error(ER_ILLEGAL_GRANT_FOR_TABLE, MYF(0));  // 返回非法表授权错误
           goto error;
         } else {
           /* Dynamic privileges are allowed only for global grants */
@@ -4463,9 +4463,9 @@ int mysql_execute_command(THD *thd, bool first_level) {
             if (thd->lex->grant_if_exists) {
               push_warning_printf(
                   thd, Sql_condition::SL_WARNING, ER_ILLEGAL_PRIVILEGE_LEVEL,
-                  ER_THD(thd, ER_ILLEGAL_PRIVILEGE_LEVEL), privs.c_ptr());
+                  ER_THD(thd, ER_ILLEGAL_PRIVILEGE_LEVEL), privs.c_ptr());  // 推送非法权限级别警告
             } else {
-              my_error(ER_ILLEGAL_PRIVILEGE_LEVEL, MYF(0), privs.c_ptr());
+              my_error(ER_ILLEGAL_PRIVILEGE_LEVEL, MYF(0), privs.c_ptr());  // 返回非法权限级别错误
               goto error;
             }
           }
@@ -4473,7 +4473,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
           res = mysql_grant(
               thd, query_block->db, lex->users_list, lex->grant,
               lex->sql_command == SQLCOM_REVOKE, lex->type == TYPE_ENUM_PROXY,
-              lex->dynamic_privileges, lex->all_privileges, &lex->grant_as);
+              lex->dynamic_privileges, lex->all_privileges, &lex->grant_as);  // 执行全局授权
         }
       }
       break;
@@ -4483,15 +4483,15 @@ int mysql_execute_command(THD *thd, bool first_level) {
         RESET commands are never written to the binary log, so we have to
         initialize this variable because RESET shares the same code as FLUSH
       */
-      lex->no_write_to_binlog = true;
+      lex->no_write_to_binlog = true;  // 设置不写入二进制日志
       if ((lex->type & REFRESH_PERSIST) && (lex->option_type == OPT_PERSIST)) {
         Persisted_variables_cache *pv =
             Persisted_variables_cache::get_instance();
         if (pv)
           if (pv->reset_persisted_variables(thd, lex->name.str,
                                             lex->drop_if_exists))
-            goto error;
-        my_ok(thd);
+            goto error;  // 重置持久化变量
+        my_ok(thd);  // 返回成功
         break;
       }
       [[fallthrough]];
@@ -4499,37 +4499,37 @@ int mysql_execute_command(THD *thd, bool first_level) {
       int write_to_binlog;
 
       if (lex->type & DUMP_MEMORY_PROFILE) {
-        if (check_global_access(thd, SUPER_ACL)) goto error;
+        if (check_global_access(thd, SUPER_ACL)) goto error;  // 检查是否有SUPER权限
       } else if (is_reload_request_denied(thd, lex->type))
-        goto error;
+        goto error;  // 检查是否拒绝重载请求
 
       if (first_table && lex->type & REFRESH_READ_LOCK) {
         /*
            Do not allow FLUSH TABLES <table_list> WITH READ LOCK under an active
            LOCK TABLES FOR BACKUP lock.
          */
-        if (thd->backup_tables_lock.abort_if_acquired()) goto error;
+        if (thd->backup_tables_lock.abort_if_acquired()) goto error;  // 检查是否有备份表锁
 
         /* Check table-level privileges. */
         if (check_table_access(thd, LOCK_TABLES_ACL | SELECT_ACL, all_tables,
                                false, UINT_MAX, false))
-          goto error;
-        if (flush_tables_with_read_lock(thd, all_tables)) goto error;
-        my_ok(thd);
+          goto error;  // 检查表级权限
+        if (flush_tables_with_read_lock(thd, all_tables)) goto error;  // 刷新表并加读锁
+        my_ok(thd);  // 返回成功
         break;
       } else if (first_table && lex->type & REFRESH_FOR_EXPORT) {
         /*
            Do not allow FLUSH TABLES ... FOR EXPORT under an active LOCK TABLES
            FOR BACKUP lock.
          */
-        if (thd->backup_tables_lock.abort_if_acquired()) goto error;
+        if (thd->backup_tables_lock.abort_if_acquired()) goto error;  // 检查是否有备份表锁
 
         /* Check table-level privileges. */
         if (check_table_access(thd, LOCK_TABLES_ACL | SELECT_ACL, all_tables,
                                false, UINT_MAX, false))
-          goto error;
-        if (flush_tables_for_export(thd, all_tables)) goto error;
-        my_ok(thd);
+          goto error;  // 检查表级权限
+        if (flush_tables_for_export(thd, all_tables)) goto error;  // 刷新表以导出
+        my_ok(thd);  // 返回成功
         break;
       }
 
@@ -4551,13 +4551,14 @@ int mysql_execute_command(THD *thd, bool first_level) {
         {
           if (!lex->no_write_to_binlog)
             res = write_bin_log(thd, false, thd->query().str,
-                                thd->query().length);
+                                thd->query().length);  // 写入二进制日志
         } else if (write_to_binlog < 0) {
           /*
              We should not write, but rather report error because
              handle_reload_request binlog interactions failed
            */
-          res = 1;
+          res = 1;  // 设置错误
+
         }
 
         if (!res) my_ok(thd);
@@ -4566,124 +4567,124 @@ int mysql_execute_command(THD *thd, bool first_level) {
       break;
     }
     case SQLCOM_KILL: {
-      Item *it = lex->kill_value_list.head();
+      Item *it = lex->kill_value_list.head();  // 获取KILL语句中的值列表的头项
 
-      if (lex->table_or_sp_used()) {
+      if (lex->table_or_sp_used()) {  // 如果语句中使用了表或存储过程
         my_error(ER_NOT_SUPPORTED_YET, MYF(0),
                  "Usage of subqueries or stored "
-                 "function calls as part of this statement");
+                 "function calls as part of this statement");  // 抛出错误，不支持子查询或存储函数调用
         goto error;
       }
 
-      if ((!it->fixed && it->fix_fields(lex->thd, &it)) || it->check_cols(1)) {
-        my_error(ER_SET_CONSTANTS_ONLY, MYF(0));
+      if ((!it->fixed && it->fix_fields(lex->thd, &it)) || it->check_cols(1)) {  // 如果项未固定或字段修复失败，或者列检查失败
+        my_error(ER_SET_CONSTANTS_ONLY, MYF(0));  // 抛出错误，只能设置常量
         goto error;
       }
 
-      my_thread_id thread_id = static_cast<my_thread_id>(it->val_int());
-      if (thd->is_error()) goto error;
+      my_thread_id thread_id = static_cast<my_thread_id>(it->val_int());  // 获取线程ID
+      if (thd->is_error()) goto error;  // 如果线程有错误，跳转到错误处理
 
-      sql_kill(thd, thread_id, lex->type & ONLY_KILL_QUERY);
+      sql_kill(thd, thread_id, lex->type & ONLY_KILL_QUERY);  // 执行KILL操作
       break;
     }
     case SQLCOM_SHOW_CREATE_USER: {
-      LEX_USER *show_user = get_current_user(thd, lex->grant_user);
-      Security_context *sctx = thd->security_context();
+      LEX_USER *show_user = get_current_user(thd, lex->grant_user);  // 获取当前用户
+      Security_context *sctx = thd->security_context();  // 获取安全上下文
       bool are_both_users_same =
           !strcmp(sctx->priv_user().str, show_user->user.str) &&
           !my_strcasecmp(system_charset_info, show_user->host.str,
-                         sctx->priv_host().str);
+                         sctx->priv_host().str);  // 检查当前用户和显示用户是否相同
       if (are_both_users_same || !check_access(thd, SELECT_ACL, "mysql",
-                                               nullptr, nullptr, true, false))
-        res = mysql_show_create_user(thd, show_user, are_both_users_same);
+                                               nullptr, nullptr, true, false))  // 如果用户相同或有SELECT权限
+        res = mysql_show_create_user(thd, show_user, are_both_users_same);  // 显示用户的创建语句
       break;
     }
     case SQLCOM_BEGIN:
-      if (trans_begin(thd, lex->start_transaction_opt)) goto error;
-      my_ok(thd);
+      if (trans_begin(thd, lex->start_transaction_opt)) goto error;  // 开始事务
+      my_ok(thd);  // 返回OK响应
       break;
     case SQLCOM_COMMIT: {
       assert(thd->lock == nullptr ||
-             thd->locked_tables_mode == LTM_LOCK_TABLES);
+             thd->locked_tables_mode == LTM_LOCK_TABLES);  // 确保没有锁或处于锁定表模式
       bool tx_chain =
           (lex->tx_chain == TVL_YES ||
-           (thd->variables.completion_type == 1 && lex->tx_chain != TVL_NO));
+           (thd->variables.completion_type == 1 && lex->tx_chain != TVL_NO));  // 检查事务链是否继续
       bool tx_release =
           (lex->tx_release == TVL_YES ||
-           (thd->variables.completion_type == 2 && lex->tx_release != TVL_NO));
-      if (trans_commit(thd)) goto error;
-      thd->mdl_context.release_transactional_locks();
+           (thd->variables.completion_type == 2 && lex->tx_release != TVL_NO));  // 检查事务是否释放
+      if (trans_commit(thd)) goto error;  // 提交事务
+      thd->mdl_context.release_transactional_locks();  // 释放事务锁
       /* Begin transaction with the same isolation level. */
       if (tx_chain) {
-        if (trans_begin(thd)) goto error;
+        if (trans_begin(thd)) goto error;  // 如果事务链继续，开始新事务
       } else {
         /* Reset the isolation level and access mode if no chaining
          * transaction.*/
-        trans_reset_one_shot_chistics(thd);
+        trans_reset_one_shot_chistics(thd);  // 如果没有事务链，重置隔离级别和访问模式
       }
       /* Disconnect the current client connection. */
-      if (tx_release) thd->killed = THD::KILL_CONNECTION;
-      my_ok(thd);
+      if (tx_release) thd->killed = THD::KILL_CONNECTION;  // 如果事务释放，断开客户端连接
+      my_ok(thd);  // 返回OK响应
       break;
     }
     case SQLCOM_ROLLBACK: {
       assert(thd->lock == nullptr ||
-             thd->locked_tables_mode == LTM_LOCK_TABLES);
+             thd->locked_tables_mode == LTM_LOCK_TABLES);  // 确保没有锁或处于锁定表模式
       bool tx_chain =
           (lex->tx_chain == TVL_YES ||
-           (thd->variables.completion_type == 1 && lex->tx_chain != TVL_NO));
+           (thd->variables.completion_type == 1 && lex->tx_chain != TVL_NO));  // 检查事务链是否继续
       bool tx_release =
           (lex->tx_release == TVL_YES ||
-           (thd->variables.completion_type == 2 && lex->tx_release != TVL_NO));
-      if (trans_rollback(thd)) goto error;
-      thd->mdl_context.release_transactional_locks();
+           (thd->variables.completion_type == 2 && lex->tx_release != TVL_NO));  // 检查事务是否释放
+      if (trans_rollback(thd)) goto error;  // 回滚事务
+      thd->mdl_context.release_transactional_locks();  // 释放事务锁
       /* Begin transaction with the same isolation level. */
       if (tx_chain) {
-        if (trans_begin(thd)) goto error;
+        if (trans_begin(thd)) goto error;  // 如果事务链继续，开始新事务
       } else {
         /* Reset the isolation level and access mode if no chaining
          * transaction.*/
-        trans_reset_one_shot_chistics(thd);
+        trans_reset_one_shot_chistics(thd);  // 如果没有事务链，重置隔离级别和访问模式
       }
       /* Disconnect the current client connection. */
-      if (tx_release) thd->killed = THD::KILL_CONNECTION;
-      my_ok(thd);
+      if (tx_release) thd->killed = THD::KILL_CONNECTION;  // 如果事务释放，断开客户端连接
+      my_ok(thd);  // 返回OK响应
       break;
     }
     case SQLCOM_RELEASE_SAVEPOINT:
-      if (trans_release_savepoint(thd, lex->ident)) goto error;
-      my_ok(thd);
+      if (trans_release_savepoint(thd, lex->ident)) goto error;  // 释放保存点
+      my_ok(thd);  // 返回OK响应
       break;
     case SQLCOM_ROLLBACK_TO_SAVEPOINT:
-      if (trans_rollback_to_savepoint(thd, lex->ident)) goto error;
-      my_ok(thd);
+      if (trans_rollback_to_savepoint(thd, lex->ident)) goto error;  // 回滚到保存点
+      my_ok(thd);  // 返回OK响应
       break;
     case SQLCOM_SAVEPOINT:
-      if (trans_savepoint(thd, lex->ident)) goto error;
-      my_ok(thd);
+      if (trans_savepoint(thd, lex->ident)) goto error;  // 创建保存点
+      my_ok(thd);  // 返回OK响应
       break;
     case SQLCOM_CREATE_PROCEDURE:
     case SQLCOM_CREATE_SPFUNCTION: {
       uint namelen;
       char *name;
 
-      assert(lex->sphead != nullptr);
-      assert(lex->sphead->m_db.str); /* Must be initialized in the parser */
+      assert(lex->sphead != nullptr);  // 确保存储过程头不为空
+      assert(lex->sphead->m_db.str); /* Must be initialized in the parser */  // 确保数据库名已初始化
       /*
         Verify that the database name is allowed, optionally
         lowercase it.
       */
       if (check_and_convert_db_name(&lex->sphead->m_db, false) !=
-          Ident_name_check::OK)
+          Ident_name_check::OK)  // 检查并转换数据库名
         goto error;
 
       if (check_access(thd, CREATE_PROC_ACL, lex->sphead->m_db.str, nullptr,
-                       nullptr, false, false))
+                       nullptr, false, false))  // 检查是否有创建存储过程的权限
         goto error;
 
-      name = lex->sphead->name(&namelen);
+      name = lex->sphead->name(&namelen);  // 获取存储过程名
       if (lex->sphead->m_type == enum_sp_type::FUNCTION) {
-        udf_func *udf = find_udf(name, namelen);
+        udf_func *udf = find_udf(name, namelen);  // 查找用户定义函数
         /*
           Issue a warning if there is an existing loadable function with the
           same name.
@@ -4691,23 +4692,23 @@ int mysql_execute_command(THD *thd, bool first_level) {
         if (udf) {
           push_warning_printf(thd, Sql_condition::SL_NOTE,
                               ER_WARN_SF_UDF_NAME_COLLISION,
-                              ER_THD(thd, ER_WARN_SF_UDF_NAME_COLLISION), name);
+                              ER_THD(thd, ER_WARN_SF_UDF_NAME_COLLISION), name);  // 如果存在同名函数，发出警告
         }
       }
 
-      if (sp_process_definer(thd)) goto error;
+      if (sp_process_definer(thd)) goto error;  // 处理存储过程的定义者
 
       /*
         Record the CURRENT_USER in binlog. The CURRENT_USER is used on slave to
         grant default privileges when sp_automatic_privileges variable is set.
       */
-      thd->binlog_invoker();
+      thd->binlog_invoker();  // 记录当前用户到binlog
 
       bool sp_already_exists = false;
       if (!(res = sp_create_routine(
                 thd, lex->sphead, thd->lex->definer,
                 thd->lex->create_info->options & HA_LEX_CREATE_IF_NOT_EXISTS,
-                sp_already_exists))) {
+                sp_already_exists))) {  // 创建存储过程
         if (!sp_already_exists) {
           /* only add privileges if really necessary */
 
@@ -4729,8 +4730,8 @@ int mysql_execute_command(THD *thd, bool first_level) {
             both creation of routine and implicit GRANT parts of one fully
             atomic statement.
           */
-          assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));
-          close_thread_tables(thd);
+          assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));  // 确保没有语句事务
+          close_thread_tables(thd);  // 关闭线程表
           /*
             Check if invoker exists on slave, then use invoker privilege to
             insert routine privileges to mysql.procs_priv. If invoker is not
@@ -4758,7 +4759,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
             if (is_acl_user(thd, current_host.str, current_user.str)) {
               security_context.change_security_context(
                   thd, current_user, current_host, thd->lex->sphead->m_db.str,
-                  &backup);
+                  &backup);  // 更改安全上下文
               restore_backup_context = true;
             }
           }
@@ -4772,7 +4773,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
                     lex->sql_command == SQLCOM_CREATE_PROCEDURE))
               push_warning(thd, Sql_condition::SL_WARNING,
                            ER_PROC_AUTO_GRANT_FAIL,
-                           ER_THD(thd, ER_PROC_AUTO_GRANT_FAIL));
+                           ER_THD(thd, ER_PROC_AUTO_GRANT_FAIL));  // 自动授予权限失败时发出警告
             thd->clear_error();
           }
 
@@ -4781,10 +4782,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
           */
           if (restore_backup_context) {
             assert(thd->slave_thread == 1);
-            thd->security_context()->restore_security_context(thd, backup);
+            thd->security_context()->restore_security_context(thd, backup);  // 恢复安全上下文
           }
         }
-        my_ok(thd);
+        my_ok(thd);  // 返回OK响应
       }
       break; /* break super switch */
     }        /* end case group bracket */
@@ -4794,7 +4795,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
       if (check_routine_access(thd, ALTER_PROC_ACL, lex->spname->m_db.str,
                                lex->spname->m_name.str,
                                lex->sql_command == SQLCOM_ALTER_PROCEDURE,
-                               false))
+                               false))  // 检查是否有修改存储过程的权限
         goto error;
 
       enum_sp_type sp_type = (lex->sql_command == SQLCOM_ALTER_PROCEDURE)
@@ -4807,10 +4808,10 @@ int mysql_execute_command(THD *thd, bool first_level) {
         already puts on CREATE FUNCTION.
       */
       /* Conditionally writes to binlog */
-      res = sp_update_routine(thd, sp_type, lex->spname, &lex->sp_chistics);
+      res = sp_update_routine(thd, sp_type, lex->spname, &lex->sp_chistics);  // 更新存储过程
       if (res || thd->killed) goto error;
 
-      my_ok(thd);
+      my_ok(thd);  // 返回OK响应
       break;
     }
     case SQLCOM_DROP_PROCEDURE:
@@ -4819,18 +4820,18 @@ int mysql_execute_command(THD *thd, bool first_level) {
           !lex->spname->m_explicit_name) {
         /* DROP FUNCTION <non qualified name> */
         udf_func *udf =
-            find_udf(lex->spname->m_name.str, lex->spname->m_name.length);
+            find_udf(lex->spname->m_name.str, lex->spname->m_name.length);  // 查找用户定义函数
         if (udf) {
           if (check_access(thd, DELETE_ACL, "mysql", nullptr, nullptr, true,
-                           false))
+                           false))  // 检查是否有删除权限
             goto error;
 
-          if (!(res = mysql_drop_function(thd, &lex->spname->m_name))) {
-            my_ok(thd);
+          if (!(res = mysql_drop_function(thd, &lex->spname->m_name))) {  // 删除用户定义函数
+            my_ok(thd);  // 返回OK响应
             break;
           }
           my_error(ER_SP_DROP_FAILED, MYF(0), "FUNCTION (UDF)",
-                   lex->spname->m_name.str);
+                   lex->spname->m_name.str);  // 删除失败时抛出错误
           goto error;
         }
 
@@ -4839,31 +4840,34 @@ int mysql_execute_command(THD *thd, bool first_level) {
             push_warning_printf(thd, Sql_condition::SL_NOTE,
                                 ER_SP_DOES_NOT_EXIST,
                                 ER_THD(thd, ER_SP_DOES_NOT_EXIST),
-                                "FUNCTION (UDF)", lex->spname->m_name.str);
+                                "FUNCTION (UDF)", lex->spname->m_name.str);  // 如果函数不存在且设置了drop_if_exists，发出警告
             res = false;
-            my_ok(thd);
+            my_ok(thd);  // 返回OK响应
             break;
           }
           my_error(ER_SP_DOES_NOT_EXIST, MYF(0), "FUNCTION (UDF)",
-                   lex->spname->m_name.str);
+                   lex->spname->m_name.str);  // 如果函数不存在，抛出错误
           goto error;
         }
         /* Fall thought to test for a stored function */
       }
 
-      const char *db = lex->spname->m_db.str;
-      char *name = lex->spname->m_name.str;
+      const char *db = lex->spname->m_db.str;  // 获取存储过程/函数所在的数据库名
+      char *name = lex->spname->m_name.str;    // 获取存储过程/函数的名称
 
+      // 检查用户是否有权限执行ALTER或DROP操作
       if (check_routine_access(thd, ALTER_PROC_ACL, db, name,
                                lex->sql_command == SQLCOM_DROP_PROCEDURE,
                                false))
         goto error;
 
+      // 根据SQL命令类型确定是存储过程还是函数
       enum_sp_type sp_type = (lex->sql_command == SQLCOM_DROP_PROCEDURE)
                                  ? enum_sp_type::PROCEDURE
                                  : enum_sp_type::FUNCTION;
 
       /* Conditionally writes to binlog */
+      // 执行删除存储过程/函数的操作，并返回结果
       enum_sp_return_code sp_result =
           sp_drop_routine(thd, sp_type, lex->spname);
 
@@ -4882,41 +4886,42 @@ int mysql_execute_command(THD *thd, bool first_level) {
               dropping of routine and implicit REVOKE parts of one fully atomic
               statement.
       */
-      assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));
-      close_thread_tables(thd);
+      assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));  // 确保没有事务在进行
+      close_thread_tables(thd);  // 关闭所有打开的表
 
+      // 如果存储过程/函数存在且启用了自动权限管理，尝试撤销相关权限
       if (sp_result != SP_DOES_NOT_EXISTS && sp_automatic_privileges &&
           !opt_noacl &&
           sp_revoke_privileges(thd, db, name,
                                lex->sql_command == SQLCOM_DROP_PROCEDURE)) {
         push_warning(thd, Sql_condition::SL_WARNING, ER_PROC_AUTO_REVOKE_FAIL,
-                     ER_THD(thd, ER_PROC_AUTO_REVOKE_FAIL));
+                     ER_THD(thd, ER_PROC_AUTO_REVOKE_FAIL));  // 推送警告信息
         /* If this happens, an error should have been reported. */
         goto error;
       }
 
-      res = sp_result;
+      res = sp_result;  // 设置结果
       switch (sp_result) {
         case SP_OK:
-          my_ok(thd);
+          my_ok(thd);  // 如果成功，发送OK响应
           break;
         case SP_DOES_NOT_EXISTS:
           if (lex->drop_if_exists) {
             res =
-                write_bin_log(thd, true, thd->query().str, thd->query().length);
+                write_bin_log(thd, true, thd->query().str, thd->query().length);  // 写入binlog
             push_warning_printf(thd, Sql_condition::SL_NOTE,
                                 ER_SP_DOES_NOT_EXIST,
                                 ER_THD(thd, ER_SP_DOES_NOT_EXIST),
-                                SP_COM_STRING(lex), lex->spname->m_qname.str);
-            if (!res) my_ok(thd);
+                                SP_COM_STRING(lex), lex->spname->m_qname.str);  // 推送警告信息
+            if (!res) my_ok(thd);  // 如果没有错误，发送OK响应
             break;
           }
           my_error(ER_SP_DOES_NOT_EXIST, MYF(0), SP_COM_STRING(lex),
-                   lex->spname->m_qname.str);
+                   lex->spname->m_qname.str);  // 如果存储过程/函数不存在，报错
           goto error;
         default:
           my_error(ER_SP_DROP_FAILED, MYF(0), SP_COM_STRING(lex),
-                   lex->spname->m_qname.str);
+                   lex->spname->m_qname.str);  // 如果删除失败，报错
           goto error;
       }
       break;
@@ -4926,14 +4931,14 @@ int mysql_execute_command(THD *thd, bool first_level) {
         Note: SQLCOM_CREATE_VIEW also handles 'ALTER VIEW' commands
         as specified through the thd->lex->create_view_mode flag.
       */
-      res = mysql_create_view(thd, first_table, thd->lex->create_view_mode);
+      res = mysql_create_view(thd, first_table, thd->lex->create_view_mode);  // 创建或修改视图
       break;
     }
     case SQLCOM_DROP_VIEW: {
-      if (check_table_access(thd, DROP_ACL, all_tables, false, UINT_MAX, false))
+      if (check_table_access(thd, DROP_ACL, all_tables, false, UINT_MAX, false))  // 检查用户是否有权限删除视图
         goto error;
       /* Conditionally writes to binlog. */
-      res = mysql_drop_view(thd, first_table);
+      res = mysql_drop_view(thd, first_table);  // 删除视图
       break;
     }
     case SQLCOM_CREATE_TRIGGER:
@@ -4941,13 +4946,13 @@ int mysql_execute_command(THD *thd, bool first_level) {
       /* Conditionally writes to binlog. */
       assert(lex->m_sql_cmd != nullptr);
       static_cast<Sql_cmd_ddl_trigger_common *>(lex->m_sql_cmd)
-          ->set_table(all_tables);
+          ->set_table(all_tables);  // 设置触发器相关的表
 
-      res = lex->m_sql_cmd->execute(thd);
+      res = lex->m_sql_cmd->execute(thd);  // 执行创建或删除触发器的操作
       break;
     }
     case SQLCOM_BINLOG_BASE64_EVENT: {
-      mysql_client_binlog_statement(thd);
+      mysql_client_binlog_statement(thd);  // 处理binlog事件
       break;
     }
     case SQLCOM_ANALYZE:
@@ -4959,7 +4964,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
     case SQLCOM_HA_OPEN:
     case SQLCOM_HA_READ:
     case SQLCOM_HA_CLOSE:
-      assert(first_table == all_tables && first_table != nullptr);
+      assert(first_table == all_tables && first_table != nullptr);  // 确保表存在
       [[fallthrough]];
     case SQLCOM_CREATE_SERVER:
     case SQLCOM_CREATE_RESOURCE_GROUP:
@@ -5049,7 +5054,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
     case SQLCOM_DROP_SRS: {
       assert(lex->m_sql_cmd != nullptr);
 
-      res = lex->m_sql_cmd->execute(thd);
+      res = lex->m_sql_cmd->execute(thd);  // 执行SQL命令
 
       break;
     }
@@ -5181,7 +5186,7 @@ int mysql_execute_command(THD *thd, bool first_level) {
         goto error;
       }
       /* Conditionally writes to binlog */
-      res = mysql_alter_user(thd, lex->users_list, lex->drop_if_exists);
+      res = mysql_alter_user(thd, lex->users_list, lex->drop_if_exists);  // 执行ALTER USER操作
       /*
         Iterate over list of MFA methods, check if all auth plugin methods
         which need registration steps have completed, then turn OFF server
@@ -5189,39 +5194,39 @@ int mysql_execute_command(THD *thd, bool first_level) {
       */
       tmp_user = lex->users_list[0];
       if (!res && is_self && finish_reg) {
-        if (turn_off_sandbox_mode(thd, tmp_user)) return true;
+        if (turn_off_sandbox_mode(thd, tmp_user)) return true;  // 关闭沙盒模式
       }
       break;
     }
     default:
       assert(0); /* Impossible */
-      my_ok(thd);
+      my_ok(thd);  // 发送OK响应
       break;
   }
   goto finish;
 
 error:
-  res = true;
+  res = true;  // 设置结果为错误
 
 finish:
   /* Restore system variables which were changed by SET_VAR hint. */
   if (lex->opt_hints_global && lex->opt_hints_global->sys_var_hint)
-    lex->opt_hints_global->sys_var_hint->restore_vars(thd);
+    lex->opt_hints_global->sys_var_hint->restore_vars(thd);  // 恢复被SET_VAR提示修改的系统变量
 
-  THD_STAGE_INFO(thd, stage_query_end);
+  THD_STAGE_INFO(thd, stage_query_end);  // 设置查询结束阶段
 
   // Check for receiving a recent kill signal
   if (thd->killed) {
-    thd->send_kill_message();
+    thd->send_kill_message();  // 发送kill消息
     res = thd->is_error();
   }
   if (res) {
     if (thd->get_reprepare_observer() != nullptr &&
         thd->get_reprepare_observer()->is_invalidated() &&
         thd->get_reprepare_observer()->can_retry())
-      thd->skip_gtid_rollback = true;
+      thd->skip_gtid_rollback = true;  // 跳过GTID回滚
   } else {
-    lex->set_exec_started();
+    lex->set_exec_started();  // 设置执行开始标志
   }
 
   // Cleanup EXPLAIN info
@@ -5233,53 +5238,53 @@ finish:
         thus it is only now that we may fully clean up any unit of this
         statement.
       */
-      lex->unit->assert_not_fully_clean();
+      lex->unit->assert_not_fully_clean();  // 确保查询计划未完全清理
     }
-    thd->query_plan.set_query_plan(SQLCOM_END, nullptr, false);
+    thd->query_plan.set_query_plan(SQLCOM_END, nullptr, false);  // 设置查询计划
   }
 
-  assert(!thd->in_active_multi_stmt_transaction() ||
-         thd->in_multi_stmt_transaction_mode());
+      assert(!thd->in_active_multi_stmt_transaction() ||
+         thd->in_multi_stmt_transaction_mode());  // 确保不在多语句事务中或处于多语句事务模式
 
   if (!thd->in_sub_stmt) {
     mysql_audit_notify(thd,
                        first_level ? MYSQL_AUDIT_QUERY_STATUS_END
                                    : MYSQL_AUDIT_QUERY_NESTED_STATUS_END,
                        first_level ? "MYSQL_AUDIT_QUERY_STATUS_END"
-                                   : "MYSQL_AUDIT_QUERY_NESTED_STATUS_END");
+                                   : "MYSQL_AUDIT_QUERY_NESTED_STATUS_END");  // 通知审计系统查询状态结束
 
     /* report error issued during command execution */
     if ((thd->is_error() && !early_error_on_rep_command) ||
         (thd->variables.option_bits & OPTION_MASTER_SQL_ERROR))
-      trans_rollback_stmt(thd);
+      trans_rollback_stmt(thd);  // 如果发生错误，回滚语句事务
     else {
       /* If commit fails, we should be able to reset the OK status. */
-      thd->get_stmt_da()->set_overwrite_status(true);
-      trans_commit_stmt(thd);
-      thd->get_stmt_da()->set_overwrite_status(false);
+      thd->get_stmt_da()->set_overwrite_status(true);  // 设置覆盖状态
+      trans_commit_stmt(thd);  // 提交语句事务
+      thd->get_stmt_da()->set_overwrite_status(false);  // 重置覆盖状态
     }
     /*
       Reset thd killed flag during cleanup so that commands which are
       dispatched using service session API's start with a clean state.
     */
     if (thd->killed == THD::KILL_QUERY || thd->killed == THD::KILL_TIMEOUT) {
-      thd->killed = THD::NOT_KILLED;
-      thd->reset_query_for_display();
+      thd->killed = THD::NOT_KILLED;  // 重置kill标志
+      thd->reset_query_for_display();  // 重置查询显示
     }
   }
 
-  lex->cleanup(true);
+  lex->cleanup(true);  // 清理词法分析器
 
   /* Free tables */
-  THD_STAGE_INFO(thd, stage_closing_tables);
-  close_thread_tables(thd);
+  THD_STAGE_INFO(thd, stage_closing_tables);  // 设置关闭表阶段
+  close_thread_tables(thd);  // 关闭线程表
 
   // Rollback any item transformations made during optimization and execution
-  thd->rollback_item_tree_changes();
+  thd->rollback_item_tree_changes();  // 回滚在优化和执行期间对项树的任何更改
 
 #ifndef NDEBUG
   if (lex->sql_command != SQLCOM_SET_OPTION && !thd->in_sub_stmt)
-    DEBUG_SYNC(thd, "execute_command_after_close_tables");
+    DEBUG_SYNC(thd, "execute_command_after_close_tables");  // 调试同步点
 #endif
 
   if (!thd->in_sub_stmt && thd->transaction_rollback_request) {
@@ -5288,17 +5293,17 @@ finish:
       one of storage engines (e.g. due to deadlock). Rollback transaction in
       all storage engines including binary log.
     */
-    trans_rollback_implicit(thd);
-    thd->mdl_context.release_transactional_locks();
+    trans_rollback_implicit(thd);  // 回滚隐式事务
+    thd->mdl_context.release_transactional_locks();  // 释放事务锁
   } else if (stmt_causes_implicit_commit(thd, CF_IMPLICIT_COMMIT_END)) {
     /* No transaction control allowed in sub-statements. */
     assert(!thd->in_sub_stmt);
     /* If commit fails, we should be able to reset the OK status. */
-    thd->get_stmt_da()->set_overwrite_status(true);
+    thd->get_stmt_da()->set_overwrite_status(true);  // 设置覆盖状态
     /* Commit the normal transaction if one is active. */
-    trans_commit_implicit(thd);
-    thd->get_stmt_da()->set_overwrite_status(false);
-    thd->mdl_context.release_transactional_locks();
+    trans_commit_implicit(thd);  // 提交隐式事务
+    thd->get_stmt_da()->set_overwrite_status(false);  // 重置覆盖状态
+    thd->mdl_context.release_transactional_locks();  // 释放事务锁
   } else if (!thd->in_sub_stmt && !thd->in_multi_stmt_transaction_mode()) {
     /*
       - If inside a multi-statement transaction,
@@ -5310,11 +5315,11 @@ finish:
       - If in autocommit mode, or outside a transactional context,
       automatically release metadata locks of the current statement.
     */
-    thd->mdl_context.release_transactional_locks();
+    thd->mdl_context.release_transactional_locks();  // 释放事务锁
   } else if (!thd->in_sub_stmt &&
              (thd->lex->sql_command != SQLCOM_CREATE_TABLE ||
               !thd->lex->create_info->m_transactional_ddl)) {
-    thd->mdl_context.release_statement_locks();
+    thd->mdl_context.release_statement_locks();  // 释放语句锁
   }
 
   // If the client wishes to have transaction state reported, we add whatever
@@ -5323,10 +5328,10 @@ finish:
     TX_TRACKER_GET(tst);
 
     if (thd->variables.session_track_transaction_info > TX_TRACK_NONE)
-      tst->add_trx_state_from_thd(thd);
+      tst->add_trx_state_from_thd(thd);  // 添加事务状态
 
     // We're done. Clear "is DML" flag.
-    tst->clear_trx_state(thd, TX_STMT_DML);
+    tst->clear_trx_state(thd, TX_STMT_DML);  // 清除DML标志
   }
 
 #ifdef HAVE_LSAN_DO_RECOVERABLE_LEAK_CHECK
@@ -5334,7 +5339,7 @@ finish:
   // ./mtr --mem --mysqld='-T 4096' --sanitize main.1st
   // Don't waste time calling leak sanitizer during bootstrap.
   if (!opt_initialize && (test_flags & TEST_DO_QUICK_LEAK_CHECK)) {
-    int have_leaks = __lsan_do_recoverable_leak_check();
+    int have_leaks = __lsan_do_recoverable_leak_check();  // 执行内存泄漏检查
     if (have_leaks > 0) {
       fprintf(stderr, "LSAN found leaks for Query: %*s\n",
               static_cast<int>(thd->query().length), thd->query().str);
@@ -5381,9 +5386,9 @@ finish:
     DEBUG_SYNC(thd, "restore_previous_state_after_statement_failed");
   }
 
-  thd->skip_gtid_rollback = false;
+  thd->skip_gtid_rollback = false;  // 重置跳过GTID回滚标志
 
-  return res || thd->is_error();
+  return res || thd->is_error();  // 返回结果或错误状态
 }
 
 /**
@@ -5552,136 +5557,151 @@ void THD::reset_for_next_command() {
 /**
   Parse an SQL command from a text string and pass the resulting AST to the
   query executor.
+  从文本字符串中解析SQL命令，并将生成的抽象语法树（AST）传递给查询执行器。
 
-  @param thd          Current session.
-  @param parser_state Parser state.
+  @param thd          Current session. 当前会话的线程句柄。
+  @param parser_state Parser state. 解析器状态。
+  @param update_userstat Whether to update user statistics. 是否更新用户统计信息。
 */
 
 void dispatch_sql_command(THD *thd, Parser_state *parser_state,
                           bool update_userstat) {
-  DBUG_TRACE;
-  DBUG_PRINT("dispatch_sql_command", ("query: '%s'", thd->query().str));
+  DBUG_TRACE;  // 调试跟踪
+  DBUG_PRINT("dispatch_sql_command", ("query: '%s'", thd->query().str));  // 打印当前查询
 
-  DBUG_EXECUTE_IF("parser_debug", turn_parser_debug_on(););
+  DBUG_EXECUTE_IF("parser_debug", turn_parser_debug_on(););  // 如果启用解析器调试，则开启调试模式
 
-  mysql_reset_thd_for_next_command(thd);
+  mysql_reset_thd_for_next_command(thd);  // 重置线程状态以准备执行下一个命令
   // It is possible that rewritten query may not be empty (in case of
   // multiqueries). So reset it.
-  thd->reset_rewritten_query();
-  lex_start(thd);
+  // 重写的查询可能不为空（在多查询的情况下），因此需要重置。
+  thd->reset_rewritten_query();  // 重置重写的查询
+  lex_start(thd);  // 初始化词法分析器
 
   /* Declare userstat variables and start timer */
-  double start_busy_usecs = 0.0;
-  double start_cpu_nsecs = 0.0;
-  if (unlikely(opt_userstat && update_userstat))
-    userstat_start_timer(&start_busy_usecs, &start_cpu_nsecs);
+  /* 声明用户统计变量并启动计时器 */
+  double start_busy_usecs = 0.0;  // 忙碌时间（微秒）
+  double start_cpu_nsecs = 0.0;  // CPU时间（纳秒）
+  if (unlikely(opt_userstat && update_userstat))  // 如果启用了用户统计且需要更新
+    userstat_start_timer(&start_busy_usecs, &start_cpu_nsecs);  // 启动计时器
 
-  thd->m_parser_state = parser_state;
-  invoke_pre_parse_rewrite_plugins(thd);
-  thd->m_parser_state = nullptr;
+  thd->m_parser_state = parser_state;  // 设置线程的解析器状态
+  invoke_pre_parse_rewrite_plugins(thd);  // 调用预解析重写插件
+  thd->m_parser_state = nullptr;  // 清空解析器状态
 
   // we produce digest if it's not explicitly turned off
+  // 如果没有明确关闭，则生成查询摘要
   // by setting maximum digest length to zero
+  // 通过将最大摘要长度设置为零来关闭
   if (get_max_digest_length() != 0)
-    parser_state->m_input.m_compute_digest = true;
+    parser_state->m_input.m_compute_digest = true;  // 启用查询摘要计算
 
-  LEX *lex = thd->lex;
-  const char *found_semicolon = nullptr;
+  LEX *lex = thd->lex;  // 获取词法分析器对象
+  const char *found_semicolon = nullptr;  // 用于存储找到的分号位置
 
-  bool err = thd->get_stmt_da()->is_error();
-  size_t qlen = 0;
+  bool err = thd->get_stmt_da()->is_error();  // 检查是否有错误
+  size_t qlen = 0;  // 查询长度
 
   if (!err) {
-    err = parse_sql(thd, parser_state, nullptr);
-    if (!err) err = invoke_post_parse_rewrite_plugins(thd, false);
+    err = parse_sql(thd, parser_state, nullptr);  // 解析SQL语句
+    if (!err) err = invoke_post_parse_rewrite_plugins(thd, false);  // 调用解析后重写插件
 
-    found_semicolon = parser_state->m_lip.found_semicolon;
+    found_semicolon = parser_state->m_lip.found_semicolon;  // 获取分号位置
     qlen = found_semicolon ? (found_semicolon - thd->query().str)
-                           : thd->query().length;
+                           : thd->query().length;  // 计算查询长度
     /*
       We set thd->query_length correctly to not log several queries, when we
       execute only first. We set it to not see the ';' otherwise it would get
       into binlog and Query_log_event::print() would give ';;' output.
+      我们正确设置thd->query_length，以便在执行第一个查询时不记录多个查询。
+      我们设置它以避免看到分号，否则它会进入binlog，Query_log_event::print()会输出';;'。
     */
 
     if (!thd->is_error() && found_semicolon && (ulong)(qlen)) {
-      thd->set_query(thd->query().str, qlen - 1);
+      thd->set_query(thd->query().str, qlen - 1);  // 设置查询字符串
     }
   }
 
-  DEBUG_SYNC_C("sql_parse_before_rewrite");
+  DEBUG_SYNC_C("sql_parse_before_rewrite");  // 调试同步点：重写前
 
   if (!err) {
     /*
       Rewrite the query for logging and for the Performance Schema
       statement tables. (Raw logging happened earlier.)
+      为日志记录和Performance Schema语句表重写查询。（原始日志记录已经完成。）
 
       Sub-routines of mysql_rewrite_query() should try to only rewrite when
       necessary (e.g. not do password obfuscation when query contains no
       password).
+      mysql_rewrite_query()的子程序应仅在必要时重写（例如，当查询不包含密码时不进行密码混淆）。
 
       If rewriting does not happen here, thd->m_rewritten_query is still
       empty from being reset in alloc_query().
+      如果重写没有发生，thd->m_rewritten_query仍然为空，因为在alloc_query()中被重置。
     */
-    if (thd->rewritten_query().length() == 0) mysql_rewrite_query(thd);
+    if (thd->rewritten_query().length() == 0) mysql_rewrite_query(thd);  // 重写查询
 
     if (thd->rewritten_query().length()) {
-      lex->safe_to_cache_query = false;  // see comments below
+      lex->safe_to_cache_query = false;  // 标记查询不可缓存
 
       thd->set_query_for_display(thd->rewritten_query().ptr(),
-                                 thd->rewritten_query().length());
+                                 thd->rewritten_query().length());  // 设置显示查询
     } else if (thd->slave_thread) {
       /*
         In the slave, we add the information to pfs.events_statements_history,
         but not to pfs.threads, as that is what the test suite expects.
+        在从库中，我们将信息添加到pfs.events_statements_history，但不添加到pfs.threads，因为这是测试套件所期望的。
       */
       MYSQL_SET_STATEMENT_TEXT(thd->m_statement_psi, thd->query().str,
-                               thd->query().length);
+                               thd->query().length);  // 设置语句文本
     } else {
-      thd->set_query_for_display(thd->query().str, thd->query().length);
+      thd->set_query_for_display(thd->query().str, thd->query().length);  // 设置显示查询
     }
 
     if (!(opt_general_log_raw || thd->slave_thread)) {
       if (thd->rewritten_query().length())
         query_logger.general_log_write(thd, COM_QUERY,
                                        thd->rewritten_query().ptr(),
-                                       thd->rewritten_query().length());
+                                       thd->rewritten_query().length());  // 写入通用日志
       else {
-        query_logger.general_log_write(thd, COM_QUERY, thd->query().str, qlen);
+        query_logger.general_log_write(thd, COM_QUERY, thd->query().str, qlen);  // 写入通用日志
       }
     }
   }
 
-  DEBUG_SYNC_C("sql_parse_after_rewrite");
+  DEBUG_SYNC_C("sql_parse_after_rewrite");  // 调试同步点：重写后
 
   if (!err) {
     thd->m_statement_psi = MYSQL_REFINE_STATEMENT(
-        thd->m_statement_psi, sql_statement_info[thd->lex->sql_command].m_key);
+        thd->m_statement_psi, sql_statement_info[thd->lex->sql_command].m_key);  // 细化性能模式
 
+    // 如果启用了多查询处理（mqh_used）且用户连接存在，检查查询命令的权限
     if (mqh_used && thd->get_user_connect() &&
         check_mqh(thd, lex->sql_command)) {
+      // 如果是经典协议，重置网络错误状态
       if (thd->is_classic_protocol())
-        thd->get_protocol_classic()->get_net()->error = NET_ERROR_UNSET;
+        thd->get_protocol_classic()->get_net()->error = NET_ERROR_UNSET;  // 重置网络错误
     } else {
       if (!thd->is_error()) {
         /* Actually execute the query */
+        /* 实际执行查询 */
         if (found_semicolon) {
-          lex->safe_to_cache_query = false;
-          thd->server_status |= SERVER_MORE_RESULTS_EXISTS;
+          lex->safe_to_cache_query = false;  // 标记查询不可缓存
+          thd->server_status |= SERVER_MORE_RESULTS_EXISTS;  // 设置服务器状态
         }
-        lex->set_trg_event_type_for_tables();
+        lex->set_trg_event_type_for_tables();  // 设置触发器事件类型
 
         int error [[maybe_unused]];
         if (unlikely(
-                (thd->security_context()->password_expired() ||
-                 thd->security_context()->is_in_registration_sandbox_mode()) &&
-                lex->sql_command != SQLCOM_SET_PASSWORD &&
-                lex->sql_command != SQLCOM_ALTER_USER)) {
-          if (thd->security_context()->is_in_registration_sandbox_mode())
-            my_error(ER_PLUGIN_REQUIRES_REGISTRATION, MYF(0));
-          else
-            my_error(ER_MUST_CHANGE_PASSWORD, MYF(0));
-          error = 1;
+          (thd->security_context()->password_expired() ||  // 检查密码是否已过期
+           thd->security_context()->is_in_registration_sandbox_mode()) &&  // 检查是否处于注册沙盒模式
+          lex->sql_command != SQLCOM_SET_PASSWORD &&  // 当前命令不是SET_PASSWORD
+          lex->sql_command != SQLCOM_ALTER_USER)) {   // 当前命令不是ALTER_USER
+            if (thd->security_context()->is_in_registration_sandbox_mode())  // 如果是注册沙盒模式
+              my_error(ER_PLUGIN_REQUIRES_REGISTRATION, MYF(0));  // 抛出插件需要注册的错误
+            else
+              my_error(ER_MUST_CHANGE_PASSWORD, MYF(0));  // 抛出必须更改密码的错误
+            error = 1;  // 标记错误
         } else {
           resourcegroups::Resource_group *src_res_grp = nullptr;
           resourcegroups::Resource_group *dest_res_grp = nullptr;
@@ -5689,18 +5709,18 @@ void dispatch_sql_command(THD *thd, Parser_state *parser_state,
           MDL_ticket *cur_ticket = nullptr;
           auto mgr_ptr = resourcegroups::Resource_group_mgr::instance();
           bool switched = mgr_ptr->switch_resource_group_if_needed(
-              thd, &src_res_grp, &dest_res_grp, &ticket, &cur_ticket);
+              thd, &src_res_grp, &dest_res_grp, &ticket, &cur_ticket);  // 切换资源组
 
-          error = mysql_execute_command(thd, true);
+          error = mysql_execute_command(thd, true);  // 执行SQL命令
 
           if (switched)
             mgr_ptr->restore_original_resource_group(thd, src_res_grp,
-                                                     dest_res_grp);
+                                                     dest_res_grp);  // 恢复原始资源组
           thd->resource_group_ctx()->m_switch_resource_group_str[0] = '\0';
           if (ticket != nullptr)
-            mgr_ptr->release_shared_mdl_for_resource_group(thd, ticket);
+            mgr_ptr->release_shared_mdl_for_resource_group(thd, ticket);  // 释放资源组MDL锁
           if (cur_ticket != nullptr)
-            mgr_ptr->release_shared_mdl_for_resource_group(thd, cur_ticket);
+            mgr_ptr->release_shared_mdl_for_resource_group(thd, cur_ticket);  // 释放资源组MDL锁
         }
       }
     }
@@ -5708,50 +5728,57 @@ void dispatch_sql_command(THD *thd, Parser_state *parser_state,
     /*
       Log the failed raw query in the Performance Schema. This statement did
       not parse, so there is no way to tell if it may contain a password of not.
+      在Performance Schema中记录失败的原始查询。此语句未解析，因此无法判断是否包含密码。
 
       The tradeoff is:
         a) If we do log the query, a user typing by accident a broken query
            containing a password will have the password exposed. This is very
            unlikely, and this behavior can be documented. Remediation is to use
            a new password when retyping the corrected query.
-
         b) If we do not log the query, finding broken queries in the client
            application will be much more difficult. This is much more likely.
+      权衡如下：
+        a) 如果我们记录查询，用户意外输入包含密码的损坏查询时，密码将暴露。这非常不可能，并且可以记录此行为。补救措施是在重新输入正确的查询时使用新密码。
+        b) 如果我们不记录查询，在客户端应用程序中查找损坏的查询将更加困难。这更有可能。
 
       Considering that broken queries can typically be generated by attempts at
       SQL injection, finding the source of the SQL injection is critical, so the
       design choice is to log the query text of broken queries (a).
+      考虑到损坏的查询通常是由SQL注入尝试生成的，找到SQL注入的来源至关重要，因此设计选择是记录损坏查询的查询文本（a）。
     */
-    thd->set_query_for_display(thd->query().str, thd->query().length);
+    thd->set_query_for_display(thd->query().str, thd->query().length);  // 设置显示查询
 
     /* Instrument this broken statement as "statement/sql/error" */
+    /* 将此损坏的语句标记为 "statement/sql/error" */
     thd->m_statement_psi = MYSQL_REFINE_STATEMENT(
-        thd->m_statement_psi, sql_statement_info[SQLCOM_END].m_key);
+        thd->m_statement_psi, sql_statement_info[SQLCOM_END].m_key);  // 细化性能模式
 
     assert(thd->is_error());
     DBUG_PRINT("info",
-               ("Command aborted. Fatal_error: %d", thd->is_fatal_error()));
+               ("Command aborted. Fatal_error: %d", thd->is_fatal_error()));  // 打印命令中止信息
   }
 
-  THD_STAGE_INFO(thd, stage_freeing_items);
-  sp_cache_enforce_limit(thd->sp_proc_cache, stored_program_cache_size);
-  sp_cache_enforce_limit(thd->sp_func_cache, stored_program_cache_size);
-  thd->lex->destroy();
-  thd->end_statement();
-  thd->cleanup_after_query();
-  assert(thd->change_list.is_empty());
+  THD_STAGE_INFO(thd, stage_freeing_items);  // 设置线程阶段：释放项目
+  sp_cache_enforce_limit(thd->sp_proc_cache, stored_program_cache_size);  // 强制存储过程缓存限制
+  sp_cache_enforce_limit(thd->sp_func_cache, stored_program_cache_size);  // 强制存储函数缓存限制
+  thd->lex->destroy();  // 销毁词法分析器
+  thd->end_statement();  // 结束语句
+  thd->cleanup_after_query();  // 清理查询后状态
+  assert(thd->change_list.is_empty());  // 断言变更列表为空
 
   /* Update user statistics only if at least one timer was initialized */
+  /* 仅在至少一个计时器初始化时更新用户统计信息 */
   if (unlikely(update_userstat &&
                (start_busy_usecs > 0.0 || start_cpu_nsecs > 0.0))) {
     userstat_finish_timer(start_busy_usecs, start_cpu_nsecs, &thd->busy_time,
-                          &thd->cpu_time);
+                          &thd->cpu_time);  // 完成计时器
     /* Updates THD stats and the global user stats. */
-    thd->update_stats(true);
-    update_global_user_stats(thd, true, my_getsystime());
+    /* 更新THD统计信息和全局用户统计信息 */
+    thd->update_stats(true);  // 更新统计信息
+    update_global_user_stats(thd, true, my_getsystime());  // 更新全局用户统计信息
   }
 
-  DEBUG_SYNC(thd, "query_rewritten");
+  DEBUG_SYNC(thd, "query_rewritten");  // 调试同步点：查询重写
 }
 
 /**
