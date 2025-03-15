@@ -89,15 +89,15 @@ static PSI_thread_info thread_list[] = {
 
 struct thread_group_t;
 
-/* Per-thread structure for workers */
+// 每个工作线程的结构体，用于存储线程的状态和相关信息
 struct worker_thread_t {
-  ulonglong event_count; /* number of request handled by this thread */
-  thread_group_t *thread_group;
-  worker_thread_t *next_in_list;
-  worker_thread_t **prev_in_list;
+  ulonglong event_count; /* number of request handled by this thread */ // 该线程处理的事件（请求）数量
+  thread_group_t *thread_group; // 指向该线程所属的线程组
+  worker_thread_t *next_in_list; // 指向链表中下一个工作线程的指针
+  worker_thread_t **prev_in_list; // 指向链表中前一个工作线程的指针的指针
 
-  mysql_cond_t cond;
-  bool woken;
+  mysql_cond_t cond; // 条件变量，用于线程同步
+  bool woken; // 标记线程是否被唤醒
 };
 
 typedef I_P_List<
@@ -106,44 +106,47 @@ typedef I_P_List<
                      &worker_thread_t::prev_in_list>>
     worker_list_t;
 
+// 定义 connection_t 结构体，用于表示一个连接
 struct connection_t {
-  THD *thd;
-  thread_group_t *thread_group;
-  connection_t *next_in_queue;
-  connection_t **prev_in_queue;
-  ulonglong abs_wait_timeout;
-  bool logged_in;
-  bool bound_to_poll_descriptor;
-  bool waiting;
-  uint tickets;
+  THD *thd;  // 指向线程描述符的指针,用于表示与客户端连接相关的线程信息
+  thread_group_t *thread_group;  // 指向线程组的指针，表示该连接所属的线程组
+  connection_t *next_in_queue;  // 指向队列中下一个连接的指针
+  connection_t **prev_in_queue;  // 指向队列中上一个连接的指针
+  ulonglong abs_wait_timeout;  // 绝对等待超时时间，用于表示连接的超时时间
+  bool logged_in;  // 是否已登录
+  bool bound_to_poll_descriptor;  // 是否绑定到轮询描述符
+  bool waiting;  // 是否在等待
+  uint tickets;  // 优先级票数
 };
 
+// 双向链表 connection_queue_t 是I_P_List 这个模板类的别名
 typedef I_P_List<connection_t,
                  I_P_List_adapter<connection_t, &connection_t::next_in_queue,
                                   &connection_t::prev_in_queue>,
                  I_P_List_null_counter, I_P_List_fast_push_back<connection_t>>
     connection_queue_t;
 
+// 线程组结构体，用于管理线程池中的一个线程组
 struct alignas(128) thread_group_t {
-  mysql_mutex_t mutex;
-  connection_queue_t queue;
-  connection_queue_t high_prio_queue;
-  worker_list_t waiting_threads;
-  worker_thread_t *listener;
-  pthread_attr_t *pthread_attr;
-  int pollfd;
-  int thread_count;
-  int active_thread_count;
-  int connection_count;
-  int waiting_thread_count;
+  mysql_mutex_t mutex;               // 互斥锁，用于保护线程组的共享资源
+  connection_queue_t queue;          // 普通优先级连接队列
+  connection_queue_t high_prio_queue; // 高优先级连接队列
+  worker_list_t waiting_threads;     // 空闲的工作线程
+  worker_thread_t *listener;         // 监听线程（如果有）：用于处理特定类型的事件
+  pthread_attr_t *pthread_attr;      // 线程属性：用于创建新线程时设置线程属性
+  int pollfd;                        // 用于事件监听的文件描述符：通常用于 I/O 多路复用
+  int thread_count;                  // 线程组中的总线程数
+  int active_thread_count;           // 活跃线程数
+  int connection_count;              // 当前处理的连接数
+  int waiting_thread_count;          // 等待中的线程数
   /* Stats for the deadlock detection timer routine.*/
-  int io_event_count;
-  int queue_event_count;
-  ulonglong last_thread_creation_time;
-  int shutdown_pipe[2];
-  bool shutdown;
-  bool stalled;
-  char padding[328];
+  int io_event_count;                // I/O 事件计数
+  int queue_event_count;             // 队列事件计数
+  ulonglong last_thread_creation_time; // 上次创建线程的时间：用于限流线程创建
+  int shutdown_pipe[2];              // 用于关闭线程组的管道
+  bool shutdown;                     // 线程组是否正在关闭
+  bool stalled;                      // 线程组是否处于停滞状态：通常用于检测死锁或性能问题
+  char padding[328];                 // 填充字节，用于对齐和扩展
 };
 
 static_assert(sizeof(thread_group_t) == 512,
@@ -279,10 +282,11 @@ static void *native_event_get_userdata(native_event *event) noexcept {
 #elif defined(__FreeBSD__) || defined(__APPLE__)
 static int io_poll_create() noexcept { return kqueue(); }
 
+// 启动读取操作
 static int io_poll_start_read(int pollfd, int fd, void *data) noexcept {
-  struct kevent ke;
-  EV_SET(&ke, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, data);
-  return kevent(pollfd, &ke, 1, 0, 0, 0);
+  struct kevent ke;  // 定义 kevent 结构体
+  EV_SET(&ke, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, data);  // 设置 kevent 参数
+  return kevent(pollfd, &ke, 1, 0, 0, 0);  // 调用 kevent 函数，启动读取操作
 }
 
 static int io_poll_associate_fd(int pollfd, int fd, void *data) noexcept {
@@ -772,40 +776,49 @@ static void add_thread_count(thread_group_t *thread_group,
   threadpool_max_threads, because we need at least 2 threads
   per group to prevent deadlocks (one listener + one worker)
 */
-
 static int create_worker(thread_group_t *thread_group,
                          bool admin_connection) noexcept {
-  my_thread_handle thread_id;
-  bool max_threads_reached = false;
-  int err;
+  my_thread_handle thread_id;  // 线程句柄，用于存储新创建的线程 ID
+  bool max_threads_reached = false;  // 标记是否达到最大线程数限制
+  int err;  // 错误码
 
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("create_worker");
+
+  // 如果不是管理连接，并且当前线程数已经达到或超过最大线程数限制，并且线程组中已有至少 2 个线程
   if (!admin_connection &&
       tp_stats.num_worker_threads.load(std::memory_order_relaxed) >=
           (int)threadpool_max_threads &&
       thread_group->thread_count >= 2) {
-    err = 1;
-    max_threads_reached = true;
-    goto end;
+    err = 1;  // 设置错误码为 1
+    max_threads_reached = true;  // 标记已达到最大线程数限制
+    goto end;  // 跳转到结束部分
   }
 
+  // 创建新线程
   err = mysql_thread_create(key_worker_thread, &thread_id,
                             thread_group->pthread_attr, worker_main,
                             thread_group);
-  if (!err) {
+  if (!err) {  // 如果线程创建成功
+    // 记录线程创建时间
     thread_group->last_thread_creation_time = my_microsecond_getsystime();
+    // 增加全局线程创建计数
     Global_THD_manager::get_instance()->inc_thread_created();
+    // 增加线程组中的线程计数
     add_thread_count(thread_group, 1);
-  } else {
+  } else {  // 如果线程创建失败
+    // 设置错误码为系统错误码
     set_my_errno(errno);
   }
 
 end:
+  // 如果线程创建失败，打印线程池阻塞消息
   if (err)
     print_pool_blocked_message(max_threads_reached);
   else
     pool_block_start = 0; /* Reset pool blocked timer, if it was set */
 
+  // 返回错误码
   DBUG_RETURN(err);
 }
 
@@ -845,15 +858,20 @@ static ulonglong microsecond_throttling_interval(
 */
 static int wake_or_create_thread(thread_group_t *thread_group,
                                  bool admin_connection) {
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("wake_or_create_thread");
 
+  // 如果线程组正在关闭，直接返回 0
   if (thread_group->shutdown) DBUG_RETURN(0);
 
+  // 尝试唤醒一个空闲的工作线程，如果成功则返回 0
   if (wake_thread(thread_group) == 0) DBUG_RETURN(0);
 
+  // 如果线程组中的线程数已经大于连接数，返回 -1
   if (thread_group->thread_count > thread_group->connection_count)
     DBUG_RETURN(-1);
 
+  // 如果线程组中没有活跃的工作线程，或者这是一个管理连接，直接创建新线程
   if (thread_group->active_thread_count == 0 || admin_connection) {
     /*
      We're better off creating a new thread here  with no delay, either there
@@ -864,16 +882,20 @@ static int wake_or_create_thread(thread_group_t *thread_group,
     DBUG_RETURN(create_worker(thread_group, admin_connection));
   }
 
+  // 获取当前时间
   const ulonglong now = my_microsecond_getsystime();
+  // 计算自上次创建线程以来的时间间隔
   const ulonglong time_since_last_thread_created =
       (now - thread_group->last_thread_creation_time);
 
   /* Throttle thread creation. */
+  // 如果自上次创建线程以来的时间超过了限流间隔，创建新线程
   if (time_since_last_thread_created >
       microsecond_throttling_interval(*thread_group)) {
     DBUG_RETURN(create_worker(thread_group));
   }
 
+  // 如果以上条件都不满足，返回 -1
   DBUG_RETURN(-1);
 }
 
@@ -904,17 +926,32 @@ static void thread_group_destroy(thread_group_t *thread_group) noexcept {
 
 /**
   Wake sleeping thread from waiting list
+  This function wakes up a sleeping thread from the waiting list of a thread group.
 */
 
 static int wake_thread(thread_group_t *thread_group) noexcept {
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("wake_thread");
+
+  // 获取等待线程列表中的第一个线程
   worker_thread_t *thread = thread_group->waiting_threads.front();
+
+  // 如果存在等待的线程
   if (thread) {
+    // 标记线程为已唤醒
     thread->woken = true;
+
+    // 从等待线程列表中移除该线程
     thread_group->waiting_threads.remove(thread);
+
+    // 发送条件变量信号，唤醒线程
     mysql_cond_signal(&thread->cond);
+
+    // 返回 0 表示成功唤醒线程
     DBUG_RETURN(0);
   }
+
+  // 如果没有等待的线程，返回 1 表示唤醒失败
   DBUG_RETURN(1); /* no thread in waiter list => missed wakeup */
 }
 
@@ -977,20 +1014,31 @@ static void thread_group_close(thread_group_t *thread_group) noexcept {
   Currently, this function is only used when new connections need to
   perform login (this is done in worker threads).
 
+  This function adds a connection to the work queue of a thread group.
+  If all worker threads in the group are idle, it will wake up or create a new worker thread.
 */
 
 static void queue_put(thread_group_t *thread_group, connection_t *connection) {
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("queue_put");
 
+  // 锁定线程组的互斥锁，保护共享资源
   mysql_mutex_lock(&thread_group->mutex);
+
+  // 设置连接的优先级票数
   connection->tickets = connection->thd->variables.threadpool_high_prio_tickets;
+
+  // 将连接添加到线程组的工作队列中
   thread_group->queue.push_back(connection);
 
+  // 如果线程组中没有活跃的工作线程，唤醒或创建一个新的工作线程
   if (thread_group->active_thread_count == 0)
     wake_or_create_thread(thread_group, connection->thd->is_admin_connection());
 
+  // 解锁线程组的互斥锁
   mysql_mutex_unlock(&thread_group->mutex);
 
+  // 退出调试模式
   DBUG_VOID_RETURN;
 }
 
@@ -1187,21 +1235,27 @@ static connection_t *alloc_connection(THD *thd) noexcept {
 
 /**
   Add a new connection to thread pool..
+  This function adds a new connection to the thread pool, which will be handled by one of the worker threads.
 */
 
 bool Thread_pool_connection_handler::add_connection(
     Channel_info *channel_info) {
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("Thread_pool_connection_handler::add_connection");
 
+  // 创建一个新的 THD（线程描述符）对象
   THD *const thd = channel_info->create_thd();
 
+  // 如果创建 THD 失败，发送错误信息并关闭连接
   if (unlikely(!thd)) {
     channel_info->send_error_and_close_channel(ER_OUT_OF_RESOURCES, 0, false);
     DBUG_RETURN(true);
   }
 
+  // 分配一个新的连接对象
   connection_t *const connection = alloc_connection(thd);
 
+  // 如果分配连接对象失败，释放资源并发送错误信息
   if (unlikely(!connection)) {
     thd->get_protocol_classic()->end_net();
     delete thd;
@@ -1209,22 +1263,30 @@ bool Thread_pool_connection_handler::add_connection(
     DBUG_RETURN(true);
   }
 
+  // 删除 Channel_info 对象，释放资源
   delete channel_info;
 
+  // 设置新线程的 ID 和启动时间
   thd->set_new_thread_id();
   thd->start_utime = my_micro_time();
 
+  // 设置调度器为线程池事件函数
   thd->scheduler = &tp_event_functions;
 
+  // 将 THD 添加到全局 THD 管理器中
   Global_THD_manager::get_instance()->add_thd(thd);
 
+  // 将连接对象与 THD 关联
   thd->event_scheduler.data = connection;
 
   /* Assign connection to a group. */
+  // 根据线程 ID 分配连接到一个线程组
   thread_group_t *group = &all_groups[thd->thread_id() % group_count];
 
+  // 设置连接的线程组
   connection->thread_group = group;
 
+  // 锁定线程组的互斥锁，增加连接计数
   mysql_mutex_lock(&group->mutex);
   group->connection_count++;
   mysql_mutex_unlock(&group->mutex);
@@ -1233,6 +1295,7 @@ bool Thread_pool_connection_handler::add_connection(
     Add connection to the work queue. Actual login
     will be done by a worker thread.
   */
+  // 将连接放入工作队列，实际的登录操作将由工作线程处理
   queue_put(group, connection);
   DBUG_RETURN(false);
 }
@@ -1367,6 +1430,7 @@ static int change_group(connection_t *c, thread_group_t *old_group,
   return ret;
 }
 
+// 启动 I/O 操作
 static int start_io(connection_t *connection) {
   /*
     Usually, connection will stay in the same group for the entire
@@ -1377,89 +1441,123 @@ static int start_io(connection_t *connection) {
 
     So we recalculate in which group the connection should be, based
     on thread_id and current group count, and migrate if necessary.
+    通常情况下，连接在其整个生命周期内会保持在同一个组中。然而，我们允许 group_count 在运行时更改，
+    这意味着在极少数情况下，当 group_count 更改时，连接可能需要迁移到另一个组，以确保组之间的负载均衡。
+
+    因此，我们根据 thread_id 和当前的 group_count 重新计算连接应该属于哪个组，并在必要时进行迁移。
   */
   thread_group_t *const group =
-      &all_groups[connection->thd->thread_id() % group_count];
+      &all_groups[connection->thd->thread_id() % group_count];  // 计算连接应该属于的组
 
-  if (group != connection->thread_group) {
-    if (change_group(connection, connection->thread_group, group)) return -1;
+  if (group != connection->thread_group) {  // 如果连接需要迁移到另一个组
+    if (change_group(connection, connection->thread_group, group)) return -1;  // 迁移组
   }
 
   /*
     Bind to poll descriptor if not yet done.
+    如果尚未绑定到 poll 描述符，则进行绑定。
   */
-  Vio *vio = connection->thd->get_protocol_classic()->get_vio();
-  int fd = mysql_socket_getfd(vio->mysql_socket);
-  if (!connection->bound_to_poll_descriptor) {
-    connection->bound_to_poll_descriptor = true;
-    return io_poll_associate_fd(group->pollfd, fd, connection);
+  Vio *vio = connection->thd->get_protocol_classic()->get_vio();  // 获取 VIO 对象
+  int fd = mysql_socket_getfd(vio->mysql_socket);  // 获取文件描述符
+  if (!connection->bound_to_poll_descriptor) {  // 如果尚未绑定到 poll 描述符
+    connection->bound_to_poll_descriptor = true;  // 标记为已绑定
+    return io_poll_associate_fd(group->pollfd, fd, connection);  // 关联文件描述符到 poll 描述符
   }
 
-  return io_poll_start_read(group->pollfd, fd, connection);
+  return io_poll_start_read(group->pollfd, fd, connection);  // 启动读取操作
 }
 
+// 处理连接事件的函数
 static void handle_event(connection_t *connection) {
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("handle_event");
   int err;
 
+  // 如果连接尚未登录，则进行登录操作
   if (!connection->logged_in) {
     err = threadpool_add_connection(connection->thd);
     connection->logged_in = true;
   } else {
+    // 如果连接已经登录，则处理请求
     err = threadpool_process_request(connection->thd);
   }
 
+  // 如果处理过程中出现错误，跳转到结束部分
   if (err) goto end;
 
+  // 设置连接的等待超时时间
   set_wait_timeout(connection);
+  // 启动 I/O 操作
   err = start_io(connection);
 
 end:
+  // 如果出现错误，中止连接
   if (err) connection_abort(connection);
 
+  // 退出调试模式
   DBUG_VOID_RETURN;
 }
 
 /**
   Worker thread's main
+  This function is the main loop for worker threads in the thread pool.
+  工作线程的主函数，这是线程池中工作线程的主循环。
 */
 
 static void *worker_main(void *param) {
+  // Initialize thread-specific variables
+  // 初始化线程特定的变量
   my_thread_init();
 
+  // Enter debug mode, log function entry
+  // 进入调试模式，记录函数调用
   DBUG_ENTER("worker_main");
 
+  // Cast the parameter to the thread group structure
+  // 将参数转换为线程组结构体指针
   thread_group_t *thread_group = (thread_group_t *)param;
 
   /* Init per-thread structure */
+  // 初始化每个线程的结构体
   worker_thread_t this_thread;
-  mysql_cond_init(key_worker_cond, &this_thread.cond);
-  this_thread.thread_group = thread_group;
-  this_thread.event_count = 0;
+  mysql_cond_init(key_worker_cond, &this_thread.cond);  // Initialize condition variable
+  this_thread.thread_group = thread_group;  // Set the thread group
+  this_thread.event_count = 0;  // Initialize event count to 0
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_THREAD_CALL(set_thread_account)
-  (NULL, 0, NULL, 0);
+  // Set thread account information for performance schema
+  // 设置线程账户信息，用于性能模式（Performance Schema）
+  PSI_THREAD_CALL(set_thread_account)(NULL, 0, NULL, 0);
 #endif
 
   /* Run event loop */
+  // 运行事件循环
   for (;;) {
     connection_t *connection;
     struct timespec ts;
+    // Set the timeout for waiting for events
+    // 设置等待事件的超时时间
     set_timespec(&ts, threadpool_idle_timeout);
+    // Get the next event to process
+    // 获取下一个要处理的事件
     connection = get_event(&this_thread, thread_group, &ts);
-    if (!connection) break;
-    this_thread.event_count++;
-    handle_event(connection);
+    if (!connection) break;  // If no event is received, exit the loop
+    this_thread.event_count++;  // Increment the event count
+    handle_event(connection);  // Handle the event
   }
 
   /* Thread shutdown: cleanup per-worker-thread structure. */
+  // 线程关闭：清理每个工作线程的结构体
   mysql_cond_destroy(&this_thread.cond);
 
+  // Lock the thread group mutex to safely update the thread count
+  // 锁定线程组的互斥锁，以安全地更新线程计数
   mysql_mutex_lock(&thread_group->mutex);
-  add_thread_count(thread_group, -1);
+  add_thread_count(thread_group, -1);  // Decrement the thread count
   mysql_mutex_unlock(&thread_group->mutex);
 
+  // Cleanup thread-specific variables
+  // 清理线程特定的变量
   my_thread_end();
   return nullptr;
 }

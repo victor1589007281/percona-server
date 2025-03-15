@@ -101,6 +101,7 @@ bool Named_pipe_listener::setup_listener() {
   return false;
 }
 
+// 这个函数用于监听基于命名管道的连接请求。命名管道是一种进程间通信（IPC）机制，允许在本地或网络上的进程之间进行通信。
 Channel_info *Named_pipe_listener::listen_for_connection_event() {
   TCHAR last_error_msg[256];
 

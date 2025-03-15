@@ -233,21 +233,24 @@ static std::atomic<ulint> io_tid_i(0);
 
 /** I/o-handler thread function.
 @param[in]      segment         The AIO segment the thread will work on */
+/* I/O 处理线程函数。
+@param[in]      segment         线程将处理的 AIO 段 */
 static void io_handler_thread(ulint segment) {
-  const auto tid_i = io_tid_i.fetch_add(1, std::memory_order_relaxed);
-  ut_ad(tid_i < srv_n_file_io_threads);
-  srv_io_tids[tid_i] = os_thread_get_tid();
+  const auto tid_i = io_tid_i.fetch_add(1, std::memory_order_relaxed);  // 获取并增加线程 ID
+  ut_ad(tid_i < srv_n_file_io_threads);  // 断言确保线程 ID 在有效范围内
+  srv_io_tids[tid_i] = os_thread_get_tid();  // 记录线程 ID
   const auto actual_priority =
-      os_thread_set_priority(srv_io_tids[tid_i], srv_sched_priority_io);
-  if (UNIV_UNLIKELY(actual_priority != srv_sched_priority_purge))
+      os_thread_set_priority(srv_io_tids[tid_i], srv_sched_priority_io);  // 设置线程优先级
+  if (UNIV_UNLIKELY(actual_priority != srv_sched_priority_purge))  // 如果设置优先级失败
     ib::warn() << "Failed to set I/O thread priority to "
                << srv_sched_priority_master << " the current priority is "
-               << actual_priority;
+               << actual_priority;  // 输出警告信息
 
-  while (srv_shutdown_state.load() != SRV_SHUTDOWN_EXIT_THREADS ||
-         buf_flush_page_cleaner_is_active() || !os_aio_all_slots_free() ||
-         buf_flush_active_lru_managers() > 0) {
-    fil_aio_wait(segment);
+  while (srv_shutdown_state.load() != SRV_SHUTDOWN_EXIT_THREADS ||  // 如果服务器未关闭
+         buf_flush_page_cleaner_is_active() ||  // 或者页面清理线程仍在运行
+         !os_aio_all_slots_free() ||  // 或者 AIO 槽未全部释放
+         buf_flush_active_lru_managers() > 0) {  // 或者有活动的 LRU 管理器
+    fil_aio_wait(segment);  // 等待 AIO 事件
   }
 }
 

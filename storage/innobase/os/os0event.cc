@@ -111,7 +111,7 @@ struct os_event {
 
   /**
   Destroys a condition variable */
-  销毁条件变量 */
+  /*销毁条件变量 */
   void destroy() UNIV_NOTHROW {
 #ifndef _WIN32
     // 在非Windows系统上销毁pthread条件变量
@@ -191,7 +191,7 @@ struct os_event {
   Where such a scenario is possible, to avoid infinite wait, the
   value returned by reset() should be passed in as
   reset_sig_count. */
-  等待事件对象直到其处于已触发状态。
+  /*等待事件对象直到其处于已触发状态。
 
   通常情况下,如果事件在os_event_reset()之后被触发,
   由于event->m_set == true,我们会立即返回。
@@ -598,10 +598,10 @@ ulint os_event::wait_time_low(std::chrono::microseconds timeout,
 
 /** Constructor */
 os_event::os_event() UNIV_NOTHROW {
-  ut_a(global_initialized);
-  init();
+  ut_a(global_initialized); // 断言全局初始化已完成
+  init(); // 初始化条件变量和互斥锁
 
-  m_set = false;
+  m_set = false; // 初始化事件状态为未触发
 
   /* We return this value in os_event_reset(),
   which can then be be used to pass to the
@@ -612,7 +612,7 @@ os_event::os_event() UNIV_NOTHROW {
   the two cases we initialize signal_count
   to 1 here. */
 
-  signal_count = 1;
+  signal_count = 1; // 初始化信号计数为1
 }
 
 /** Destructor */

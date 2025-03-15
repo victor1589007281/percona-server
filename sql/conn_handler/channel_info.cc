@@ -37,19 +37,25 @@
 #include "violite.h"
 
 THD *Channel_info::create_thd() {
+  // 如果模拟资源失败，则返回 nullptr
   DBUG_EXECUTE_IF("simulate_resource_failure", return nullptr;);
 
+  // 创建并初始化 Vio 对象
   Vio *vio_tmp = create_and_init_vio();
   if (vio_tmp == nullptr) return nullptr;
 
+  // 分配一个新的 THD 对象
   THD *thd = new (std::nothrow) THD;
   if (thd == nullptr) {
+    // 如果分配失败，删除 Vio 对象并返回 nullptr
     vio_delete(vio_tmp);
     return nullptr;
   }
 
+  // 初始化 THD 对象的网络协议
   thd->get_protocol_classic()->init_net(vio_tmp);
 
+  // 返回创建的 THD 对象
   return thd;
 }
 

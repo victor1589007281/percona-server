@@ -211,6 +211,7 @@ error:
   return true;
 }
 
+// 这个函数用于监听基于共享内存的连接请求。共享内存是一种进程间通信（IPC）机制，允许多个进程共享同一块内存区域。
 Channel_info *Shared_mem_listener::listen_for_connection_event() {
   /* Wait for a request from client */
   WaitForSingleObject(m_event_connect_request, INFINITE);

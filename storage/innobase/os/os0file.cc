@@ -1258,66 +1258,96 @@ dberr_t AIOHandler::check_read(Slot *slot, ulint n_bytes) {
   return (err);
 }
 
-/** Do any post processing after a read/write
-@return DB_SUCCESS or error code. */
+/**
+ * Do any post processing after a read/write
+ * 在读取/写入操作后进行任何后续处理。
+ *
+ * @return DB_SUCCESS or error code.
+ * @return 如果操作成功，返回 DB_SUCCESS；否则返回相应的错误码。
+ */
 dberr_t AIOHandler::post_io_processing(Slot *slot) {
   dberr_t err;
 
+  // 确保槽已被保留
   ut_ad(slot->is_reserved);
 
   /* Total bytes read so far */
+  /* 到目前为止读取的总字节数 */
   ulint n_bytes = (slot->ptr - slot->buf) + slot->n_bytes;
 
   /* Compressed writes can be smaller than the original length.
   Therefore they can be processed without further IO. */
-  if (n_bytes == slot->type.get_original_size() ||
+  /* 压缩写入可能比原始长度小。
+  因此可以在不需要进一步 I/O 的情况下处理。 */
+  if (n_bytes == slot->type.get_original_size() || // 检查已读取或写入的字节数是否等于原始大小。如果是，说明操作已经完成。
       (slot->type.is_write() && slot->type.is_compressed() &&
-       slot->len == static_cast<ulint>(slot->n_bytes))) {
-    if ((slot->type.is_log() && slot->offset >= LOG_FILE_HDR_SIZE) ||
-        is_compressed_page(slot) || is_encrypted_page(slot)) {
+       slot->len == static_cast<ulint>(slot->n_bytes))) { // 检查是否是压缩写入操作，并且写入的长度等于实际写入的字节数。如果是，说明压缩写入操作已经完成。
+    if ((slot->type.is_log() && slot->offset >= LOG_FILE_HDR_SIZE) || // 检查是否是日志文件操作，并且偏移量大于日志文件头的大小。
+        is_compressed_page(slot) || is_encrypted_page(slot)) { // 检查是否是压缩页/加密页操作。
+      // 确保偏移量大于 0
       ut_a(slot->offset > 0);
 
       if (slot->type.is_read()) {
+        // 如果是读取操作，设置长度为原始大小
         slot->len = slot->type.get_original_size();
       }
 
       /* The punch hole has been done on collect() */
+      /* 在 collect() 中已经完成了 punch hole 操作 */
 
       if (slot->type.is_read()) {
+        // 如果是读取操作，调用 io_complete 完成 I/O
         err = io_complete(slot);
       } else {
+        // 如果是写入操作，直接返回成功
         err = DB_SUCCESS;
       }
 
+      // 确保错误码是预期的值之一
       ut_ad(err == DB_SUCCESS || err == DB_UNSUPPORTED ||
             err == DB_CORRUPTION || err == DB_IO_DECOMPRESS_FAIL ||
             err == DB_IO_DECRYPT_FAIL);
     } else {
+      // 其他情况直接返回成功
       err = DB_SUCCESS;
     }
 
+    // 如果存在缓冲区块，则释放它
     if (slot->buf_block != nullptr) {
       os_free_block(slot->buf_block);
       slot->buf_block = nullptr;
     }
 
+    // 如果存在加密日志缓冲区，则释放它
     if (slot->encrypt_log_buf != nullptr) {
       ut::free(slot->encrypt_log_buf);
       slot->encrypt_log_buf = nullptr;
     }
-  } else if ((ulint)slot->n_bytes == (ulint)slot->len) {
+    /*
+    部分读取: 收到的数据没有达到请求的长度
+通常发生在以下情况：
+文件末尾：读取到文件末尾时，可能无法读取到请求的全部数据。
+网络 I/O：在网络传输中，可能由于网络延迟或丢包导致部分数据到达。
+资源限制：系统资源不足时，可能无法一次性读取全部数据。
+    */
+  } else if ((ulint)slot->n_bytes == (ulint)slot->len) { // 检查实际读取的字节数是否等于请求的长度。如果是，说明这是一个部分读取操作。
     /* It *must* be a partial read. */
+    /* 这 *必须* 是一个部分读取。 */
     ut_ad(slot->len < slot->type.get_original_size());
 
     /* Has to be a read request, if it is less than
     the original length. */
+    /* 如果读取的长度小于原始长度，则必须是一个读取请求。 */
     ut_ad(slot->type.is_read());
+    // 检查读取操作
     err = check_read(slot, n_bytes);
 
   } else {
+    // 其他情况返回失败
     err = DB_FAIL;
   }
 
+  // 返回错误码
   return (err);
 }
 
@@ -2275,27 +2305,32 @@ dberr_t LinuxAIOHandler::resubmit(Slot *slot) {
 /** Check if the AIO succeeded
 @param[in,out]  slot            The slot to check
 @return DB_SUCCESS, DB_FAIL if the operation should be retried or
-        DB_IO_ERROR on all other errors */
+        DB_IO_ERROR on all other errors
+检查 AIO 是否成功
+@param[in,out]  slot            要检查的槽位
+@return DB_SUCCESS 表示成功，如果操作应重试则返回 DB_FAIL，其他错误返回 DB_IO_ERROR */
 dberr_t LinuxAIOHandler::check_state(Slot *slot) {
-  ut_ad(m_array->is_mutex_owned());
+  ut_ad(m_array->is_mutex_owned()); // 断言当前线程持有互斥锁
 
   /* Note that it may be that there is more then one completed
   IO requests. We process them one at a time. We may have a case
   here to improve the performance slightly by dealing with all
   requests in one sweep. */
+  /* 注意，可能有多个已完成的 IO 请求。我们一次处理一个。
+  我们可能需要在这里通过一次性处理所有请求来稍微提高性能。 */
 
   srv_set_io_thread_op_info(m_global_segment,
-                            "processing completed aio requests");
+                            "processing completed aio requests"); // 设置 I/O 线程操作信息
 
-  ut_ad(slot->io_already_done);
+  ut_ad(slot->io_already_done); // 断言 IO 已经完成
 
   dberr_t err;
 
-  if (slot->ret == 0) {
-    err = AIOHandler::post_io_processing(slot);
+  if (slot->ret == 0) { // 如果返回值为 0，表示成功
+    err = AIOHandler::post_io_processing(slot); // 进行 IO 后处理
 
-  } else {
-    errno = -slot->ret;
+  } else { // 如果返回值不为 0，表示失败
+    errno = -slot->ret; // 设置错误码
 
     /* os_file_handle_error does tell us if we should retry
     this IO. As it stands now, we don't do this retry when
@@ -2304,40 +2339,62 @@ dberr_t LinuxAIOHandler::check_state(Slot *slot) {
     Windows and Linux native AIO.
     We should probably look into this to transparently
     re-submit the IO. */
-    os_file_handle_error(slot->name, "Linux aio");
+    /* os_file_handle_error 会告诉我们是否应该重试此 IO。
+    目前，当从与调度程序不同的上下文中收集请求时，我们不会进行重试。
+    这种不重试的逻辑对于 Windows 和 Linux 原生 AIO 是相同的。
+    我们可能需要研究如何透明地重新提交 IO。 */
+    os_file_handle_error(slot->name, "Linux aio"); // 处理文件错误
 
-    err = DB_IO_ERROR;
+    err = DB_IO_ERROR; // 设置错误码为 DB_IO_ERROR
   }
 
-  return (err);
+  return (err); // 返回错误码
 }
 
-/** If no slot was found then the m_array->m_mutex will be released.
-@param[out]     n_pending               The number of pending IOs
-@return NULL or a slot that has completed IO */
+/**
+ * If no slot was found then the m_array->m_mutex will be released.
+ * 如果没有找到槽，则释放 m_array->m_mutex。
+ *
+ * @param[out]     n_pending               The number of pending IOs
+ * @param[out]     n_pending               挂起的 I/O 操作数量。
+ * @return NULL or a slot that has completed IO
+ * @return 如果找到已完成 I/O 的槽，则返回该槽；否则返回 NULL。
+ */
 Slot *LinuxAIOHandler::find_completed_slot(ulint *n_pending) {
+  // 计算当前段的偏移量
   ulint offset = m_n_slots * m_segment;
 
+  // 初始化挂起的 I/O 操作数量为 0
   *n_pending = 0;
 
+  // 获取数组的互斥锁
   m_array->acquire();
 
+  // 获取当前段的第一个槽
   Slot *slot = m_array->at(offset);
 
+  // 遍历当前段的所有槽
   for (ulint i = 0; i < m_n_slots; ++i, ++slot) {
+    // 如果槽被保留（即正在处理 I/O 操作）
     if (slot->is_reserved) {
+      // 增加挂起的 I/O 操作数量
       ++*n_pending;
 
+      // 如果 I/O 操作已经完成
       if (slot->io_already_done) {
         /* Something for us to work on.
         Note: We don't release the mutex. */
+        /* 找到可以处理的槽。
+        注意：我们不会释放互斥锁。 */
         return (slot);
       }
     }
   }
 
+  // 如果没有找到已完成的槽，则释放互斥锁
   m_array->release();
 
+  // 返回 NULL
   return (nullptr);
 }
 
@@ -2471,48 +2528,67 @@ void LinuxAIOHandler::collect() {
   }
 }
 
-/** Process a Linux AIO request
-@param[out]     m1              the messages passed with the
-@param[out]     m2              AIO request; note that in case the
-                                AIO operation failed, these output
-                                parameters are valid and can be used to
-                                restart the operation.
-@param[out]     request         IO context
-@return DB_SUCCESS or error code */
+/**
+ * Process a Linux AIO request
+ * 处理一个 Linux 异步 I/O 请求
+ *
+ * @param[out]     m1              the messages passed with the
+ * @param[out]     m1              传递给异步 I/O 请求的消息；
+ *                                 注意，如果异步 I/O 操作失败，这些输出参数仍然有效，
+ *                                 并且可以用于重新启动操作。
+ * @param[out]     m2              AIO request; note that in case the
+ *                                 AIO operation failed, these output
+ *                                 parameters are valid and can be used to
+ *                                 restart the operation.
+ * @param[out]     m2              传递给异步 I/O 请求的另一个消息。
+ * @param[out]     request         IO context
+ * @param[out]     request         I/O 上下文。
+ * @return DB_SUCCESS or error code
+ * @return 如果操作成功，返回 DB_SUCCESS；否则返回相应的错误码。
+ */
 dberr_t LinuxAIOHandler::poll(fil_node_t **m1, void **m2, IORequest *request) {
   dberr_t err;
   Slot *slot;
 
   /* Loop until we have found a completed request. */
+  /* 循环直到找到一个已完成的请求。 */
   for (;;) {
     ulint n_pending;
 
+    // 查找已完成的槽（slot）
     slot = find_completed_slot(&n_pending);
 
     if (slot != nullptr) {
+      // 确保当前线程持有互斥锁
       ut_ad(m_array->is_mutex_owned());
 
+      // 检查槽的状态
       err = check_state(slot);
 
       /* DB_FAIL is not a hard error, we should retry */
+      /* DB_FAIL 不是一个严重错误，我们应该重试 */
       if (err != DB_FAIL) {
         break;
       }
 
       /* Partial IO, resubmit request for
       remaining bytes to read/write */
+      /* 部分 I/O，重新提交请求以读取/写入剩余的字节 */
       err = resubmit(slot);
 
       if (err != DB_SUCCESS) {
         break;
       }
 
+      // 释放数组的互斥锁
       m_array->release();
 
     } else if (is_shutdown() && n_pending == 0) {
       /* There is no completed request. If there is
       no pending request at all, and the system is
       being shut down, exit. */
+      /* 没有已完成的请求。如果没有任何挂起的请求，
+      并且系统正在关闭，则退出。 */
 
       *m1 = nullptr;
       *m2 = nullptr;
@@ -2522,16 +2598,22 @@ dberr_t LinuxAIOHandler::poll(fil_node_t **m1, void **m2, IORequest *request) {
     } else {
       /* Wait for some request. Note that we return
       from wait if we have found a request. */
+      /* 等待某些请求。注意，如果我们找到了请求，
+      则从等待中返回。 */
 
+      // 设置 I/O 线程的操作信息
       srv_set_io_thread_op_info(m_global_segment,
                                 "waiting for completed aio requests");
 
+      // 收集已完成的请求
       collect();
     }
   }
 
+  // 如果错误是 DB_IO_PARTIAL_FAILED，则中止操作
   if (err == DB_IO_PARTIAL_FAILED) {
     /* Aborting in case of submit failure */
+    /* 在提交失败的情况下中止操作 */
     ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_756)
         << "Native Linux AIO interface. "
            "io_submit() call failed when "
@@ -2540,44 +2622,71 @@ dberr_t LinuxAIOHandler::poll(fil_node_t **m1, void **m2, IORequest *request) {
         << slot->name << ".";
   }
 
+  // 设置输出参数
   *m1 = slot->m1;
   *m2 = slot->m2;
 
   *request = slot->type;
 
+  // 释放槽和数组的互斥锁
   m_array->release(slot);
-
   m_array->release();
 
+  // 返回错误码
   return (err);
 }
 
-/** This function is only used in Linux native asynchronous i/o.
-Waits for an aio operation to complete. This function is used to wait for
-the completed requests. The aio array of pending requests is divided
-into segments. The thread specifies which segment or slot it wants to wait
-for. NOTE: this function will also take care of freeing the aio slot,
-therefore no other thread is allowed to do the freeing!
-
-@param[in]      global_segment  segment number in the aio array
-                                to wait for; segment 0 is the ibuf
-                                i/o thread, segment 1 is log i/o thread,
-                                then follow the non-ibuf read threads,
-                                and the last are the non-ibuf write
-                                threads.
-@param[out]     m1              the messages passed with the
-@param[out]     m2                      AIO request; note that in case the
-                                AIO operation failed, these output
-                                parameters are valid and can be used to
-                                restart the operation.
-@param[out]     request         IO context
-@return DB_SUCCESS if the IO was successful */
+/**
+ * This function is only used in Linux native asynchronous i/o.
+ * Waits for an aio operation to complete. This function is used to wait for
+ * the completed requests. The aio array of pending requests is divided
+ * into segments. The thread specifies which segment or slot it wants to wait
+ * for. NOTE: this function will also take care of freeing the aio slot,
+ * therefore no other thread is allowed to do the freeing!
+ *
+ * 该函数仅在 Linux 原生异步 I/O 中使用。
+ * 等待一个异步 I/O 操作完成。该函数用于等待已完成请求。
+ * 待处理的异步 I/O 请求数组被划分为多个段（segment）。
+ * 线程指定它要等待的段或槽（slot）。
+ * 注意：此函数还会负责释放异步 I/O 槽，因此不允许其他线程执行释放操作！
+ *
+ * @param[in]  global_segment  segment number in the aio array
+ *                             to wait for; segment 0 is the ibuf
+ *                             i/o thread, segment 1 is log i/o thread,
+ *                             then follow the non-ibuf read threads,
+ *                             and the last are the non-ibuf write
+ *                             threads.
+ * @param[in]  global_segment  异步 I/O 数组中的段号，用于指定等待的段；
+ *                             段 0 是 ibuf I/O 线程，段 1 是日志 I/O 线程，
+ *                             接下来是非 ibuf 读取线程，最后是非 ibuf 写入线程。
+ * @param[out] m1              the messages passed with the
+ * @param[out] m1              传递给异步 I/O 请求的消息；
+ *                             注意，如果异步 I/O 操作失败，这些输出参数仍然有效，
+ *                             并且可以用于重新启动操作。
+ * @param[out] m2                      AIO request; note that in case the
+ *                             AIO operation failed, these output
+ *                             parameters are valid and can be used to
+ *                             restart the operation.
+ * @param[out] m2              传递给异步 I/O 请求的另一个消息。
+ * @param[out] request         IO context
+ * @param[out] request         I/O 上下文。
+ * @return DB_SUCCESS if the IO was successful
+ * @return 如果 I/O 操作成功，返回 DB_SUCCESS。
+ */
 static dberr_t os_aio_linux_handler(ulint global_segment, fil_node_t **m1,
                                     void **m2, IORequest *request) {
+  // Create LinuxAIOHandler object with the segment number
+  // 创建 LinuxAIOHandler 对象，传入段号
   LinuxAIOHandler handler(global_segment);
 
+  // Call poll method to wait for the AIO operation to complete
+  // 调用 poll 方法等待异步 I/O 操作完成
   dberr_t err = handler.poll(m1, m2, request);
 
+  // If the error is DB_IO_NO_PUNCH_HOLE and the request is not a doublewrite,
+  // handle it and set the error code to DB_SUCCESS
+  // 如果返回的错误是 DB_IO_NO_PUNCH_HOLE，并且请求不是双写（dblwr）操作，
+  // 则调用 fil_no_punch_hole 处理，并将错误码设置为 DB_SUCCESS
   if (err == DB_IO_NO_PUNCH_HOLE) {
     if (!request->is_dblwr()) {
       fil_no_punch_hole(*m1);
@@ -2585,6 +2694,8 @@ static dberr_t os_aio_linux_handler(ulint global_segment, fil_node_t **m1,
     }
   }
 
+  // Return the error code
+  // 返回错误码
   return (err);
 }
 #endif
@@ -2728,71 +2839,79 @@ bool AIO::linux_dispatch(Slot *slot, bool should_buffer) {
 @param[in]      max_events      number of events
 @param[out]     io_ctx          io_ctx to initialize.
 @return true on success. */
+/* 为原生Linux AIO创建一个io_context。
+@param[in]      max_events      事件的最大数量
+@param[out]     io_ctx          要初始化的io_ctx
+@return 成功时返回true。 */
 bool AIO::linux_create_io_ctx(ulint max_events, io_context_t *io_ctx) {
-  ssize_t n_retries = 0;
+  ssize_t n_retries = 0;  // 重试次数计数器
 
-  for (;;) {
-    memset(io_ctx, 0x0, sizeof(*io_ctx));
+  for (;;) {  // 无限循环，直到成功或失败
+    memset(io_ctx, 0x0, sizeof(*io_ctx));  // 初始化io_ctx为0
 
     /* Initialize the io_ctx. Tell it how many pending
     IO requests this context will handle. */
+    /* 初始化io_ctx。告诉它这个上下文将处理多少个挂起的IO请求。 */
 
-    int ret = io_setup(max_events, io_ctx);
+    int ret = io_setup(max_events, io_ctx);  // 调用io_setup初始化io_ctx
 
-    if (ret == 0) {
+    if (ret == 0) {  // 如果成功
       /* Success. Return now. */
+      /* 成功，立即返回。 */
       return (true);
     }
 
     /* If we hit EAGAIN we'll make a few attempts before failing. */
+    /* 如果遇到EAGAIN错误，我们将进行几次尝试，然后再失败。 */
 
-    switch (ret) {
-      case -EAGAIN:
-        if (n_retries == 0) {
+    switch (ret) {  // 根据返回的错误码进行处理
+      case -EAGAIN:  // 如果返回EAGAIN错误
+        if (n_retries == 0) {  // 如果是第一次重试
           /* First time around. */
+          /* 第一次尝试。 */
           ib::warn(ER_IB_MSG_757) << "io_setup() failed with EAGAIN."
                                      " Will make "
                                   << OS_AIO_IO_SETUP_RETRY_ATTEMPTS
-                                  << " attempts before giving up.";
+                                  << " attempts before giving up.";  // 输出警告信息
         }
 
-        if (n_retries < OS_AIO_IO_SETUP_RETRY_ATTEMPTS) {
-          ++n_retries;
+        if (n_retries < OS_AIO_IO_SETUP_RETRY_ATTEMPTS) {  // 如果重试次数未达到最大尝试次数
+          ++n_retries;  // 增加重试次数
 
-          ib::warn(ER_IB_MSG_758) << "io_setup() attempt " << n_retries << ".";
+          ib::warn(ER_IB_MSG_758) << "io_setup() attempt " << n_retries << ".";  // 输出警告信息
 
-          std::this_thread::sleep_for(OS_AIO_IO_SETUP_RETRY_SLEEP);
+          std::this_thread::sleep_for(OS_AIO_IO_SETUP_RETRY_SLEEP);  // 休眠一段时间
 
-          continue;
+          continue;  // 继续重试
         }
 
         /* Have tried enough. Better call it a day. */
+        /* 已经尝试了足够多次，最好放弃。 */
         ib::error(ER_IB_MSG_759)
             << "io_setup() failed with EAGAIN after "
-            << OS_AIO_IO_SETUP_RETRY_ATTEMPTS << " attempts.";
+            << OS_AIO_IO_SETUP_RETRY_ATTEMPTS << " attempts.";  // 输出错误信息
         break;
 
-      case -ENOSYS:
+      case -ENOSYS:  // 如果返回ENOSYS错误
         ib::error(ER_IB_MSG_760) << "Linux Native AIO interface"
                                     " is not supported on this platform. Please"
                                     " check your OS documentation and install"
-                                    " appropriate binary of InnoDB.";
-
+                                    " appropriate binary of InnoDB.";  // 输出错误信息
         break;
 
-      default:
+      default:  // 其他错误
         ib::error(ER_IB_MSG_761) << "Linux Native AIO setup"
-                                 << " returned following error[" << ret << "]";
+                                 << " returned following error[" << ret << "]";  // 输出错误信息
         break;
     }
 
     ib::info(ER_IB_MSG_762) << "You can disable Linux Native AIO by"
-                               " setting innodb_use_native_aio = 0 in my.cnf";
+                               " setting innodb_use_native_aio = 0 in my.cnf";  // 输出提示信息
 
-    break;
+    break;  // 退出循环
   }
 
-  return (false);
+  return (false);  // 返回false，表示失败
 }
 
 /** Checks if the system supports native linux aio. On some kernel
@@ -2800,77 +2919,79 @@ versions where native aio is supported it won't work on tmpfs. In such
 cases we can't use native aio as it is not possible to mix simulated
 and native aio.
 @return: true if supported, false otherwise. */
+/* 检查系统是否支持原生Linux AIO。在某些内核版本中，虽然支持原生AIO，但在tmpfs上无法工作。
+   在这种情况下，我们不能使用原生AIO，因为无法混合使用模拟AIO和原生AIO。
+@return: 如果支持则返回true，否则返回false。 */
 bool AIO::is_linux_native_aio_supported() {
-  int fd;
-  io_context_t io_ctx;
-  const char *name;
+  int fd;  // 文件描述符
+  io_context_t io_ctx;  // IO上下文
+  const char *name;  // 文件名或路径
 
-  if (!linux_create_io_ctx(1, &io_ctx)) {
+  if (!linux_create_io_ctx(1, &io_ctx)) {  // 创建IO上下文
     /* The platform does not support native aio. */
-
-    return (false);
-
-  } else if (!srv_read_only_mode) {
+    /* 平台不支持原生AIO */
+    return (false);  // 返回false
+  } else if (!srv_read_only_mode) {  // 如果不是只读模式
     /* Now check if tmpdir supports native aio ops. */
-    fd = innobase_mysql_tmpfile(nullptr);
+    /* 现在检查tmpdir是否支持原生AIO操作 */
+    fd = innobase_mysql_tmpfile(nullptr);  // 创建临时文件
 
-    if (fd < 0) {
+    if (fd < 0) {  // 如果创建失败
       ib::warn(ER_IB_MSG_763) << "Unable to create temp file to check"
-                                 " native AIO support.";
-
-      return (false);
+                                 " native AIO support.";  // 输出警告信息
+      return (false);  // 返回false
     }
-    name = "tmpdir";
-  } else {
-    const auto file_path = srv_sys_space.first_datafile()->filepath();
+    name = "tmpdir";  // 设置名称为tmpdir
+  } else {  // 如果是只读模式
+    const auto file_path = srv_sys_space.first_datafile()->filepath();  // 获取第一个数据文件的路径
 
-    fd = ::open(file_path, O_RDONLY);
+    fd = ::open(file_path, O_RDONLY);  // 以只读模式打开文件
 
-    if (fd == -1) {
+    if (fd == -1) {  // 如果打开失败
       ib::warn(ER_IB_MSG_764) << "Unable to open"
                               << " \"" << file_path << "\" to check native"
-                              << " AIO read support.";
-
-      return (false);
+                              << " AIO read support.";  // 输出警告信息
+      return (false);  // 返回false
     }
-    name = file_path;
+    name = file_path;  // 设置名称为文件路径
   }
 
-  struct io_event io_event;
+  struct io_event io_event;  // IO事件结构体
 
-  memset(&io_event, 0x0, sizeof(io_event));
+  memset(&io_event, 0x0, sizeof(io_event));  // 初始化IO事件结构体
 
   byte *buf =
-      static_cast<byte *>(ut::aligned_zalloc(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE));
+      static_cast<byte *>(ut::aligned_zalloc(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE));  // 分配对齐的内存
 
-  struct iocb iocb;
+  struct iocb iocb;  // IO控制块结构体
 
   /* Suppress valgrind warning. */
-  memset(&iocb, 0x0, sizeof(iocb));
+  /* 抑制valgrind警告 */
+  memset(&iocb, 0x0, sizeof(iocb));  // 初始化IO控制块结构体
 
-  struct iocb *p_iocb = &iocb;
+  struct iocb *p_iocb = &iocb;  // 指向IO控制块的指针
 
-  if (!srv_read_only_mode) {
-    io_prep_pwrite(p_iocb, fd, buf, UNIV_PAGE_SIZE, 0);
-
-  } else {
-    ut_a(UNIV_PAGE_SIZE >= 512);
-    io_prep_pread(p_iocb, fd, buf, 512, 0);
+  if (!srv_read_only_mode) {  // 如果不是只读模式
+    io_prep_pwrite(p_iocb, fd, buf, UNIV_PAGE_SIZE, 0);  // 准备写操作
+  } else {  // 如果是只读模式
+    ut_a(UNIV_PAGE_SIZE >= 512);  // 断言确保页面大小至少为512字节
+    io_prep_pread(p_iocb, fd, buf, 512, 0);  // 准备读操作
   }
 
-  int err = io_submit(io_ctx, 1, &p_iocb);
+  int err = io_submit(io_ctx, 1, &p_iocb);  // 提交IO请求
 
-  if (err >= 1) {
+  if (err >= 1) {  // 如果提交成功
     /* Now collect the submitted IO request. */
-    err = io_getevents(io_ctx, 1, 1, &io_event, nullptr);
+    /* 现在收集提交的IO请求 */
+    err = io_getevents(io_ctx, 1, 1, &io_event, nullptr);  // 获取IO事件
   }
 
-  ut::aligned_free(buf);
-  close(fd);
+  ut::aligned_free(buf);  // 释放分配的内存
+  close(fd);  // 关闭文件描述符
 
-  switch (err) {
+  switch (err) {  // 根据错误码进行处理
     case 1:
-      return (true);
+      return (true);  // 返回true，表示支持原生AIO
 
     case -EINVAL:
     case -ENOSYS:
@@ -2880,15 +3001,15 @@ bool AIO::is_linux_native_aio_supported() {
           << (srv_read_only_mode ? name : "tmpdir")
           << " to a file system that supports native"
              " AIO or you can set innodb_use_native_aio to"
-             " false to avoid this message.";
+             " false to avoid this message.";  // 输出错误信息
 
-      [[fallthrough]];
+      [[fallthrough]];  // 继续执行下一个case
     default:
       ib::error(ER_IB_MSG_766) << "Linux Native AIO check on " << name
-                               << "returned error[" << -err << "]";
+                               << "returned error[" << -err << "]";  // 输出错误信息
   }
 
-  return (false);
+  return (false);  // 返回false，表示不支持原生AIO
 }
 
 #endif /* LINUX_NATIVE_AIO */
@@ -5553,27 +5674,41 @@ ulint os_file_get_last_error(bool report_all_errors) {
   return (os_file_get_last_error_low(report_all_errors, false));
 }
 
-/** Does error handling when a file operation fails.
-Conditionally exits (calling srv_fatal_error()) based on should_exit value
-and the error type, if should_exit is true then on_error_silent is ignored.
-@param[in]      name            name of a file or NULL
-@param[in]      operation       operation
-@param[in]      should_exit     call srv_fatal_error() on an unknown error,
-                                if this parameter is true
-@param[in]      on_error_silent if true then don't print any message to the log
-                                iff it is an unknown non-fatal error
-@return true if we should retry the operation */
+/**
+ * Does error handling when a file operation fails.
+ * Conditionally exits (calling srv_fatal_error()) based on should_exit value
+ * and the error type, if should_exit is true then on_error_silent is ignored.
+ * 当文件操作失败时进行错误处理。
+ * 根据 should_exit 值和错误类型有条件地退出（调用 srv_fatal_error()），
+ * 如果 should_exit 为 true，则忽略 on_error_silent。
+ *
+ * @param[in]      name            name of a file or NULL
+ * @param[in]      name            文件名或 NULL
+ * @param[in]      operation       operation
+ * @param[in]      operation       操作名称
+ * @param[in]      should_exit     call srv_fatal_error() on an unknown error,
+ *                                if this parameter is true
+ * @param[in]      should_exit     如果为 true，则在未知错误时调用 srv_fatal_error()
+ * @param[in]      on_error_silent if true then don't print any message to the log
+ *                                iff it is an unknown non-fatal error
+ * @param[in]      on_error_silent 如果为 true，则在未知非致命错误时不打印任何日志消息
+ * @return true if we should retry the operation
+ * @return 如果应重试操作，则返回 true
+ */
 [[nodiscard]] static bool os_file_handle_error_cond_exit(const char *name,
                                                          const char *operation,
                                                          bool should_exit,
                                                          bool on_error_silent) {
   ulint err;
 
+  // 获取最后一个错误码
   err = os_file_get_last_error_low(false, on_error_silent);
 
+  // 根据错误类型进行处理
   switch (err) {
     case OS_FILE_DISK_FULL:
       /* We only print a warning about disk full once */
+      /* 我们只打印一次磁盘已满的警告 */
 
       if (os_has_said_disk_full) {
         return (false);
@@ -5581,6 +5716,7 @@ and the error type, if should_exit is true then on_error_silent is ignored.
 
       /* Disk full error is reported irrespective of the
       on_error_silent setting. */
+      /* 磁盘已满错误会忽略 on_error_silent 设置进行报告。 */
 
       if (name) {
         ib::error(ER_IB_MSG_819)
@@ -5608,11 +5744,13 @@ and the error type, if should_exit is true then on_error_silent is ignored.
 
     case OS_FILE_SHARING_VIOLATION:
 
+      // 共享冲突时等待 10 秒后重试
       std::this_thread::sleep_for(std::chrono::seconds(10));
       return (true);
 
     case OS_FILE_INSUFFICIENT_RESOURCE:
 
+      // 资源不足时等待 100 毫秒后重试
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
       return (true);
 
@@ -5624,6 +5762,8 @@ and the error type, if should_exit is true then on_error_silent is ignored.
       /* If it is an operation that can crash on error then it
       is better to ignore on_error_silent and print an error message
       to the log. */
+      /* 如果这是一个在错误时可能崩溃的操作，
+      则最好忽略 on_error_silent 并在日志中打印错误消息。 */
 
       if (should_exit || !on_error_silent) {
         ib::error(ER_IB_MSG_821)
@@ -5636,6 +5776,7 @@ and the error type, if should_exit is true then on_error_silent is ignored.
 
       if (should_exit) {
 #ifndef UNIV_HOTBACKUP
+        // 调用致命错误处理函数
         srv_fatal_error();
 #else  /* !UNIV_HOTBACKUP */
         ib::fatal(UT_LOCATION_HERE, ER_IB_MSG_822)
@@ -5648,12 +5789,20 @@ and the error type, if should_exit is true then on_error_silent is ignored.
   return (false);
 }
 
-/** Does error handling when a file operation fails.
-@param[in]      name            File name or NULL
-@param[in]      operation       Name of operation e.g., "read", "write"
-@return true if we should retry the operation */
+/**
+ * Does error handling when a file operation fails.
+ * 当文件操作失败时进行错误处理。
+ *
+ * @param[in]      name            File name or NULL
+ * @param[in]      name            文件名或 NULL
+ * @param[in]      operation       Name of operation e.g., "read", "write"
+ * @param[in]      operation       操作名称，例如 "read"、"write"
+ * @return true if we should retry the operation
+ * @return 如果应重试操作，则返回 true
+ */
 static bool os_file_handle_error(const char *name, const char *operation) {
   /* Exit in case of unknown error */
+  /* 在未知错误的情况下退出 */
   return (os_file_handle_error_cond_exit(name, operation, true, false));
 }
 
@@ -6287,30 +6436,30 @@ dberr_t os_aio_handler(ulint segment, fil_node_t **m1, void **m2,
                        IORequest *request) {
   dberr_t err;
 
-  if (srv_use_native_aio) {
-    srv_set_io_thread_op_info(segment, "native aio handle");
+  if (srv_use_native_aio) {  // 如果启用了原生 AIO
+    srv_set_io_thread_op_info(segment, "native aio handle");  // 设置 I/O 线程操作信息
 
-#ifdef WIN_ASYNC_IO
+#ifdef WIN_ASYNC_IO  // 如果是 Windows 平台
 
-    err = os_aio_windows_handler(segment, m1, m2, request);
+    err = os_aio_windows_handler(segment, m1, m2, request);  // 调用 Windows 平台的 AIO 处理函数
 
-#elif defined(LINUX_NATIVE_AIO)
+#elif defined(LINUX_NATIVE_AIO)  // 如果是 Linux 平台
 
-    err = os_aio_linux_handler(segment, m1, m2, request);
+    err = os_aio_linux_handler(segment, m1, m2, request);  // 调用 Linux 平台的 AIO 处理函数
 #else
-    ut_error;
+    ut_error;  // 如果不是支持的平台，触发错误
 
-    err = DB_ERROR; /* Eliminate compiler warning */
+    err = DB_ERROR; /* Eliminate compiler warning */ /* 消除编译器警告 */
 
 #endif /* WIN_ASYNC_IO */
 
-  } else {
-    srv_set_io_thread_op_info(segment, "simulated aio handle");
+  } else {  // 如果未启用原生 AIO
+    srv_set_io_thread_op_info(segment, "simulated aio handle");  // 设置 I/O 线程操作信息
 
-    err = os_aio_simulated_handler(segment, m1, m2, request);
+    err = os_aio_simulated_handler(segment, m1, m2, request);  // 调用模拟 AIO 处理函数
   }
 
-  return (err);
+  return (err);  // 返回错误码
 }
 
 /** Constructor
@@ -6350,99 +6499,105 @@ AIO::AIO(latch_id_t id, ulint n, ulint segments)
 
 /** Initialise the slots */
 dberr_t AIO::init_slots() {
-  for (ulint i = 0; i < m_slots.size(); ++i) {
-    Slot &slot = m_slots[i];
+  for (ulint i = 0; i < m_slots.size(); ++i) { // 遍历所有的槽位
+    Slot &slot = m_slots[i]; // 获取当前槽位的引用
 
-    slot.pos = static_cast<uint16_t>(i);
+    slot.pos = static_cast<uint16_t>(i); // 设置槽位的位置
 
-    slot.is_reserved = false;
+    slot.is_reserved = false; // 初始化槽位为未预留状态
 
 #ifdef WIN_ASYNC_IO
 
-    slot.handle = CreateEvent(NULL, TRUE, FALSE, NULL);
+    slot.handle = CreateEvent(NULL, TRUE, FALSE, NULL); // 创建一个事件对象
 
-    OVERLAPPED *over = &slot.control;
+    OVERLAPPED *over = &slot.control; // 获取 OVERLAPPED 结构体的指针
 
-    over->hEvent = slot.handle;
+    over->hEvent = slot.handle; // 将事件对象句柄赋值给 OVERLAPPED 结构体
 
-    (*m_handles)[i] = over->hEvent;
+    (*m_handles)[i] = over->hEvent; // 将事件对象句柄存储到句柄数组中
 
 #elif defined(LINUX_NATIVE_AIO)
 
-    slot.ret = 0;
+    slot.ret = 0; // 初始化返回值为 0
 
-    slot.n_bytes = 0;
+    slot.n_bytes = 0; // 初始化字节数为 0
 
-    memset(&slot.control, 0x0, sizeof(slot.control));
+    memset(&slot.control, 0x0, sizeof(slot.control)); // 将控制结构体清零
 
 #endif /* WIN_ASYNC_IO */
   }
 
-  return (DB_SUCCESS);
+  return (DB_SUCCESS); // 返回成功状态
 }
 
 #ifdef LINUX_NATIVE_AIO
 /** Initialise the Linux Native AIO interface */
+/* 初始化 Linux 原生 AIO 接口 */
 dberr_t AIO::init_linux_native_aio() {
   /* Initialize the io_context array. One io_context
   per segment in the array. */
+  /* 初始化 io_context 数组。数组中的每个段对应一个 io_context。 */
 
-  ut_a(m_aio_ctx == nullptr);
+  ut_a(m_aio_ctx == nullptr);  // 断言确保 m_aio_ctx 为 nullptr
 
   m_aio_ctx = static_cast<io_context **>(ut::zalloc_withkey(
-      UT_NEW_THIS_FILE_PSI_KEY, m_n_segments * sizeof(*m_aio_ctx)));
+      UT_NEW_THIS_FILE_PSI_KEY, m_n_segments * sizeof(*m_aio_ctx)));  // 分配 io_context 数组
 
-  if (m_aio_ctx == nullptr) {
-    return (DB_OUT_OF_MEMORY);
+  if (m_aio_ctx == nullptr) {  // 如果分配失败
+    return (DB_OUT_OF_MEMORY);  // 返回内存不足错误
   }
 
-  io_context **ctx = m_aio_ctx;
-  ulint max_events = slots_per_segment();
+  io_context **ctx = m_aio_ctx;  // 指向 io_context 数组的指针
+  ulint max_events = slots_per_segment();  // 每个段的最大事件数
 
-  for (ulint i = 0; i < m_n_segments; ++i, ++ctx) {
-    if (!linux_create_io_ctx(max_events, ctx)) {
+  for (ulint i = 0; i < m_n_segments; ++i, ++ctx) {  // 遍历每个段
+    if (!linux_create_io_ctx(max_events, ctx)) {  // 初始化 io_context
       /* If something bad happened during aio setup
       we should call it a day and return right away.
       We don't care about any leaks because a failure
       to initialize the io subsystem means that the
       server (or at least the innodb storage engine)
       is not going to startup. */
-      return (DB_IO_ERROR);
+      /* 如果在 AIO 设置过程中发生错误，我们应该立即返回。
+         我们不关心任何内存泄漏，因为初始化 IO 子系统失败意味着
+         服务器（或至少是 InnoDB 存储引擎）将无法启动。 */
+      return (DB_IO_ERROR);  // 返回 IO 错误
     }
   }
 
   m_pending = static_cast<struct iocb **>(ut::zalloc_withkey(
-      UT_NEW_THIS_FILE_PSI_KEY, m_slots.size() * sizeof(struct iocb *)));
+      UT_NEW_THIS_FILE_PSI_KEY, m_slots.size() * sizeof(struct iocb *)));  // 分配 pending 数组
   m_count = static_cast<ulint *>(ut::zalloc_withkey(
-      UT_NEW_THIS_FILE_PSI_KEY, m_n_segments * sizeof(ulint)));
+      UT_NEW_THIS_FILE_PSI_KEY, m_n_segments * sizeof(ulint)));  // 分配 count 数组
 
-  return (DB_SUCCESS);
+  return (DB_SUCCESS);  // 返回成功
 }
 #endif /* LINUX_NATIVE_AIO */
 
 /** Initialise the array */
+/* 初始化数组 */
 dberr_t AIO::init() {
-  ut_a(!m_slots.empty());
+  ut_a(!m_slots.empty());  // 断言确保 m_slots 不为空
 
 #ifdef _WIN32
-  ut_a(m_handles == NULL);
+  ut_a(m_handles == NULL);  // 断言确保 m_handles 为 NULL
 
   m_handles =
-      ut::new_withkey<Handles>(UT_NEW_THIS_FILE_PSI_KEY, m_slots.size());
+      ut::new_withkey<Handles>(UT_NEW_THIS_FILE_PSI_KEY, m_slots.size());  // 分配 Handles 对象
 #endif /* _WIN32 */
 
-  if (srv_use_native_aio) {
+  if (srv_use_native_aio) {  // 如果启用了原生 AIO
 #ifdef LINUX_NATIVE_AIO
-    dberr_t err = init_linux_native_aio();
+    dberr_t err = init_linux_native_aio();  // 初始化 Linux 原生 AIO
 
-    if (err != DB_SUCCESS) {
-      return (err);
+    if (err != DB_SUCCESS) {  // 如果初始化失败
+      return (err);  // 返回错误
     }
 
 #endif /* LINUX_NATIVE_AIO */
   }
 
-  return (init_slots());
+  return (init_slots());  // 初始化槽并返回结果
 }
 
 /** Creates an aio wait array. Note that we return NULL in case of failure.
@@ -6453,26 +6608,32 @@ failure will result in server refusing to start up.
                                 allowed; n must be divisible by m_n_segments
 @param[in]      n_segments      number of segments in the AIO array
 @return own: AIO array, NULL on failure */
+/* 创建一个AIO等待数组。注意，如果失败则返回NULL。
+   我们不关心在此处释放内存，因为我们假设失败将导致服务器拒绝启动。
+@param[in]      id              锁ID
+@param[in]      n               允许的最大挂起AIO操作数；n必须能被m_n_segments整除
+@param[in]      n_segments      AIO数组中的段数
+@return 返回：AIO数组，失败时返回NULL */
 AIO *AIO::create(latch_id_t id, ulint n, ulint n_segments) {
-  ut_a(n_segments > 0);
+  ut_a(n_segments > 0);  // 断言确保段数大于0
 
-  if ((n % n_segments)) {
+  if ((n % n_segments)) {  // 如果n不能被n_segments整除
     ib::error(ER_IB_MSG_828) << "Maximum number of AIO operations must be "
-                             << "divisible by number of segments";
+                             << "divisible by number of segments";  // 输出错误信息
 
-    return (nullptr);
+    return (nullptr);  // 返回NULL
   }
 
   AIO *array =
-      ut::new_withkey<AIO>(UT_NEW_THIS_FILE_PSI_KEY, id, n, n_segments);
+      ut::new_withkey<AIO>(UT_NEW_THIS_FILE_PSI_KEY, id, n, n_segments);  // 分配AIO数组内存
 
-  if (array != nullptr && array->init() != DB_SUCCESS) {
-    ut::delete_(array);
+  if (array != nullptr && array->init() != DB_SUCCESS) {  // 如果分配成功但初始化失败
+    ut::delete_(array);  // 释放内存
 
-    array = nullptr;
+    array = nullptr;  // 将指针置为NULL
   }
 
-  return (array);
+  return (array);  // 返回AIO数组
 }
 
 /** AIO destructor */
@@ -6516,101 +6677,103 @@ AIO::~AIO() {
 bool AIO::start(ulint n_per_seg, ulint n_readers, ulint n_writers) {
 #if defined(LINUX_NATIVE_AIO)
   /* Check if native aio is supported on this system and tmpfs */
+  /* 检查系统是否支持原生AIO以及tmpfs */
   if (srv_use_native_aio && !is_linux_native_aio_supported()) {
     ib::warn(ER_IB_MSG_829) << "Linux Native AIO disabled.";
 
-    srv_use_native_aio = false;
+    srv_use_native_aio = false;  // 如果系统不支持原生AIO，则禁用原生AIO
   }
 #endif /* LINUX_NATIVE_AIO */
 
-  srv_reset_io_thread_op_info();
+  srv_reset_io_thread_op_info();  // 重置IO线程的操作信息
 
   s_reads =
-      create(LATCH_ID_OS_AIO_READ_MUTEX, n_readers * n_per_seg, n_readers);
+      create(LATCH_ID_OS_AIO_READ_MUTEX, n_readers * n_per_seg, n_readers);  // 创建读取线程的AIO对象
 
   if (s_reads == nullptr) {
-    return false;
+    return false;  // 如果创建失败，返回false
   }
 
-  ulint start = srv_read_only_mode ? 0 : 2;
-  ulint n_segs = n_readers + start;
+  ulint start = srv_read_only_mode ? 0 : 2;  // 根据是否只读模式确定起始索引
+  ulint n_segs = n_readers + start;  // 计算总的段数
 
 #ifndef UNIV_HOTBACKUP
   /* 0 is the ibuf segment and 1 is the redo log segment. */
+  /* 0是插入缓冲段，1是重做日志段 */
   for (ulint i = start; i < n_segs; ++i) {
-    ut_a(i < SRV_MAX_N_IO_THREADS);
-    srv_io_thread_function[i] = "read thread";
+    ut_a(i < SRV_MAX_N_IO_THREADS);  // 断言确保索引在最大IO线程数范围内
+    srv_io_thread_function[i] = "read thread";  // 设置IO线程的功能为读取线程
   }
 #endif /* !UNIV_HOTBACKUP */
 
-  ulint n_segments = n_readers;
+  ulint n_segments = n_readers;  // 初始化段数为读取线程数
 
-  if (!srv_read_only_mode) {
-    s_ibuf = create(LATCH_ID_OS_AIO_IBUF_MUTEX, n_per_seg, 1);
+  if (!srv_read_only_mode) {  // 如果不是只读模式
+    s_ibuf = create(LATCH_ID_OS_AIO_IBUF_MUTEX, n_per_seg, 1);  // 创建插入缓冲的AIO对象
 
     if (s_ibuf == nullptr) {
-      return false;
+      return false;  // 如果创建失败，返回false
     }
 
-    ++n_segments;
+    ++n_segments;  // 增加段数
 
 #ifndef UNIV_HOTBACKUP
-    srv_io_thread_function[0] = "insert buffer thread";
+    srv_io_thread_function[0] = "insert buffer thread";  // 设置IO线程的功能为插入缓冲线程
 #endif /* !UNIV_HOTBACKUP */
 
-    s_log = create(LATCH_ID_OS_AIO_LOG_MUTEX, n_per_seg, 1);
+    s_log = create(LATCH_ID_OS_AIO_LOG_MUTEX, n_per_seg, 1);  // 创建日志的AIO对象
 
     if (s_log == nullptr) {
-      return false;
+      return false;  // 如果创建失败，返回false
     }
 
-    ++n_segments;
+    ++n_segments;  // 增加段数
 
 #ifndef UNIV_HOTBACKUP
-    srv_io_thread_function[1] = "log thread";
+    srv_io_thread_function[1] = "log thread";  // 设置IO线程的功能为日志线程
 #endif /* !UNIV_HOTBAKUP */
 
   } else {
-    s_ibuf = s_log = nullptr;
+    s_ibuf = s_log = nullptr;  // 如果是只读模式，插入缓冲和日志的AIO对象为空
   }
 
   s_writes =
-      create(LATCH_ID_OS_AIO_WRITE_MUTEX, n_writers * n_per_seg, n_writers);
+      create(LATCH_ID_OS_AIO_WRITE_MUTEX, n_writers * n_per_seg, n_writers);  // 创建写入线程的AIO对象
 
   if (s_writes == nullptr) {
-    return false;
+    return false;  // 如果创建失败，返回false
   }
 
-  n_segments += n_writers;
+  n_segments += n_writers;  // 增加段数
 
 #ifndef UNIV_HOTBACKUP
   for (ulint i = start + n_readers; i < n_segments; ++i) {
-    ut_a(i < SRV_MAX_N_IO_THREADS);
-    srv_io_thread_function[i] = "write thread";
+    ut_a(i < SRV_MAX_N_IO_THREADS);  // 断言确保索引在最大IO线程数范围内
+    srv_io_thread_function[i] = "write thread";  // 设置IO线程的功能为写入线程
   }
 #endif /* !UNIV_HOTBACKUP */
 
-  ut_ad(n_segments >= static_cast<ulint>(srv_read_only_mode ? 2 : 4));
+  ut_ad(n_segments >= static_cast<ulint>(srv_read_only_mode ? 2 : 4));  // 断言确保段数足够
 
-  os_aio_n_segments = n_segments;
+  os_aio_n_segments = n_segments;  // 设置全局的AIO段数
 
-  os_aio_validate();
+  os_aio_validate();  // 验证AIO配置
 
   os_aio_segment_wait_events = static_cast<os_event_t *>(
       ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY,
-                         n_segments * sizeof *os_aio_segment_wait_events));
+                         n_segments * sizeof *os_aio_segment_wait_events));  // 分配AIO段等待事件的内存
 
   if (os_aio_segment_wait_events == nullptr) {
-    return false;
+    return false;  // 如果分配失败，返回false
   }
 
   for (ulint i = 0; i < n_segments; ++i) {
-    os_aio_segment_wait_events[i] = os_event_create();
+    os_aio_segment_wait_events[i] = os_event_create();  // 为每个段创建等待事件
   }
 
-  os_last_printout = std::chrono::steady_clock::now();
+  os_last_printout = std::chrono::steady_clock::now();  // 记录最后一次打印的时间
 
-  return true;
+  return true;  // 返回成功
 }
 
 /** Free the AIO arrays */
@@ -6630,89 +6793,215 @@ void AIO::shutdown() {
 
 #if !defined(NO_FALLOCATE) && defined(UNIV_LINUX)
 
+/*
+FusionIO 是一种高性能的固态存储设备，适用于高 I/O 负载的场景。
+4K 是常见的扇区大小，设置最大值为 4K 是为了兼容性和性能优化。
+*/
+// 最大磁盘扇区大小：4096字节
 /** Max disk sector size */
 static const ulint MAX_SECTOR_SIZE = 4096;
 
 /**
+尝试获取 FusionIO 的扇区大小。
 Try and get the FusionIO sector size. */
 void os_fusionio_get_sector_size() {
+  // 检查是否启用了 O_DIRECT 或 O_DIRECT_NO_FSYNC 刷新方法
+  // Check if O_DIRECT or O_DIRECT_NO_FSYNC flush method is enabled
+  /*
+SRV_UNIX_O_DIRECT：
+描述：使用 O_DIRECT 模式进行文件 I/O 操作，并调用 fsync 确保数据写入磁盘。
+特点：
+绕过操作系统的页缓存，直接与磁盘设备交互。
+调用 fsync 确保数据持久化到磁盘。
+适用于需要高数据一致性的场景，如数据库系统。
+
+SRV_UNIX_O_DIRECT_NO_FSYNC：
+描述：使用 O_DIRECT 模式进行文件 I/O 操作，但不调用 fsync。
+特点：
+同样绕过操作系统的页缓存，直接与磁盘设备交互。
+不调用 fsync，因此数据可能不会立即持久化到磁盘。
+适用于对性能要求较高，但对数据一致性要求相对较低的场景。  
+数据写入磁盘的时机：
+设备缓存：即使 O_DIRECT 绕过了操作系统的页缓存，数据仍然可能被存储在设备的缓存中（如 SSD 的 DRAM 缓存）。设备缓存由硬件管理，数据会在设备认为合适的时机写入磁盘。
+操作系统调度：虽然 O_DIRECT 绕过了页缓存，但操作系统仍然会调度 I/O 操作。数据可能会被放入设备的 I/O 队列中，等待设备处理。
+设备刷新机制：设备通常有自己的刷新机制，定期将缓存中的数据写入磁盘。例如，SSD 可能会在缓存满或达到一定时间间隔时将数据写入闪存。
+
+数据在写入磁盘之前的位置：
+设备缓存：数据首先被写入设备的缓存中（如 SSD 的 DRAM 缓存）。
+I/O 队列：数据可能被放入设备的 I/O 队列中，等待设备处理。
+  */
+ /*
+ SSD 本身确实有 I/O 队列和自身的调度机制，这与操作系统的 I/O 调度是分层协作的关系：
+
+操作系统 I/O 调度：
+
+操作系统负责管理应用程序的 I/O 请求，并将其放入 I/O 调度队列。
+操作系统会根据调度算法（如 CFQ、Deadline、NOOP 等）对 I/O 请求进行排序和优化。
+最终，操作系统将 I/O 请求发送到设备驱动层。
+SSD 的 I/O 队列：
+
+SSD 设备有自己的 I/O 队列和调度机制，用于管理从操作系统接收到的 I/O 请求。
+SSD 的调度机制会根据设备的特性（如闪存块的磨损均衡、垃圾回收等）优化 I/O 操作。
+SSD 的 I/O 队列通常比操作系统的队列更深，能够缓存更多的 I/O 请求。
+协作关系：
+
+操作系统的 I/O 调度器负责高层次的 I/O 优化（如合并请求、优先级调度）。
+SSD 的 I/O 调度器负责低层次的 I/O 优化（如闪存块的写入顺序、垃圾回收）。
+两者共同协作，确保 I/O 操作的高效执行。
+ */
+/*
+io_uring 和 Native AIO 都是 Linux 中用于高性能异步 I/O 的机制，但它们的设计和实现有所不同。
+
+Native AIO：
+定义：Native AIO 是 Linux 提供的一种异步 I/O 接口，通过 libaio 库实现。
+特点：
+使用 io_submit 和 io_getevents 系统调用提交和获取 I/O 请求。
+需要显式管理 I/O 上下文和事件队列。
+在某些场景下性能较好，但接口复杂，且对文件系统和设备的支持有限。
+io_uring：
+定义：io_uring 是 Linux 5.1 引入的一种新的异步 I/O 接口，旨在提供更高的性能和更简单的编程模型。
+特点：
+使用共享内存环（ring buffer）来提交和完成 I/O 请求，减少了系统调用的开销。
+支持批量提交和完成 I/O 请求，进一步提高了性能。
+提供了更灵活的接口，支持多种 I/O 操作（如读写、polling、timeout 等）。
+对文件系统和设备的支持更广泛。
+区别：
+性能：io_uring 的性能通常优于 Native AIO，尤其是在高并发场景下。
+易用性：io_uring 的接口更简单，易于使用。
+功能：io_uring 支持更多的 I/O 操作和特性（如 polling、timeout）。
+兼容性：io_uring 对文件系统和设备的支持更广泛。
+
+int io_submit(io_context_t ctx, long nr, struct iocb *iocbpp[]);
+参数：
+ctx：I/O 上下文，用于管理异步 I/O 操作。
+nr：要提交的 I/O 请求数量。
+iocbpp：指向 iocb 结构体数组的指针，每个 iocb 描述一个 I/O 操作。
+返回值：成功时返回提交的 I/O 请求数量，失败时返回错误码。
+
+int io_getevents(io_context_t ctx, long min_nr, long nr, struct io_event *events, struct timespec *timeout);
+参数：
+ctx：I/O 上下文。
+min_nr：期望获取的最小完成事件数量。
+nr：期望获取的最大完成事件数量。
+events：用于存储完成事件的数组。
+timeout：超时时间，指定等待完成事件的最大时间。
+返回值：成功时返回获取的完成事件数量，失败时返回错误码。
+
+
+Polling：
+功能：io_uring 支持 Polling 模式，允许应用程序主动轮询 I/O 操作的完成状态，而不需要依赖内核的通知机制。
+优点：减少上下文切换和系统调用开销，适用于高吞吐量、低延迟的场景。
+使用场景：适用于对性能要求极高的场景，如数据库、高频交易系统。
+Timeout：
+功能：io_uring 支持 Timeout 操作，允许应用程序为 I/O 操作设置超时时间。
+优点：避免 I/O 操作无限期等待，提高系统的响应性和可靠性。
+使用场景：适用于需要控制 I/O 操作执行时间的场景，如实时系统、网络服务。
+
+*/
   if (srv_unix_file_flush_method == SRV_UNIX_O_DIRECT ||
       srv_unix_file_flush_method == SRV_UNIX_O_DIRECT_NO_FSYNC) {
-    ulint sector_size = UNIV_SECTOR_SIZE;
-    char *path = srv_data_home;
-    os_file_t check_file;
-    byte *block_ptr;
-    char current_dir[3];
-    char *dir_end;
-    ulint dir_len;
-    ulint check_path_len;
-    char *check_file_name;
-    ssize_t ret;
+    ulint sector_size = UNIV_SECTOR_SIZE;  // 初始扇区大小
+    char *path = srv_data_home;  // 数据目录路径
+    os_file_t check_file;  // 用于检查的文件描述符
+    byte *block_ptr;  // 对齐后的数据块指针
+    char current_dir[3];  // 当前目录路径
+    char *dir_end;  // 路径分隔符位置
+    ulint dir_len;  // 目录路径长度
+    ulint check_path_len;  // 检查文件路径长度
+    char *check_file_name;  // 检查文件名
+    ssize_t ret;  // 写操作返回值
 
+    /* 如果 srv_data_home 为空，则设置为当前目录 */
     /* If the srv_data_home is empty, set the path to
     current dir. */
     if (*path == 0) {
-      current_dir[0] = FN_CURLIB;
-      current_dir[1] = FN_LIBCHAR;
-      current_dir[2] = 0;
+      current_dir[0] = FN_CURLIB;  // 当前目录符号
+      current_dir[1] = FN_LIBCHAR;  // 路径分隔符
+      current_dir[2] = 0;  // 字符串结束符
       path = current_dir;
     }
 
+    /* 获取数据文件的路径 */
     /* Get the path of data file */
-    dir_end = strrchr(path, OS_PATH_SEPARATOR);
-    dir_len = dir_end ? dir_end - path : strlen(path);
+    dir_end = strrchr(path, OS_PATH_SEPARATOR);  // 查找最后一个路径分隔符
+    dir_len = dir_end ? dir_end - path : strlen(path);  // 计算目录路径长度
 
+    /* 分配新路径并将目录路径复制到其中 */
     /* allocate a new path and move the directory path to it. */
-    check_path_len = dir_len + sizeof "/check_sector_size";
+    check_path_len = dir_len + sizeof "/check_sector_size";  // 计算检查文件路径长度
     check_file_name = static_cast<char *>(
-        ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, check_path_len));
-    memcpy(check_file_name, path, dir_len);
+        ut::zalloc_withkey(UT_NEW_THIS_FILE_PSI_KEY, check_path_len));  // 分配内存
+    memcpy(check_file_name, path, dir_len);  // 复制目录路径
 
+    /* 构造检查文件名 */
     /* Construct a check file name. */
-    strcat(check_file_name + dir_len, "/check_sector_size");
+    strcat(check_file_name + dir_len, "/check_sector_size");  // 拼接文件名
 
+    /* 创建一个临时文件用于检查扇区大小 */
     /* Create a tmp file for checking sector size. */
     check_file = ::open(check_file_name,
-                        O_CREAT | O_TRUNC | O_WRONLY | O_DIRECT, S_IRWXU);
+                        O_CREAT | O_TRUNC | O_WRONLY | O_DIRECT, S_IRWXU);  // 打开文件
 
     if (check_file == -1) {
+      // 如果文件创建失败，输出错误信息
       ib::error(ER_IB_MSG_830)
           << "Failed to create check sector file, errno:" << errno
           << " Please confirm O_DIRECT is"
           << " supported and remove the file " << check_file_name
           << " if it exists.";
-      ut::free(check_file_name);
-      errno = 0;
+      ut::free(check_file_name);  // 释放内存
+      errno = 0;  // 重置 errno
       return;
     }
 
+    /* 尝试使用不同的扇区大小对齐写入文件 */
     /* Try to write the file with different sector size
     alignment. */
 #ifdef UNIV_DEBUG
-    alignas(MAX_SECTOR_SIZE) byte data[MAX_SECTOR_SIZE] = { 0 };
+    alignas(MAX_SECTOR_SIZE) byte data[MAX_SECTOR_SIZE] = { 0 };  // 调试模式下初始化数据
 #else
-    alignas(MAX_SECTOR_SIZE) byte data[MAX_SECTOR_SIZE];
+    alignas(MAX_SECTOR_SIZE) byte data[MAX_SECTOR_SIZE];  // 非调试模式下声明数据
 #endif
 
+/*
+对齐操作：
+在代码中，ut_align 函数用于将数据块对齐到指定的扇区大小。对齐后的数据块会通过 pwrite 写入文件。
+
+摸索扇区大小：
+代码通过不断尝试不同的扇区大小（从初始值 UNIV_SECTOR_SIZE 开始，每次翻倍）来找到设备支持的扇区大小。如果写入成功，说明当前扇区大小是有效的。
+
+写入失败：
+如果数据块没有对齐到设备的扇区大小，写入操作会失败。
+这是因为 O_DIRECT 模式要求所有的读写操作都必须对齐到设备的扇区大小，否则会返回错误。
+*/
+/*
+pwrite 是一个 Linux 系统调用，用于在文件的指定位置写入数据。与 write 系统调用不同，pwrite 允许指定写入的偏移量，而不会改变文件的当前偏移量。
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+fd: 文件描述符，指向要写入的文件。
+buf: 指向要写入数据的缓冲区。
+count: 要写入的字节数。
+offset: 写入操作的起始偏移量。
+*/
     while (sector_size <= MAX_SECTOR_SIZE) {
-      block_ptr = static_cast<byte *>(ut_align(&data, sector_size));
-      ret = pwrite(check_file, block_ptr, sector_size, 0);
+      block_ptr = static_cast<byte *>(ut_align(&data, sector_size));  // 对齐数据块
+      ret = pwrite(check_file, block_ptr, sector_size, 0);  // 写入文件
       if (ret > 0 && (ulint)ret == sector_size) {
-        break;
+        break;  // 如果写入成功，跳出循环
       }
-      sector_size *= 2;
+      sector_size *= 2;  // 尝试更大的扇区大小
     }
 
+    /* 扇区大小应小于等于 MAX_SECTOR_SIZE */
     /* The sector size should <= MAX_SECTOR_SIZE. */
-    ut_ad(sector_size <= MAX_SECTOR_SIZE);
+    ut_ad(sector_size <= MAX_SECTOR_SIZE);  // 断言检查
 
-    close(check_file);
-    unlink(check_file_name);
+    close(check_file);  // 关闭文件
+    unlink(check_file_name);  // 删除文件
 
-    ut::free(check_file_name);
-    errno = 0;
+    ut::free(check_file_name);  // 释放内存
+    errno = 0;  // 重置 errno
 
-    os_io_ptr_align = sector_size;
+    os_io_ptr_align = sector_size;  // 设置 I/O 对齐大小为检测到的扇区大小
   }
 }
 #endif /* !NO_FALLOCATE && UNIV_LINUX */
@@ -6764,22 +7053,32 @@ void meb_free_block_cache() {
 }
 #endif /* UNIV_HOTBACKUP */
 
+// 初始化异步 I/O (AIO) 系统
+// Initializes the asynchronous I/O (AIO) system.
 bool os_aio_init(ulint n_readers, ulint n_writers) {
-  /* Maximum number of pending aio operations allowed per segment */
+  /* 每个段允许的最大挂起 AIO 操作数 */
+  /* Maximum number of pending AIO operations allowed per segment */
   ulint limit = 8 * OS_AIO_N_PENDING_IOS_PER_THREAD;
 
 #ifdef _WIN32
+  // 在 Windows 平台上，如果启用了原生 AIO，则调整限制
+  // On Windows, if native AIO is enabled, adjust the limit
   if (srv_use_native_aio) {
     limit = SRV_N_PENDING_IOS_PER_THREAD;
   }
 #endif /* _WIN32 */
 
+  /* 获取 DIRECT_IO 的扇区大小。在这种情况下，我们需要知道扇区大小以对齐写缓冲区。 */
   /* Get sector size for DIRECT_IO. In this case, we need to
   know the sector size for aligning the write buffer. */
+  // NO_FALLOCATE 是一个编译时宏，用于禁用 fallocate 系统调用的支持。
+  // 如：gcc -DNO_FALLOCATE -o my_program my_program.c
 #if !defined(NO_FALLOCATE) && defined(UNIV_LINUX)
   os_fusionio_get_sector_size();
 #endif /* !NO_FALLOCATE && UNIV_LINUX */
 
+  // 启动 AIO 系统，传入限制、读线程数和写线程数
+  // Start the AIO system, passing the limit, number of readers, and number of writers
   return (AIO::start(limit, n_readers, n_writers));
 }
 
@@ -7837,38 +8136,48 @@ thread.
                                 example
 @param[out]     m2              Callback argument
 @param[in]      type            IO context
-@return DB_SUCCESS or error code */
+@return DB_SUCCESS or error code
+执行模拟的 AIO。此函数应由 I/O 处理线程调用。
+
+@param[in]      global_segment  aio 数组中要等待的段号；段 0 是 ibuf I/O 线程，
+                                段 1 是日志 I/O 线程，然后是非 ibuf 读线程，最后是非 ibuf 写线程
+@param[out]     m1              随 AIO 请求传递的消息；请注意，即使在 AIO 操作失败的情况下，
+                                这些输出参数也是有效的，可以用于重新启动操作
+@param[out]     m2              回调参数
+@param[in]      type            IO 上下文
+@return DB_SUCCESS 或错误代码
+*/
 static dberr_t os_aio_simulated_handler(ulint global_segment, fil_node_t **m1,
                                         void **m2, IORequest *type) {
-  Slot *slot;
-  AIO *array{};
-  os_event_t event = os_aio_segment_wait_events[global_segment];
+  Slot *slot; // 定义一个指向槽位的指针
+  AIO *array{}; // 定义一个指向 AIO 数组的指针
+  os_event_t event = os_aio_segment_wait_events[global_segment]; // 获取对应段的事件
 
-  auto segment = AIO::get_array_and_local_segment(array, global_segment);
+  auto segment = AIO::get_array_and_local_segment(array, global_segment); // 获取数组和本地段
 
-  SimulatedAIOHandler handler(array, segment);
+  SimulatedAIOHandler handler(array, segment); // 创建模拟 AIO 处理器
 
-  for (;;) {
-    srv_set_io_thread_op_info(global_segment, "looking for i/o requests (a)");
+  for (;;) { // 无限循环
+    srv_set_io_thread_op_info(global_segment, "looking for i/o requests (a)"); // 设置 I/O 线程操作信息
 
-    ulint n_slots = handler.check_pending(global_segment, event);
+    ulint n_slots = handler.check_pending(global_segment, event); // 检查是否有挂起的 I/O 请求
 
-    if (n_slots == 0) {
-      continue;
+    if (n_slots == 0) { // 如果没有挂起的请求
+      continue; // 继续循环
     }
 
-    handler.init(n_slots);
+    handler.init(n_slots); // 初始化处理器
 
-    srv_set_io_thread_op_info(global_segment, "looking for i/o requests (b)");
+    srv_set_io_thread_op_info(global_segment, "looking for i/o requests (b)"); // 设置 I/O 线程操作信息
 
-    array->acquire();
+    array->acquire(); // 获取数组的互斥锁
 
-    ulint n_reserved;
+    ulint n_reserved; // 定义预留槽位数量
 
-    slot = handler.check_completed(&n_reserved);
+    slot = handler.check_completed(&n_reserved); // 检查是否有已完成的槽位
 
-    if (slot != nullptr) {
-      break;
+    if (slot != nullptr) { // 如果找到已完成的槽位
+      break; // 跳出循环
 
     } else if (n_reserved == 0
 #ifndef UNIV_HOTBACKUP
@@ -7880,89 +8189,102 @@ static dberr_t os_aio_simulated_handler(ulint global_segment, fil_node_t **m1,
       /* There is no completed request. If there
       are no pending request at all, and the system
       is being shut down, exit. */
+      /* 没有已完成的请求。如果根本没有挂起的请求，并且系统正在关闭，则退出。 */
 
-      array->release();
+      array->release(); // 释放数组的互斥锁
 
-      *m1 = nullptr;
+      *m1 = nullptr; // 设置输出参数为 nullptr
 
-      *m2 = nullptr;
+      *m2 = nullptr; // 设置输出参数为 nullptr
 
-      return (DB_SUCCESS);
+      return (DB_SUCCESS); // 返回成功状态
 
-    } else if (handler.select()) {
-      break;
+    } else if (handler.select()) { // 如果选择了一个请求
+      break; // 跳出循环
     }
 
     /* No I/O requested at the moment */
+    /* 目前没有 I/O 请求 */
 
-    srv_set_io_thread_op_info(global_segment, "resetting wait event");
+    srv_set_io_thread_op_info(global_segment, "resetting wait event"); // 设置 I/O 线程操作信息
 
-    /* We wait here until tbere are more IO requests
+    /* We wait here until there are more IO requests
     for this segment. */
+    /* 我们在这里等待，直到有更多的 IO 请求到达此段。 */
 
-    os_event_reset(event);
+    os_event_reset(event); // 重置事件
 
-    array->release();
+    array->release(); // 释放数组的互斥锁
 
-    srv_set_io_thread_op_info(global_segment, "waiting for i/o request");
+    srv_set_io_thread_op_info(global_segment, "waiting for i/o request"); // 设置 I/O 线程操作信息
 
-    os_event_wait(event);
+    os_event_wait(event); // 等待事件
   }
 
   /** Found a slot that has already completed its IO */
+  /** 找到一个已完成其 IO 的槽位 */
 
-  if (slot == nullptr) {
+  if (slot == nullptr) { // 如果没有找到已完成的槽位
     /* Merge adjacent requests */
-    handler.merge();
+    /* 合并相邻的请求 */
+    handler.merge(); // 合并相邻的请求
 
     /* Check if there are several consecutive blocks
     to read or write */
+    /* 检查是否有多个连续的块要读取或写入 */
 
-    srv_set_io_thread_op_info(global_segment, "consecutive i/o requests");
+    srv_set_io_thread_op_info(global_segment, "consecutive i/o requests"); // 设置 I/O 线程操作信息
 
     // Note: We don't support write combining for simulated AIO.
+    // ulint    total_len = handler.allocate_buffer();
+    // 注意：我们不支持模拟 AIO 的写入合并。
     // ulint    total_len = handler.allocate_buffer();
 
     /* We release the array mutex for the time of the I/O: NOTE that
     this assumes that there is just one i/o-handler thread serving
     a single segment of slots! */
+    /* 我们在 I/O 期间释放数组互斥锁：注意，这假设只有一个 I/O 处理线程服务于一个槽位段！ */
 
-    array->release();
+    array->release(); // 释放数组的互斥锁
 
     // Note: We don't support write combining for simulated AIO.
     // handler.copy_to_buffer(total_len);
+    // 注意：我们不支持模拟 AIO 的写入合并。
+    // handler.copy_to_buffer(total_len);
 
-    srv_set_io_thread_op_info(global_segment, "doing file i/o");
+    srv_set_io_thread_op_info(global_segment, "doing file i/o"); // 设置 I/O 线程操作信息
 
-    handler.io();
+    handler.io(); // 执行 I/O 操作
 
-    srv_set_io_thread_op_info(global_segment, "file i/o done");
+    srv_set_io_thread_op_info(global_segment, "file i/o done"); // 设置 I/O 线程操作信息
 
-    handler.io_complete();
+    handler.io_complete(); // 完成 I/O 操作
 
-    array->acquire();
+    array->acquire(); // 获取数组的互斥锁
 
-    handler.done();
+    handler.done(); // 标记处理完成
 
     /* We return the messages for the first slot now, and if there
     were several slots, the messages will be returned with
     subsequent calls of this function */
+    /* 我们现在返回第一个槽位的消息，如果有多个槽位，消息将在此函数的后续调用中返回 */
 
-    slot = handler.first_slot();
+    slot = handler.first_slot(); // 获取第一个槽位
   }
 
-  ut_ad(slot->is_reserved);
+  ut_ad(slot->is_reserved); // 断言槽位已预留
 
-  *m1 = slot->m1;
-  *m2 = slot->m2;
+  *m1 = slot->m1; // 设置输出参数
 
-  *type = slot->type;
+  *m2 = slot->m2; // 设置输出参数
 
-  array->release(slot);
+  *type = slot->type; // 设置输出参数
 
-  array->release();
+  array->release(slot); // 释放槽位
 
-  return (DB_SUCCESS);
+  array->release(); // 释放数组的互斥锁
+
+  return (DB_SUCCESS); // 返回成功状态
 }
 
 /** Get the total number of pending IOs

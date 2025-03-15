@@ -41,17 +41,24 @@ Cost_model_server::~Cost_model_server() {
   }
 }
 
+// 初始化服务器成本模型
 void Cost_model_server::init() {
+  // 如果成本常量缓存存在且服务器成本常量未初始化
   if (cost_constant_cache && m_server_cost_constants == nullptr) {
+    // 获取当前的成本常量
     // Get the current set of cost constants
     m_cost_constants = cost_constant_cache->get_cost_constants();
+    // 断言成本常量不为空
     assert(m_cost_constants != nullptr);
 
+    // 获取服务器操作的成本常量
     // Get the cost constants for server operations
     m_server_cost_constants = m_cost_constants->get_server_cost_constants();
+    // 断言服务器成本常量不为空
     assert(m_server_cost_constants != nullptr);
 
 #if !defined(NDEBUG)
+    // 在调试模式下，标记成本模型已初始化
     m_initialized = true;
 #endif
   }

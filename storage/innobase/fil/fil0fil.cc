@@ -8073,60 +8073,67 @@ into segments (see os0file.cc for more info). The thread specifies which
 segment it wants to wait for.
 @param[in]      segment         The number of the segment in the AIO array
                                 to wait for */
+/* 等待 AIO 操作完成。此函数用于处理已完成请求的处理程序。挂起的 AIO 请求数组被分为多个段（详见 os0file.cc）。
+   线程指定它要等待的段。
+@param[in]      segment         要等待的 AIO 数组中的段号 */
 void fil_aio_wait(ulint segment) {
   void *m2;
   fil_node_t *m1;
   IORequest type;
 
-  ut_ad(fil_validate_skip());
+  ut_ad(fil_validate_skip());  // 断言确保文件系统状态有效
 
-  auto err = os_aio_handler(segment, &m1, &m2, &type);
-  ut_a(err == DB_SUCCESS);
+  auto err = os_aio_handler(segment, &m1, &m2, &type);  // 处理 AIO 事件
+  ut_a(err == DB_SUCCESS);  // 断言确保 AIO 处理成功
 
-  auto file = reinterpret_cast<fil_node_t *>(m1);
+  auto file = reinterpret_cast<fil_node_t *>(m1);  // 将 m1 转换为 fil_node_t 指针
 
-  if (file == nullptr) {
-    ut_ad(srv_shutdown_state.load() == SRV_SHUTDOWN_EXIT_THREADS);
-    return;
+  if (file == nullptr) {  // 如果文件指针为空
+    ut_ad(srv_shutdown_state.load() == SRV_SHUTDOWN_EXIT_THREADS);  // 断言确保服务器正在关闭
+    return;  // 返回
   }
 
-  ut_a(!type.is_dblwr());
+  ut_a(!type.is_dblwr());  // 断言确保请求类型不是双写缓冲区
 
-  srv_set_io_thread_op_info(segment, "complete io for file");
+  srv_set_io_thread_op_info(segment, "complete io for file");  // 设置 I/O 线程操作信息
 
-  auto shard = fil_system->shard_by_id(file->space->id);
+  auto shard = fil_system->shard_by_id(file->space->id);  // 获取文件所属的 shard
 
-  shard->mutex_acquire();
+  shard->mutex_acquire();  // 获取 shard 的互斥锁
 
-  shard->complete_io(file, type);
+  shard->complete_io(file, type);  // 完成 I/O 操作
 
-  shard->mutex_release();
+  shard->mutex_release();  // 释放 shard 的互斥锁
 
-  ut_ad(fil_validate_skip());
+  ut_ad(fil_validate_skip());  // 断言确保文件系统状态有效
 
   /* Do the i/o handling */
   /* IMPORTANT: since i/o handling for reads will read also the insert
   buffer in tablespace 0, you have to be very careful not to introduce
   deadlocks in the i/o system. We keep tablespace 0 data files always
   open, and use a special i/o thread to serve insert buffer requests. */
+  /* 执行 I/O 处理 */
+  /* 重要提示：由于读取的 I/O 处理也会读取表空间 0 中的插入缓冲区，因此必须非常小心，不要在 I/O 系统中引入死锁。
+     我们始终保持表空间 0 的数据文件打开，并使用一个特殊的 I/O 线程来处理插入缓冲区请求。 */
 
-  switch (file->space->purpose) {
+  switch (file->space->purpose) {  // 根据文件空间的用途进行处理
     case FIL_TYPE_IMPORT:
     case FIL_TYPE_TEMPORARY:
     case FIL_TYPE_TABLESPACE:
-      srv_set_io_thread_op_info(segment, "complete io for buf page");
+      srv_set_io_thread_op_info(segment, "complete io for buf page");  // 设置 I/O 线程操作信息
 
       /* async single page writes from the dblwr buffer don't have
       access to the page */
-      if (m2 != nullptr) {
-        auto bpage = static_cast<buf_page_t *>(m2);
-        ut_d(bpage->take_io_responsibility());
-        buf_page_io_complete(bpage, false);
+      /* 来自双写缓冲区的异步单页写入无法访问页面 */
+      if (m2 != nullptr) {  // 如果 m2 不为空
+        auto bpage = static_cast<buf_page_t *>(m2);  // 将 m2 转换为 buf_page_t 指针
+        ut_d(bpage->take_io_responsibility());  // 断言确保页面负责 I/O
+        buf_page_io_complete(bpage, false);  // 完成页面的 I/O 操作
       }
       return;
   }
 
-  ut_d(ut_error);
+  ut_d(ut_error);  // 断言确保不会执行到此处
 }
 #endif /* !UNIV_HOTBACKUP */
 

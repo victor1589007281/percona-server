@@ -8338,6 +8338,7 @@ int mysqld_main(int argc, char **argv)
   }
 
   if (init_ssl_communication()) unireg_abort(MYSQLD_ABORT_EXIT);
+  // 初始化网络
   if (network_init()) unireg_abort(MYSQLD_ABORT_EXIT);
 
 #ifdef _WIN32

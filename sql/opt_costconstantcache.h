@@ -110,16 +110,30 @@ class Cost_constant_cache {
     be called once per session.
 
     @return pointer to the cost constants
+    获取当前使用的成本常量集合。
+
+    此函数将返回指向共享版本的成本常量的指针。为了跟踪有多少会话正在使用该集合，
+    并能够知道何时可以安全地删除成本常量对象，使用了引用计数。此函数将增加
+    返回的成本常量对象的引用计数。当不再使用成本常量时，必须调用
+    @c release_cost_constants() 来减少引用计数。
+
+    @note 为了确保每个使用成本常量集合的会话只增加一次引用计数，此函数应仅在
+    每个会话中调用一次。
+
+    @return 指向成本常量的指针
   */
 
   const Cost_model_constants *get_cost_constants() {
+    // 锁定成本常量的互斥锁
     mysql_mutex_lock(&LOCK_cost_const);
 
-    // Increase the ref count on the cost constant object
+    // 增加成本常量对象的引用计数
     current_cost_constants->inc_ref_count();
 
+    // 解锁成本常量的互斥锁
     mysql_mutex_unlock(&LOCK_cost_const);
 
+    // 返回当前的成本常量对象
     return current_cost_constants;
   }
 

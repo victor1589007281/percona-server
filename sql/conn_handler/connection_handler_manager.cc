@@ -267,18 +267,26 @@ bool Connection_handler_manager::unload_connection_handler() {
   return false;
 }
 
+// 这个函数用于处理新的连接请求。
 void Connection_handler_manager::process_new_connection(
     Channel_info *channel_info) {
+  // 检查连接事件循环是否中止，或者连接数是否超过限制
   if (connection_events_loop_aborted() ||
       !check_and_incr_conn_count(channel_info->is_admin_connection())) {
+    // 如果连接数超过限制，发送错误信息并关闭连接
     channel_info->send_error_and_close_channel(ER_CON_COUNT_ERROR, 0, true);
+    // 打印警告日志
     sql_print_warning("%s", ER_DEFAULT(ER_CON_COUNT_ERROR));
+    // 删除 Channel_info 对象
     delete channel_info;
     return;
   }
 
+  // 尝试将新连接添加到连接处理器中
   if (m_connection_handler->add_connection(channel_info)) {
+    // 如果添加失败，增加中止连接计数器
     inc_aborted_connects();
+    // 删除 Channel_info 对象
     delete channel_info;
   }
 }

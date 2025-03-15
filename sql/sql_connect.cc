@@ -717,33 +717,43 @@ bool thd_init_client_charset(THD *thd, uint cs_number) {
   RETURN
      0  success, thd is updated.
      1  error
+  执行握手、授权客户端并更新 THD 的 ACL 变量。
+
+  SYNOPSIS
+    check_connection()
+    thd  线程句柄
+
+  RETURN
+     0  成功，thd 已更新。
+     1  错误
 */
 
 static int check_connection(THD *thd) {
-  uint connect_errors = 0;
-  int auth_rc;
-  NET *net = thd->get_protocol_classic()->get_net();
+  uint connect_errors = 0;  // 连接错误计数
+  int auth_rc;  // 认证结果
+  NET *net = thd->get_protocol_classic()->get_net();  // 获取网络对象
 #ifndef NDEBUG
-  char desc[VIO_DESCRIPTION_SIZE];
-  vio_description(net->vio, desc);
-  DBUG_PRINT("info", ("New connection received on %s", desc));
+  char desc[VIO_DESCRIPTION_SIZE];  // 描述缓冲区
+  vio_description(net->vio, desc);  // 获取 VIO 描述
+  DBUG_PRINT("info", ("New connection received on %s", desc));  // 打印调试信息
 #endif  // NDEBUG
 
-  thd->set_active_vio(net->vio);
+  thd->set_active_vio(net->vio);  // 设置当前活动的 VIO
 
-  if (!thd->m_main_security_ctx.host().length)  // If TCP/IP connection
+  if (!thd->m_main_security_ctx.host().length)  // If TCP/IP connection 如果是 TCP/IP 连接
   {
-    bool peer_rc;
-    char ip[NI_MAXHOST];
-    LEX_CSTRING main_sctx_ip;
+    bool peer_rc;  // 对端地址获取结果
+    char ip[NI_MAXHOST];  // IP 地址缓冲区
+    LEX_CSTRING main_sctx_ip;  // 主安全上下文的 IP 地址
 
     if (thd->is_admin_connection()) {
-      vio_force_skip_proxy(net->vio);
+      vio_force_skip_proxy(net->vio);  // 如果是管理连接，强制跳过代理
     }
 
     /* Set the remote (peer) port for this THD. */
+    // 设置此 THD 的远程（对端）端口
     peer_rc = vio_peer_addr(net->vio, ip, &thd->peer_port, NI_MAXHOST);
-    mysql_thread_set_peer_port(thd->peer_port);
+    mysql_thread_set_peer_port(thd->peer_port);  // 设置线程的对端端口
 
     /*
     ===========================================================================
@@ -752,7 +762,7 @@ static int check_connection(THD *thd) {
     ===========================================================================
     */
 
-    DBUG_EXECUTE_IF("vio_peer_addr_error", { peer_rc = 1; });
+    DBUG_EXECUTE_IF("vio_peer_addr_error", { peer_rc = 1; });  // 模拟对端地址错误
     DBUG_EXECUTE_IF("vio_peer_addr_fake_ipv4", {
       struct sockaddr *sa = (sockaddr *)&net->vio->remote;
       sa->sa_family = AF_INET;
@@ -762,7 +772,7 @@ static int check_connection(THD *thd) {
       ip4->s_addr = inet_addr(fake);
       strcpy(ip, fake);
       peer_rc = 0;
-    });
+    });  // 模拟 IPv4 地址
 
     DBUG_EXECUTE_IF("vio_peer_addr_fake_ipv6", {
       struct sockaddr_in6 *sa = (sockaddr_in6 *)&net->vio->remote;
@@ -789,7 +799,7 @@ static int check_connection(THD *thd) {
       ip6->s6_addr[15] = 0x06;
       strcpy(ip, fake);
       peer_rc = 0;
-    });
+    });  // 模拟 IPv6 地址
 
     /*
     ===========================================================================
@@ -803,11 +813,12 @@ static int check_connection(THD *thd) {
         there is nothing to show in the host_cache,
         so increment the global status variable for peer address errors.
       */
+      // 如果无法获取对端 IP 地址，增加全局对端地址错误计数
       connection_errors_peer_addr++;
-      my_error(ER_BAD_HOST_ERROR, MYF(0));
+      my_error(ER_BAD_HOST_ERROR, MYF(0));  // 返回错误
       return 1;
     }
-    thd->m_main_security_ctx.assign_ip(ip, strlen(ip));
+    thd->m_main_security_ctx.assign_ip(ip, strlen(ip));  // 分配 IP 地址
     main_sctx_ip = thd->m_main_security_ctx.ip();
     if (!(main_sctx_ip.length)) {
       /*
@@ -815,11 +826,12 @@ static int check_connection(THD *thd) {
         this is treated as a global server OOM error.
         TODO: remove the need for my_strdup.
       */
+      // 如果无法分配 IP 地址，增加全局内部错误计数
       connection_errors_internal++;
       return 1; /* The error is set by my_strdup(). */
     }
     thd->m_main_security_ctx.set_host_or_ip_ptr(main_sctx_ip.str,
-                                                main_sctx_ip.length);
+                                                main_sctx_ip.length);  // 设置主机或 IP 指针
     if (!(specialflag & SPECIAL_NO_RESOLVE)) {
       int rc;
       char *host = nullptr;
@@ -832,7 +844,7 @@ static int check_connection(THD *thd) {
         ip address to host name. Restore original network namespace after
         address resolution finished.
       */
-
+      // 检查是否指定了网络命名空间，如果是则在解析 IP 地址之前设置命名空间
       std::string network_namespace(net->vio->network_namespace);
       if (!network_namespace.empty() &&
           set_network_namespace(network_namespace)) {
@@ -840,7 +852,7 @@ static int check_connection(THD *thd) {
       }
 #endif
       rc = ip_to_hostname(&net->vio->remote, main_sctx_ip.str, &host,
-                          &connect_errors);
+                          &connect_errors);  // 将 IP 地址解析为主机名
 #ifdef HAVE_SETNS
       if (!network_namespace.empty() && restore_original_network_namespace()) {
         if (host && host != my_localhost) {
@@ -849,7 +861,7 @@ static int check_connection(THD *thd) {
         return 1;
       }
 #endif
-      thd->m_main_security_ctx.assign_host(host, host ? strlen(host) : 0);
+      thd->m_main_security_ctx.assign_host(host, host ? strlen(host) : 0);  // 分配主机名
       DBUG_EXECUTE_IF("vio_peer_addr_fake_hostname1", {
         thd->m_main_security_ctx.assign_host(
             "host_"
@@ -858,14 +870,15 @@ static int check_connection(THD *thd) {
             "cdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefgh"
             "ij1234567890abcdefghij1234567890abcdefghij1234567890",
             255);
-      });
+      });  // 模拟长主机名
 
       main_sctx_host = thd->m_main_security_ctx.host();
       if (host && host != my_localhost) {
-        my_free(host);
+        my_free(host);  // 释放主机名内存
       }
 
       /* Cut very long hostnames to avoid possible overflows */
+      // 截断过长的主机名以避免溢出
       if (main_sctx_host.length) {
         if (main_sctx_host.str != my_localhost)
           thd->m_main_security_ctx.set_host_ptr(
@@ -876,14 +889,14 @@ static int check_connection(THD *thd) {
       }
 
       if (rc == RC_LONG_HOSTNAME) {
-        my_error(ER_HOSTNAME_TOO_LONG, MYF(0), HOSTNAME_LENGTH);
+        my_error(ER_HOSTNAME_TOO_LONG, MYF(0), HOSTNAME_LENGTH);  // 主机名过长错误
         return 1;
       }
 
       if (rc == RC_BLOCKED_HOST) {
         /* HOST_CACHE stats updated by ip_to_hostname(). */
         my_error(ER_HOST_IS_BLOCKED, MYF(0),
-                 thd->m_main_security_ctx.host_or_ip().str);
+                 thd->m_main_security_ctx.host_or_ip().str);  // 主机被阻止错误
         return 1;
       }
     }
@@ -892,25 +905,25 @@ static int check_connection(THD *thd) {
                 (thd->m_main_security_ctx.host().length
                      ? thd->m_main_security_ctx.host().str
                      : "unknown host"),
-                (main_sctx_ip.length ? main_sctx_ip.str : "unknown ip")));
+                (main_sctx_ip.length ? main_sctx_ip.str : "unknown ip")));  // 打印主机和 IP 信息
     if (acl_check_host(thd, thd->m_main_security_ctx.host().str,
                        main_sctx_ip.str)) {
       /* HOST_CACHE stats updated by acl_check_host(). */
       my_error(ER_HOST_NOT_PRIVILEGED, MYF(0),
-               thd->m_main_security_ctx.host_or_ip().str);
+               thd->m_main_security_ctx.host_or_ip().str);  // 主机无权限错误
       return 1;
     }
   } else /* Hostname given means that the connection was on a socket */
   {
     LEX_CSTRING main_sctx_host = thd->m_main_security_ctx.host();
-    DBUG_PRINT("info", ("Host: %s", main_sctx_host.str));
+    DBUG_PRINT("info", ("Host: %s", main_sctx_host.str));  // 打印主机名
     thd->m_main_security_ctx.set_host_or_ip_ptr(main_sctx_host.str,
-                                                main_sctx_host.length);
-    thd->m_main_security_ctx.set_ip_ptr(STRING_WITH_LEN(""));
+                                                main_sctx_host.length);  // 设置主机或 IP 指针
+    thd->m_main_security_ctx.set_ip_ptr(STRING_WITH_LEN(""));  // 设置 IP 指针为空
     /* Reset sin_addr */
-    memset(&net->vio->remote, 0, sizeof(net->vio->remote));
+    memset(&net->vio->remote, 0, sizeof(net->vio->remote));  // 重置 sin_addr
   }
-  vio_keepalive(net->vio, true);
+  vio_keepalive(net->vio, true);  // 启用 VIO 的 keepalive
 
   if (thd->get_protocol_classic()->get_output_packet()->alloc(
           thd->variables.net_buffer_length)) {
@@ -925,23 +938,24 @@ static int check_connection(THD *thd) {
       Hence, there is no reason to account on OOM conditions per client IP,
       we count failures in the global server status instead.
     */
+    // 如果无法分配输出包内存，增加全局内部错误计数
     connection_errors_internal++;
     return 1; /* The error is set by alloc(). */
   }
 
   if (mysql_audit_notify(
           thd, AUDIT_EVENT(MYSQL_AUDIT_CONNECTION_PRE_AUTHENTICATE))) {
-    return 1;
+    return 1;  // 审计预处理认证事件
   }
 
-  auth_rc = acl_authenticate(thd, COM_CONNECT);
+  auth_rc = acl_authenticate(thd, COM_CONNECT);  // 认证客户端
 
   if (mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_CONNECTION_CONNECT))) {
-    return 1;
+    return 1;  // 审计连接事件
   }
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_THREAD_CALL(notify_session_connect)(thd->get_psi());
+  PSI_THREAD_CALL(notify_session_connect)(thd->get_psi());  // 通知会话连接
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
   if (auth_rc == 0 && connect_errors != 0) {
@@ -950,6 +964,7 @@ static int check_connection(THD *thd) {
       after some previous failures.
       Reset the connection error counter.
     */
+    // 如果认证成功且之前有连接错误，重置连接错误计数
     reset_host_connect_errors(thd->m_main_security_ctx.ip().str);
   }
 
@@ -959,8 +974,9 @@ static int check_connection(THD *thd) {
     Advertise it to THD, so SSL status variables
     can be inspected.
   */
+  // 设置 SSL 信息
   thd->set_ssl(net->vio);
-  return auth_rc;
+  return auth_rc;  // 返回认证结果
 }
 
 /*
@@ -976,42 +992,58 @@ static int check_connection(THD *thd) {
   RETURN
     0    ok
     1    error
+  认证用户，并报告错误
+
+  SYNOPSIS
+   login_connection()
+   thd        线程处理器
+
+  NOTES
+    在发生错误时，连接不会关闭
+
+  RETURN
+    0    成功
+    1    错误
 */
 
 static bool login_connection(THD *thd) {
   int error;
-  DBUG_TRACE;
+  DBUG_TRACE;  // 进入调试模式，记录函数调用
   DBUG_PRINT("info",
-             ("login_connection called by thread %u", thd->thread_id()));
+             ("login_connection called by thread %u", thd->thread_id()));  // 打印调试信息
 
   /* Use "connect_timeout" value during connection phase */
+  // 在连接阶段使用 "connect_timeout" 值
   thd->get_protocol_classic()->set_read_timeout(connect_timeout, true);
   thd->get_protocol_classic()->set_write_timeout(connect_timeout);
 
+  // 检查连接权限
   error = check_connection(thd);
-  thd->send_statement_status();
+  thd->send_statement_status();  // 发送语句状态
 
-  if (error) {  // Wrong permissions
+  if (error) {  // Wrong permissions 权限错误
 #ifdef _WIN32
     if (vio_type(thd->get_protocol_classic()->get_vio()) == VIO_TYPE_NAMEDPIPE)
       my_sleep(1000); /* must wait after eof() */
 #endif
-    return true;
+    return true;  // 返回错误
   }
   /* Connect completed, set read/write timeouts back to default */
+  // 连接完成，将读写超时设置回默认值
   thd->get_protocol_classic()->set_read_timeout(
       thd->variables.net_read_timeout);
   thd->get_protocol_classic()->set_write_timeout(
       thd->variables.net_write_timeout);
 
+  // 如果启用了用户统计功能
   if (unlikely(opt_userstat)) {
-    thd->reset_stats();
+    thd->reset_stats();  // 重置统计信息
 
-    // Updates global user connection stats.
+    // 更新全局用户连接统计
     increment_connection_count(*thd, true);
   }
 
-  return false;
+  return false;  // 返回成功
 }
 
 /*

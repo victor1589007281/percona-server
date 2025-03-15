@@ -949,9 +949,16 @@ static void srv_print_master_thread_info(FILE *file) /* in: output stream */
 /** Sets the info describing an i/o thread current state.
 @param[in] i The 'segment' of the i/o thread
 @param[in] str Constant char string describing the state */
+/**
+ * 设置描述 I/O 线程当前状态的信息。
+ * @param[in] i I/O 线程的“段”（即线程的索引）
+ * @param[in] str 描述状态的常量字符串
+ */
 void srv_set_io_thread_op_info(ulint i, const char *str) {
+  // 断言确保线程索引在有效范围内
   ut_a(i < SRV_MAX_N_IO_THREADS);
 
+  // 将状态信息存储到全局数组中
   srv_io_thread_op_info[i] = str;
 }
 

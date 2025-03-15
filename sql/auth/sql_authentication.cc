@@ -3794,51 +3794,64 @@ static void check_and_update_password_lock_state(MPVIO_EXT &mpvio, THD *thd,
 
   @retval 0  success, thd is updated.
   @retval 1  error
+  执行握手、授权客户端并更新 THD 的安全上下文变量。
+
+  @param thd                     线程句柄
+  @param command                 要执行的命令，可以是 COM_CHANGE_USER 或 COM_CONNECT（如果是新连接）
+
+  @retval 0  成功，thd 已更新。
+  @retval 1  错误
 */
 int acl_authenticate(THD *thd, enum_server_command command) {
-  int res = CR_OK;
-  int ret = 1;
-  MPVIO_EXT mpvio;
-  LEX_CSTRING auth_plugin_name = default_auth_plugin_name;
-  Thd_charset_adapter charset_adapter(thd);
+  int res = CR_OK;  // 认证结果
+  int ret = 1;  // 返回值，默认设置为 1（表示错误）
+  MPVIO_EXT mpvio;  // 多协议虚拟 I/O 扩展
+  LEX_CSTRING auth_plugin_name = default_auth_plugin_name;  // 认证插件名称
+  Thd_charset_adapter charset_adapter(thd);  // 字符集适配器
 
-  DBUG_TRACE;
-  static_assert(MYSQL_USERNAME_LENGTH == USERNAME_LENGTH, "");
-  assert(command == COM_CONNECT || command == COM_CHANGE_USER);
+  DBUG_TRACE;  // 进入调试模式，记录函数调用
+  static_assert(MYSQL_USERNAME_LENGTH == USERNAME_LENGTH, "");  // 静态断言，确保用户名长度一致
+  assert(command == COM_CONNECT || command == COM_CHANGE_USER);  // 断言命令类型
 
-  server_mpvio_initialize(thd, &mpvio, &charset_adapter);
+  server_mpvio_initialize(thd, &mpvio, &charset_adapter);  // 初始化 MPVIO
   /*
     Clear thd->db as it points to something, that will be freed when
     connection is closed. We don't want to accidentally free a wrong
     pointer if connect failed.
   */
+  // 清除 thd->db，因为它指向的内容会在连接关闭时释放。如果连接失败，我们不希望意外释放错误的指针。
   thd->reset_db(NULL_CSTR);
 
-  auth_plugin_name = default_auth_plugin_name;
+  auth_plugin_name = default_auth_plugin_name;  // 设置默认认证插件名称
   /* acl_authenticate() takes the data from net->read_pos */
+  // acl_authenticate() 从 net->read_pos 获取数据
   thd->get_protocol_classic()->get_net()->read_pos =
-      thd->get_protocol_classic()->get_raw_packet();
+      thd->get_protocol_classic()->get_raw_packet();  // 设置读取位置
   DBUG_PRINT("info", ("com_change_user_pkt_len=%lu",
-                      mpvio.protocol->get_packet_length()));
+                      mpvio.protocol->get_packet_length()));  // 打印调试信息
 
-  if (command == COM_CHANGE_USER) {
+  if (command == COM_CHANGE_USER) {  // 如果是 COM_CHANGE_USER 命令
+    // 假装已经发送了服务器握手包
     mpvio.packets_written++;  // pretend that a server handshake packet was sent
-    mpvio.packets_read++;     // take COM_CHANGE_USER packet into account
+// 将 COM_CHANGE_USER 包计入已读包数
+mpvio.packets_read++;     // take COM_CHANGE_USER packet into account
 
     /* Clear variables that are allocated */
+    // 清除已分配的变量
     thd->set_user_connect(nullptr);
 
     if (parse_com_change_user_packet(thd, &mpvio,
-                                     mpvio.protocol->get_packet_length())) {
-      login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);
-      server_mpvio_update_thd(thd, &mpvio);
+                                     mpvio.protocol->get_packet_length())) {  // 解析 COM_CHANGE_USER 包
+      login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);  // 登录失败错误
+      server_mpvio_update_thd(thd, &mpvio);  // 更新 THD
       goto end;
     }
 
     assert(mpvio.status == MPVIO_EXT::RESTART ||
-           mpvio.status == MPVIO_EXT::SUCCESS);
-  } else {
+           mpvio.status == MPVIO_EXT::SUCCESS);  // 断言状态
+  } else {  // 如果是 COM_CONNECT 命令
     /* mark the thd as having no scramble yet */
+    // 标记 THD 尚未生成 scramble
     mpvio.scramble[SCRAMBLE_LENGTH] = 1;
 
     /*
@@ -3847,53 +3860,56 @@ int acl_authenticate(THD *thd, enum_server_command command) {
      with a user name, and performs the authentication if everyone has used
      the correct plugin.
     */
-
-    res = do_auth_once(thd, auth_plugin_name, &mpvio);
+    // 使用默认插件执行第一次认证尝试。发送服务器握手包，读取客户端回复的用户名，并执行认证。
+    res = do_auth_once(thd, auth_plugin_name, &mpvio);  // 执行一次认证
   }
 
   /*
    retry the authentication, if - after receiving the user name -
    we found that we need to switch to a non-default plugin
   */
+  // 如果接收到用户名后发现需要切换到非默认插件，则重试认证
   if (mpvio.status == MPVIO_EXT::RESTART) {
-    assert(mpvio.acl_user);
+    assert(mpvio.acl_user);  // 断言 acl_user 存在
     assert(command == COM_CHANGE_USER ||
            my_strcasecmp(system_charset_info, auth_plugin_name.str,
-                         mpvio.acl_user->plugin.str));
-    auth_plugin_name = mpvio.acl_user->plugin;
-    res = do_auth_once(thd, auth_plugin_name, &mpvio);
+                         mpvio.acl_user->plugin.str));  // 断言插件名称不同
+    auth_plugin_name = mpvio.acl_user->plugin;  // 设置新的认证插件名称
+    res = do_auth_once(thd, auth_plugin_name, &mpvio);  // 再次执行认证
   }
 
-  if (res == CR_OK) {
-    res = do_multi_factor_auth(thd, &mpvio);
+  if (res == CR_OK) {  // 如果认证成功
+    res = do_multi_factor_auth(thd, &mpvio);  // 执行多因素认证
   }
 
-  server_mpvio_update_thd(thd, &mpvio);
+  server_mpvio_update_thd(thd, &mpvio);  // 更新 THD
 
-  check_and_update_password_lock_state(mpvio, thd, res);
+  check_and_update_password_lock_state(mpvio, thd, res);  // 检查并更新密码锁定状态
 #ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_THREAD_CALL(set_connection_type)(thd->get_vio_type());
+  PSI_THREAD_CALL(set_connection_type)(thd->get_vio_type());  // 设置连接类型
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
   {
-    Security_context *sctx = thd->security_context();
-    const ACL_USER *acl_user = mpvio.acl_user;
-    bool proxy_check = check_proxy_users && !*mpvio.auth_info.authenticated_as;
+    Security_context *sctx = thd->security_context();  // 获取安全上下文
+    const ACL_USER *acl_user = mpvio.acl_user;  // 获取 ACL 用户
+    bool proxy_check = check_proxy_users && !*mpvio.auth_info.authenticated_as;  // 检查代理用户
 
-    DBUG_PRINT("info", ("proxy_check=%s", proxy_check ? "true" : "false"));
-
+    DBUG_PRINT("info", ("proxy_check=%s", proxy_check ? "true" : "false"));  // 打印调试信息
+    
+    // 记住密码使用情况，用于错误消息
     thd->password =
         mpvio.auth_info.password_used;  // remember for error messages
 
     // reset authenticated_as because flag value received, but server
     // proxy mapping is disabled:
+    // 重置 authenticated_as，因为收到了标志值，但服务器代理映射已禁用
     if ((!check_proxy_users) && acl_user &&
         !*mpvio.auth_info.authenticated_as) {
       DBUG_PRINT("info",
                  ("setting authenticated_as to %s as check_proxy_user is OFF.",
-                  mpvio.auth_info.user_name));
+                  mpvio.auth_info.user_name));  // 打印调试信息
       strcpy(mpvio.auth_info.authenticated_as,
-             acl_user->user ? acl_user->user : "");
+             acl_user->user ? acl_user->user : "");  // 设置 authenticated_as
     }
     /*
       Log the command here so that the user can check the log
@@ -3901,13 +3917,14 @@ int acl_authenticate(THD *thd, enum_server_command command) {
 
       if sctx->user is unset it's protocol failure, bad packet.
     */
+    // 记录命令，以便用户可以检查登录尝试并检测入侵尝试
     if (mpvio.auth_info.user_name && !proxy_check) {
       acl_log_connect(mpvio.auth_info.user_name, mpvio.auth_info.host_or_ip,
                       mpvio.auth_info.authenticated_as, mpvio.db.str, thd,
-                      command);
+                      command);  // 记录连接日志
     }
     if (res == CR_OK && (!mpvio.can_authenticate() || thd->is_error())) {
-      res = CR_ERROR;
+      res = CR_ERROR;  // 如果认证失败，设置错误
     }
 
     /*
@@ -3916,160 +3933,167 @@ int acl_authenticate(THD *thd, enum_server_command command) {
       api notification event. Client user/host connects to the existing
       account is easily distinguished from other connects.
     */
+    // 将账户用户/主机数据分配给当前 THD。此信息用于在此点之后认证失败时调用审计 API 通知事件。
     if (mpvio.can_authenticate())
-      assign_priv_user_host(sctx, const_cast<ACL_USER *>(acl_user));
+      assign_priv_user_host(sctx, const_cast<ACL_USER *>(acl_user));  // 分配用户/主机权限
 
     if (res > CR_OK && mpvio.status != MPVIO_EXT::SUCCESS) {
-      Host_errors errors;
-      assert(mpvio.status == MPVIO_EXT::FAILURE);
+      Host_errors errors;  // 主机错误
+      assert(mpvio.status == MPVIO_EXT::FAILURE);  // 断言状态为失败
       switch (res) {
         case CR_AUTH_PLUGIN_ERROR:
-          errors.m_auth_plugin = 1;
+          errors.m_auth_plugin = 1;  // 认证插件错误
           break;
         case CR_AUTH_HANDSHAKE:
-          errors.m_handshake = 1;
+          errors.m_handshake = 1;  // 握手错误
           break;
         case CR_AUTH_USER_CREDENTIALS:
-          errors.m_authentication = 1;
+          errors.m_authentication = 1;  // 用户凭证错误
           break;
         case CR_ERROR:
         default:
           /* Unknown of unspecified auth plugin error. */
-          errors.m_auth_plugin = 1;
+          errors.m_auth_plugin = 1;  // 未知或未指定的认证插件错误
           break;
       }
-      inc_host_errors(mpvio.ip, &errors);
+      inc_host_errors(mpvio.ip, &errors);  // 增加主机错误计数
       if (mpvio.auth_info.user_name && proxy_check) {
         acl_log_connect(mpvio.auth_info.user_name, mpvio.auth_info.host_or_ip,
                         mpvio.auth_info.authenticated_as, mpvio.db.str, thd,
-                        command);
+                        command);  // 记录连接日志
       }
-      login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);
+      login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);  // 登录失败错误
       goto end;
     }
 
-    sctx->assign_proxy_user("", 0);
+    sctx->assign_proxy_user("", 0);  // 分配代理用户
 
-    if (initialized)  // if not --skip-grant-tables
+    if (initialized)  // 如果未使用 --skip-grant-tables
     {
-      bool is_proxy_user = false;
-      bool password_time_expired = false;
-      const char *auth_user = acl_user->user ? acl_user->user : "";
-      ACL_PROXY_USER *proxy_user;
+      bool is_proxy_user = false;  // 是否是代理用户
+      bool password_time_expired = false;  // 密码是否过期
+      const char *auth_user = acl_user->user ? acl_user->user : "";  // 认证用户
+      ACL_PROXY_USER *proxy_user;  // 代理用户
       /* check if the user is allowed to proxy as another user */
-      Acl_cache_lock_guard acl_cache_lock(thd, Acl_cache_lock_mode::READ_MODE);
+      // 检查用户是否允许代理为另一个用户
+      Acl_cache_lock_guard acl_cache_lock(thd, Acl_cache_lock_mode::READ_MODE);  // ACL 缓存锁
       if (!acl_cache_lock.lock()) return 1;
 
       proxy_user =
           acl_find_proxy_user(auth_user, sctx->host().str, sctx->ip().str,
-                              mpvio.auth_info.authenticated_as, &is_proxy_user);
-      acl_cache_lock.unlock();
+                              mpvio.auth_info.authenticated_as, &is_proxy_user);  // 查找代理用户
+      acl_cache_lock.unlock();  // 解锁 ACL 缓存
       if (mpvio.auth_info.user_name && proxy_check) {
         acl_log_connect(mpvio.auth_info.user_name, mpvio.auth_info.host_or_ip,
                         mpvio.auth_info.authenticated_as, mpvio.db.str, thd,
-                        command);
+                        command);  // 记录连接日志
       }
 
-      if (thd->is_error()) return 1;
+      if (thd->is_error()) return 1;  // 如果 THD 有错误，返回 1
 
-      if (is_proxy_user) {
-        ACL_USER *acl_proxy_user;
-        char proxy_user_buf[USERNAME_LENGTH + HOSTNAME_LENGTH + 6];
+      if (is_proxy_user) {  // 如果是代理用户
+        ACL_USER *acl_proxy_user;  // 代理用户
+        char proxy_user_buf[USERNAME_LENGTH + HOSTNAME_LENGTH + 6];  // 代理用户缓冲区
 
         /* we need to find the proxy user, but there was none */
+        // 我们需要找到代理用户，但没有找到
         if (!proxy_user) {
-          Host_errors errors;
-          errors.m_proxy_user = 1;
-          inc_host_errors(mpvio.ip, &errors);
-          login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);
+          Host_errors errors;  // 主机错误
+          errors.m_proxy_user = 1;  // 代理用户错误
+          inc_host_errors(mpvio.ip, &errors);  // 增加主机错误计数
+          login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);  // 登录失败错误
           goto end;
         }
 
         snprintf(proxy_user_buf, sizeof(proxy_user_buf) - 1, "'%s'@'%s'",
                  auth_user,
-                 acl_user->host.get_host() ? acl_user->host.get_host() : "");
-        sctx->assign_proxy_user(proxy_user_buf, strlen(proxy_user_buf));
+                 acl_user->host.get_host() ? acl_user->host.get_host() : "");  // 格式化代理用户字符串
+        sctx->assign_proxy_user(proxy_user_buf, strlen(proxy_user_buf));  // 分配代理用户
 
         /* we're proxying : find the proxy user definition */
+        // 我们正在代理：找到代理用户定义
         if (!acl_cache_lock.lock()) return 1;
         acl_proxy_user = find_acl_user(proxy_user->get_proxied_host()
                                            ? proxy_user->get_proxied_host()
                                            : "",
-                                       mpvio.auth_info.authenticated_as, true);
+                                       mpvio.auth_info.authenticated_as, true);  // 查找代理用户
         if (!acl_proxy_user) {
-          Host_errors errors;
-          errors.m_proxy_user_acl = 1;
-          inc_host_errors(mpvio.ip, &errors);
-          login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);
+          Host_errors errors;  // 主机错误
+          errors.m_proxy_user_acl = 1;  // 代理用户 ACL 错误
+          inc_host_errors(mpvio.ip, &errors);  // 增加主机错误计数
+          login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);  // 登录失败错误
           goto end;
         }
         if (acl_is_utility_user(acl_proxy_user->user,
                                 acl_proxy_user->host.get_host(), nullptr)) {
           if (!thd->is_error())
-            login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);
+            login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);  // 登录失败错误
           goto end;
         }
 
-        acl_user = acl_proxy_user->copy(thd->mem_root);
-        *(mpvio.restrictions) = acl_restrictions->find_restrictions(acl_user);
+        acl_user = acl_proxy_user->copy(thd->mem_root);  // 复制代理用户
+        *(mpvio.restrictions) = acl_restrictions->find_restrictions(acl_user);  // 查找限制
 
         DBUG_PRINT("info", ("User %s is a PROXY and will assume a PROXIED"
                             " identity %s",
-                            auth_user, acl_user->user));
-        acl_cache_lock.unlock();
+                            auth_user, acl_user->user));  // 打印调试信息
+        acl_cache_lock.unlock();  // 解锁 ACL 缓存
       }
-      assert(mpvio.restrictions);
-      sctx->set_master_access(acl_user->access, *(mpvio.restrictions));
-      assign_priv_user_host(sctx, const_cast<ACL_USER *>(acl_user));
+      assert(mpvio.restrictions);  // 断言限制存在
+      sctx->set_master_access(acl_user->access, *(mpvio.restrictions));  // 设置主访问权限
+      assign_priv_user_host(sctx, const_cast<ACL_USER *>(acl_user));  // 分配用户/主机权限
 
-      std::vector<std::string> external_roles;
+      std::vector<std::string> external_roles;  // 外部角色
       if (strlen(mpvio.auth_info.external_roles) > 0) {
         boost::algorithm::split(external_roles, mpvio.auth_info.external_roles,
-                                boost::is_any_of(","));
+                                boost::is_any_of(","));  // 分割外部角色
       }
 
       if (acl_user->user != nullptr && !external_roles.empty()) {
         // Adding external roles
+        // 添加外部角色
         Acl_cache_lock_guard acl_cache_lock2(thd,
-                                             Acl_cache_lock_mode::WRITE_MODE);
+                                             Acl_cache_lock_mode::WRITE_MODE);  // ACL 缓存锁
         acl_cache_lock2.lock();
         const name_and_host_t u(std::string(acl_user->user),
-                                std::string(acl_user->host.get_host()));
+                                std::string(acl_user->host.get_host()));  // 用户和主机
         if (g_external_roles.find(u) != g_external_roles.end())
-          g_external_roles[u].clear();
+          g_external_roles[u].clear();  // 清除外部角色
         for (const auto &role : external_roles) {
-          ACL_USER *acl_role = find_acl_user("", role.c_str(), false);
+          ACL_USER *acl_role = find_acl_user("", role.c_str(), false);  // 查找角色
           if (acl_role != nullptr && acl_role->user != nullptr) {
-            grant_role(acl_role, acl_user, false);
-            const name_and_host_t r(std::string(acl_role->user), "");
-            g_external_roles[u].push_back(r);
+            grant_role(acl_role, acl_user, false);  // 授予角色
+            const name_and_host_t r(std::string(acl_role->user), "");  // 角色和主机
+            g_external_roles[u].push_back(r);  // 添加外部角色
           }
         }
       }
       /* Assign default role */
+      // 分配默认角色
       {
-        List_of_auth_id_refs default_roles;
+        List_of_auth_id_refs default_roles;  // 默认角色
         if (!acl_cache_lock.lock()) return 1;
-        Auth_id_ref authid = create_authid_from(acl_user);
+        Auth_id_ref authid = create_authid_from(acl_user);  // 创建认证 ID
         if (opt_always_activate_granted_roles) {
-          activate_all_granted_and_mandatory_roles(acl_user, sctx);
+          activate_all_granted_and_mandatory_roles(acl_user, sctx);  // 激活所有授予和强制角色
         } else {
           /* The server policy is to only activate default roles */
-          get_default_roles(authid, default_roles);
+          // 服务器策略是仅激活默认角色
+          get_default_roles(authid, default_roles);  // 获取默认角色
           List_of_auth_id_refs::iterator it = default_roles.begin();
           for (; it != default_roles.end(); ++it) {
             if (sctx->activate_role(it->first, it->second, true)) {
-              std::string roleidstr = create_authid_str_from(*it);
-              std::string authidstr = create_authid_str_from(acl_user);
+              std::string roleidstr = create_authid_str_from(*it);  // 创建角色 ID 字符串
+              std::string authidstr = create_authid_str_from(acl_user);  // 创建认证 ID 字符串
               LogErr(WARNING_LEVEL, ER_AUTH_CANT_ACTIVATE_ROLE,
-                     roleidstr.c_str(), authidstr.c_str());
+                     roleidstr.c_str(), authidstr.c_str());  // 记录警告日志
             }
           }
         }
 
-        acl_cache_lock.unlock();
+        acl_cache_lock.unlock();  // 解锁 ACL 缓存
       }
-      sctx->checkout_access_maps();
+      sctx->checkout_access_maps();  // 检查访问映射
 
       if (!thd->is_error() &&
           !(sctx->check_access(SUPER_ACL) ||
@@ -4077,7 +4101,7 @@ int acl_authenticate(THD *thd, enum_server_command command) {
             acl_is_utility_user(sctx->user().str, sctx->host().str,
                                 sctx->ip().str))) {
         if (mysqld_offline_mode()) {
-          my_error(ER_SERVER_OFFLINE_MODE, MYF(0));
+          my_error(ER_SERVER_OFFLINE_MODE, MYF(0));  // 服务器离线模式错误
           goto end;
         }
       }
@@ -4087,30 +4111,32 @@ int acl_authenticate(THD *thd, enum_server_command command) {
         password, as an additional layer, not instead of the password (in
         which case it would've been a plugin too).
       */
+      // 检查 SSL。历史上，它是在密码之后检查的，作为额外的安全层，而不是替代密码（如果是替代密码，它也会是一个插件）。
       if (acl_check_ssl(thd, acl_user)) {
         Host_errors errors;
         errors.m_ssl = 1;
-        inc_host_errors(mpvio.ip, &errors);
-        login_failed_error(thd, &mpvio, thd->password);
+        inc_host_errors(mpvio.ip, &errors);  // 增加主机错误计数
+        login_failed_error(thd, &mpvio, thd->password);  // 登录失败错误
         goto end;
       }
 
       /*
         Check whether the account has been locked.
       */
+      // 检查账户是否被锁定
       if (unlikely(mpvio.acl_user->account_locked)) {
-        locked_account_connection_count++;
+        locked_account_connection_count++;  // 增加锁定账户连接计数
 
         my_error(ER_ACCOUNT_HAS_BEEN_LOCKED, MYF(0), mpvio.acl_user->user,
-                 mpvio.auth_info.host_or_ip);
+                 mpvio.auth_info.host_or_ip);  // 账户被锁定错误
         LogErr(INFORMATION_LEVEL, ER_ACCESS_DENIED_FOR_USER_ACCOUNT_LOCKED,
-               mpvio.acl_user->user, mpvio.auth_info.host_or_ip);
+               mpvio.acl_user->user, mpvio.auth_info.host_or_ip);  // 记录信息日志
         goto end;
       }
 
       DBUG_EXECUTE_IF("before_secure_transport_check", {
         const char act[] = "now SIGNAL kill_now WAIT_FOR killed";
-        assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
+        assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));  // 调试同步操作
       });
 
       /*
@@ -4119,13 +4145,15 @@ int acl_authenticate(THD *thd, enum_server_command command) {
         as a KILL command can shutdown the active_vio i.e., making it a nullptr
         which would cause issues. Instead we check the net.vio type.
       */
+      // 这里的假设是 thd->active_vio 和 thd->net.vio 在此时是相同的。我们不应使用 thd->active_vio，因为 KILL 命令可以关闭 active_vio，即将其设置为 nullptr，这会导致问题。相反，我们检查 net.vio 类型。
       if (opt_require_secure_transport && thd->get_net()->vio != nullptr &&
           !is_secure_transport(thd->get_net()->vio->type)) {
-        my_error(ER_SECURE_TRANSPORT_REQUIRED, MYF(0));
+        my_error(ER_SECURE_TRANSPORT_REQUIRED, MYF(0));  // 需要安全传输错误
         goto end;
       }
 
       /* checking password_time_expire for connecting user */
+      // 检查连接用户的密码是否过期
       password_time_expired = check_password_lifetime(thd, mpvio.acl_user);
 
       if (unlikely(
@@ -4138,20 +4166,22 @@ int acl_authenticate(THD *thd, enum_server_command command) {
           Clients that don't signal password expiration support
           get a connect error.
         */
+        // 不支持密码过期信号的客户端会收到连接错误
         Host_errors errors;
 
-        my_error(ER_MUST_CHANGE_PASSWORD_LOGIN, MYF(0));
+        my_error(ER_MUST_CHANGE_PASSWORD_LOGIN, MYF(0));  // 必须更改密码登录错误
         query_logger.general_log_print(
-            thd, COM_CONNECT, "%s", ER_DEFAULT(ER_MUST_CHANGE_PASSWORD_LOGIN));
+            thd, COM_CONNECT, "%s", ER_DEFAULT(ER_MUST_CHANGE_PASSWORD_LOGIN));  // 记录通用日志
         LogErr(INFORMATION_LEVEL, ER_ACCOUNT_WITH_EXPIRED_PASSWORD,
-               mpvio.acl_user->user, mpvio.auth_info.host_or_ip);
+               mpvio.acl_user->user, mpvio.auth_info.host_or_ip);  // 记录信息日志
 
         errors.m_authentication = 1;
-        inc_host_errors(mpvio.ip, &errors);
+        inc_host_errors(mpvio.ip, &errors);  // 增加主机错误计数
         goto end;
       }
 
       /* Don't allow the user to connect if he has done too many queries */
+      // 如果用户执行了太多查询，则不允许连接
       if ((acl_user->user_resource.questions ||
            acl_user->user_resource.updates ||
            acl_user->user_resource.conn_per_hour ||
@@ -4171,16 +4201,18 @@ int acl_authenticate(THD *thd, enum_server_command command) {
         security context. This allows proxy user to execute queries even if
         proxied user password expires.
       */
+      // 我们将连接用户的密码过期标志复制到安全上下文中。这允许代理用户即使在被代理用户密码过期时也能执行查询。
       sctx->set_password_expired(mpvio.acl_user->password_expired ||
                                  password_time_expired);
     } else {
-      sctx->skip_grants();
+      sctx->skip_grants();  // 跳过权限检查
       /*
         In case of --skip-grant-tables, we already would have set the MPVIO
         as SUCCESS, it means we are not interested in any of the error set
         in the diagnostic area, clear them.
       */
-      thd->get_stmt_da()->reset_diagnostics_area();
+      // 如果使用 --skip-grant-tables，我们已经将 MPVIO 设置为 SUCCESS，这意味着我们对诊断区域中的任何错误集不感兴趣，清除它们。
+      thd->get_stmt_da()->reset_diagnostics_area();  // 重置诊断区域
     }
 
     const USER_CONN *uc;
@@ -4198,11 +4230,11 @@ int acl_authenticate(THD *thd, enum_server_command command) {
                         thd->max_client_packet_length, sctx->host_or_ip().str,
                         sctx->user().str, sctx->priv_user().str,
                         thd->password ? "yes" : "no", sctx->master_access(),
-                        mpvio.db.str));
+                        mpvio.db.str));  // 打印调试信息
 
     if (command == COM_CONNECT &&
         check_restrictions_for_com_connect_command(thd)) {
-      release_user_connection(thd);
+      release_user_connection(thd);  // 释放用户连接
       goto end;
     }
 
@@ -4211,51 +4243,55 @@ int acl_authenticate(THD *thd, enum_server_command command) {
       set to 0 here because we don't have an active database yet (and we
       may not have an active database to set.
     */
+    // 这是当前数据库的默认访问权限。由于我们还没有活动的数据库（可能没有活动的数据库可以设置），因此这里设置为 0。
     sctx->cache_current_db_access(0);
 
     /* Change a database if necessary */
+    // 必要时更改数据库
     if (mpvio.db.length) {
       if (mysql_change_db(thd, to_lex_cstring(mpvio.db), false)) {
         /* mysql_change_db() has pushed the error message. */
-        release_user_connection(thd);
+        release_user_connection(thd);  // 释放用户连接
         Host_errors errors;
         errors.m_default_database = 1;
-        inc_host_errors(mpvio.ip, &errors);
-        login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);
+        inc_host_errors(mpvio.ip, &errors);  // 增加主机错误计数
+        login_failed_error(thd, &mpvio, mpvio.auth_info.password_used);  // 登录失败错误
         goto end;
       }
     }
 
     if (mpvio.auth_info.external_user[0])
       sctx->assign_external_user(mpvio.auth_info.external_user,
-                                 strlen(mpvio.auth_info.external_user));
+                                 strlen(mpvio.auth_info.external_user));  // 分配外部用户
 
     if (res == CR_OK_HANDSHAKE_COMPLETE)
-      thd->get_stmt_da()->disable_status();
+      thd->get_stmt_da()->disable_status();  // 禁用状态
     else
-      my_ok(thd);
+      my_ok(thd);  // 发送 OK 响应
 #ifdef HAVE_PSI_THREAD_INTERFACE
-    LEX_CSTRING main_sctx_user = thd->m_main_security_ctx.user();
-    LEX_CSTRING main_sctx_host_or_ip = thd->m_main_security_ctx.host_or_ip();
+    LEX_CSTRING main_sctx_user = thd->m_main_security_ctx.user();  // 获取主安全上下文用户
+    LEX_CSTRING main_sctx_host_or_ip = thd->m_main_security_ctx.host_or_ip();  // 获取主安全上下文主机或 IP
     PSI_THREAD_CALL(set_thread_account)
     (main_sctx_user.str, main_sctx_user.length, main_sctx_host_or_ip.str,
-     main_sctx_host_or_ip.length);
+     main_sctx_host_or_ip.length);  // 设置线程账户
 #endif /* HAVE_PSI_THREAD_INTERFACE */
 
     /*
       Turn ON the flag in THD iff the user is granted SYSTEM_USER privilege.
       We must set the flag after all required roles are activated.
     */
-    set_system_user_flag(thd);
+    // 如果用户被授予 SYSTEM_USER 权限，则在 THD 中打开标志。我们必须在所有所需角色激活后设置标志。
+    set_system_user_flag(thd);  // 设置系统用户标志
     // Update the flag in THD based on if the user is granted CONNECTION_ADMIN
     // privilege
-    set_connection_admin_flag(thd);
+    // 根据用户是否被授予 CONNECTION_ADMIN 权限更新 THD 中的标志
+    set_connection_admin_flag(thd);  // 设置连接管理员标志
   }
   ret = 0;
 end:
-  if (mpvio.restrictions) mpvio.restrictions->~Restrictions();
+  if (mpvio.restrictions) mpvio.restrictions->~Restrictions();  // 销毁限制
   /* Ready to handle queries */
-  return ret;
+  return ret;  // 返回结果
 }
 
 bool is_secure_transport(int vio_type) {

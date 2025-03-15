@@ -1342,100 +1342,130 @@ const Listen_socket *Mysqld_socket_listener::get_listen_socket() const {
   ;
 }
 
+/*
+Channel_info 类的作用
+抽象连接信息： 
+Channel_info 类抽象了与客户端连接相关的信息，包括连接的套接字、连接类型、连接状态等。
+
+管理连接生命周期： 
+Channel_info 类提供了管理连接生命周期的方法，包括创建连接、关闭连接、发送错误信息等。
+
+支持多种连接类型： 
+Channel_info 类是一个基类，具体的连接类型（如本地套接字连接、TCP/IP 套接字连接等）会继承自这个基类，并实现特定的功能。
+
+*/
+// 这个函数用于监听基于套接字的连接请求。套接字是网络通信的基本单元，通常用于 TCP/IP 网络连接。
 Channel_info *Mysqld_socket_listener::listen_for_connection_event() {
-#ifdef HAVE_POLL
-  int retval = poll(&m_poll_info.m_fds[0], m_socket_vector.size(), -1);
-#else
-  m_select_info.m_read_fds = m_select_info.m_client_fds;
-  int retval = select((int)m_select_info.m_max_used_connection,
-                      &m_select_info.m_read_fds, 0, 0, 0);
-#endif
-
-  if (retval < 0 && socket_errno != SOCKET_EINTR) {
+  #ifdef HAVE_POLL
+    // 使用 poll 系统调用来监听套接字上的事件
+    int retval = poll(&m_poll_info.m_fds[0], m_socket_vector.size(), -1);
+  #else
+    // 使用 select 系统调用来监听套接字上的事件
+    m_select_info.m_read_fds = m_select_info.m_client_fds;
+    int retval = select((int)m_select_info.m_max_used_connection,
+                        &m_select_info.m_read_fds, 0, 0, 0);
+  #endif
+  
+    // 如果 poll 或 select 失败，并且错误不是由于中断引起的
+    if (retval < 0 && socket_errno != SOCKET_EINTR) {
+      /*
+        select(2)/poll(2) failed on the listening port.
+        There is not much details to report about the client,
+        increment the server global status variable.
+      */
+      // 增加连接错误计数器
+      ++connection_errors_query_block;
+      // 如果这是第一次错误，并且连接事件循环没有中止，记录错误日志
+      if (!select_errors++ && !connection_events_loop_aborted())
+        LogErr(ERROR_LEVEL, ER_CONN_SOCKET_SELECT_FAILED, socket_errno);
+    }
+  
+    // 如果 poll 或 select 失败，或者连接事件循环中止，返回 nullptr
+    if (retval < 0 || connection_events_loop_aborted()) return nullptr;
+  
+    /* Is this a new connection request ? */
+    // 获取监听的套接字
+    const Listen_socket *listen_socket = get_listen_socket();
     /*
-      select(2)/poll(2) failed on the listening port.
-      There is not much details to report about the client,
-      increment the server global status variable.
+      When poll/select returns control flow then at least one ready server socket
+      must exist. Check that get_ready_socket() returns a valid socket.
     */
-    ++connection_errors_query_block;
-    if (!select_errors++ && !connection_events_loop_aborted())
-      LogErr(ERROR_LEVEL, ER_CONN_SOCKET_SELECT_FAILED, socket_errno);
-  }
-
-  if (retval < 0 || connection_events_loop_aborted()) return nullptr;
-
-  /* Is this a new connection request ? */
-  const Listen_socket *listen_socket = get_listen_socket();
-  /*
-    When poll/select returns control flow then at least one ready server socket
-    must exist. Check that get_ready_socket() returns a valid socket.
-  */
-  assert(listen_socket != nullptr);
-  MYSQL_SOCKET connect_sock;
-#ifdef HAVE_SETNS
-  /*
-    If a network namespace is specified for a listening socket then set this
-    network namespace as active before call to accept().
-    It is not clear from manuals whether a socket returned by a call to
-    accept() borrows a network namespace from a server socket used for
-    accepting a new connection. For that reason, assign a network namespace
-    explicitly before calling accept().
-  */
-  std::string network_namespace_for_listening_socket;
-  if (listen_socket->m_socket_type == Socket_type::TCP_SOCKET) {
-    network_namespace_for_listening_socket =
-        (listen_socket->m_network_namespace != nullptr
-             ? *listen_socket->m_network_namespace
-             : std::string(""));
-    if (!network_namespace_for_listening_socket.empty() &&
-        set_network_namespace(network_namespace_for_listening_socket))
+    // 断言确保监听的套接字不为空
+    assert(listen_socket != nullptr);
+    MYSQL_SOCKET connect_sock;
+  #ifdef HAVE_SETNS
+    /*
+      If a network namespace is specified for a listening socket then set this
+      network namespace as active before call to accept().
+      It is not clear from manuals whether a socket returned by a call to
+      accept() borrows a network namespace from a server socket used for
+      accepting a new connection. For that reason, assign a network namespace
+      explicitly before calling accept().
+    */
+    // 如果监听的套接字指定了网络命名空间，则在调用 accept 之前设置该网络命名空间为活动状态
+    std::string network_namespace_for_listening_socket;
+    if (listen_socket->m_socket_type == Socket_type::TCP_SOCKET) {
+      network_namespace_for_listening_socket =
+          (listen_socket->m_network_namespace != nullptr
+               ? *listen_socket->m_network_namespace
+               : std::string(""));
+      if (!network_namespace_for_listening_socket.empty() &&
+          set_network_namespace(network_namespace_for_listening_socket))
+        return nullptr;
+    }
+  #endif
+    // 接受连接请求
+    if (accept_connection(listen_socket->m_socket, &connect_sock)) {
+  #ifdef HAVE_SETNS
+      // 如果设置了网络命名空间，恢复原始的网络命名空间
+      if (!network_namespace_for_listening_socket.empty())
+        (void)restore_original_network_namespace();
+  #endif
       return nullptr;
+    }
+  
+  #ifdef HAVE_SETNS
+    // 如果设置了网络命名空间，恢复原始的网络命名空间
+    if (!network_namespace_for_listening_socket.empty() &&
+        restore_original_network_namespace())
+      return nullptr;
+  #endif
+  
+  #ifdef HAVE_LIBWRAP
+    // 如果使用 TCP Wrapper 检查连接是否被拒绝
+    if ((listen_socket->m_socket_type == Socket_type::TCP_SOCKET) &&
+        check_connection_refused_by_tcp_wrapper(connect_sock)) {
+      return nullptr;
+    }
+  #endif  // HAVE_LIBWRAP
+  
+    // 根据套接字类型创建 Channel_info 对象
+    Channel_info *channel_info = nullptr;
+    if (listen_socket->m_socket_type == Socket_type::UNIX_SOCKET)
+      channel_info = new (std::nothrow) Channel_info_local_socket(connect_sock);
+    else
+      channel_info = new (std::nothrow) Channel_info_tcpip_socket(
+          connect_sock, (listen_socket->m_socket_interface ==
+                         Socket_interface_type::ADMIN_INTERFACE));
+    // 如果创建 Channel_info 对象失败，关闭套接字并返回 nullptr
+    if (channel_info == nullptr) {
+      (void)mysql_socket_shutdown(connect_sock, SHUT_RDWR);
+      (void)mysql_socket_close(connect_sock);
+      connection_errors_internal++;
+      return nullptr;
+    }
+  
+  #ifdef HAVE_SETNS
+    // 如果设置了网络命名空间，将其设置到 Channel_info_tcpip_socket 对象中
+    if (listen_socket->m_socket_type == Socket_type::TCP_SOCKET &&
+        !network_namespace_for_listening_socket.empty())
+      static_cast<Channel_info_tcpip_socket *>(channel_info)
+          ->set_network_namespace(network_namespace_for_listening_socket);
+  #endif
+    // 返回 Channel_info 对象
+    return channel_info;
   }
-#endif
-  if (accept_connection(listen_socket->m_socket, &connect_sock)) {
-#ifdef HAVE_SETNS
-    if (!network_namespace_for_listening_socket.empty())
-      (void)restore_original_network_namespace();
-#endif
-    return nullptr;
-  }
-
-#ifdef HAVE_SETNS
-  if (!network_namespace_for_listening_socket.empty() &&
-      restore_original_network_namespace())
-    return nullptr;
-#endif
-
-#ifdef HAVE_LIBWRAP
-  if ((listen_socket->m_socket_type == Socket_type::TCP_SOCKET) &&
-      check_connection_refused_by_tcp_wrapper(connect_sock)) {
-    return nullptr;
-  }
-#endif  // HAVE_LIBWRAP
-
-  Channel_info *channel_info = nullptr;
-  if (listen_socket->m_socket_type == Socket_type::UNIX_SOCKET)
-    channel_info = new (std::nothrow) Channel_info_local_socket(connect_sock);
-  else
-    channel_info = new (std::nothrow) Channel_info_tcpip_socket(
-        connect_sock, (listen_socket->m_socket_interface ==
-                       Socket_interface_type::ADMIN_INTERFACE));
-  if (channel_info == nullptr) {
-    (void)mysql_socket_shutdown(connect_sock, SHUT_RDWR);
-    (void)mysql_socket_close(connect_sock);
-    connection_errors_internal++;
-    return nullptr;
-  }
-
-#ifdef HAVE_SETNS
-  if (listen_socket->m_socket_type == Socket_type::TCP_SOCKET &&
-      !network_namespace_for_listening_socket.empty())
-    static_cast<Channel_info_tcpip_socket *>(channel_info)
-        ->set_network_namespace(network_namespace_for_listening_socket);
-#endif
-  return channel_info;
-}
-
+  
 void Mysqld_socket_listener::close_listener() {
   for (const auto &socket_element : m_socket_vector) {
     (void)mysql_socket_shutdown(socket_element.m_socket, SHUT_RDWR);

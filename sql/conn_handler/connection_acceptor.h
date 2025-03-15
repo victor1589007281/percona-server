@@ -54,17 +54,25 @@ class Connection_acceptor {
   */
   bool init_connection_acceptor() { return m_listener->setup_listener(); }
 
-  /**
+/**
     Connection acceptor loop to accept connections from clients.
+    连接接受器循环以接受来自客户端的连接。
   */
-  void connection_event_loop() {
-    Connection_handler_manager *mgr =
-        Connection_handler_manager::get_instance();
-    while (!connection_events_loop_aborted()) {
-      Channel_info *channel_info = m_listener->listen_for_connection_event();
-      if (channel_info != nullptr) mgr->process_new_connection(channel_info);
+ void connection_event_loop() {
+  // 获取连接处理管理器实例
+  Connection_handler_manager *mgr = Connection_handler_manager::get_instance();
+  
+  // 当连接事件循环未中止时
+  while (!connection_events_loop_aborted()) {
+    // 监听连接事件
+    Channel_info *channel_info = m_listener->listen_for_connection_event();
+    
+    // 如果有新的连接请求，处理新连接
+    if (channel_info != nullptr) {
+      mgr->process_new_connection(channel_info);
     }
   }
+}
 
   /**
      Spawn admin connection handler to accept admin connections from clients if

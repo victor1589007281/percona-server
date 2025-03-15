@@ -194,6 +194,7 @@ struct Alloc_arr : public allocator_traits<false> {
   }
 };
 
+
 /** Allocation routines for non-extended alignment types, as opposed to
     Aligned_alloc_pfs for example, but which are instrumented through PFS
     (performance-schema).
@@ -251,12 +252,55 @@ struct Alloc_arr : public allocator_traits<false> {
 
     DATA is an actual segment which will keep the user data.
 */
+/* 用于非扩展对齐类型的内存分配例程，与 Aligned_alloc_pfs 不同，但通过 PFS（performance-schema）进行检测。
+   基于 PFS_metadata 实现。
+
+   内存布局表示如下：
+
+     --------------------------------------------------
+     | PFS-META | VARLEN | PFS-META-OFFSET |   DATA   |
+     --------------------------------------------------
+      ^    ^                                ^
+      |    |                                |
+      |   ---------------------------       |
+      |   | OWNER |  DATALEN  | KEY |       |
+      |   ---------------------------       |
+      |                                     |
+   ptr returned by                          |
+      Alloc_fn                              |
+                                            |
+                               ptr to be returned to call-site
+                                   will be pointing here
+
+    OWNER 字段编码了所属线程。
+    DATALEN 字段编码了内存消耗的总大小，而不仅仅是 DATA 段的大小。
+    KEY 字段编码了 PFS/PSI 键。
+
+    VARLEN 是剩余的可变长度段，专门的实现可以通过以下公式推导其大小：
+    abs(alignof(max_align_t) - sizeof(PFS-META-OFFSET) - sizeof(PFS-META))。
+    在代码中，这将是 std::abs(alignof(max_align_t) - PFS_metadata::size)。
+    此实现未使用 VARLEN。
+
+    PFS-META-OFFSET 严格来说在非扩展对齐的情况下是不必要的，因为对齐在编译时总是已知的，
+    因此我们存储在 PFS-META-OFFSET 字段中的偏移量在给定平台上总是相同的。
+    因此，与其像现在这样将这一信息序列化到内存中，我们完全可以将其存储在编译时计算的 constexpr 常量中。
+    我们不这样做的原因是这样做没有优势（*），同时会引入维护 PFS_metadata 单独特化的缺点，代码也会更加分散。
+
+      (*) 我们需要分配的额外空间以适应 PFS_metadata，无论是否有 PFS-META-OFFSET 字段，空间大小都是相同的。
+          这是因为 PFS-META 段本身比 alignof(max_align_t) 大，因此为了保持 DATA 段适当对齐
+          (% alignof(max_align_t) == 0)，我们必须选择整个 PFS 段的大小为 alignof(max_align_t) 的倍数。
+
+    PFS-META-OFFSET 是一个字段，允许我们从 DATA 段的指针恢复 PFS-META 段的指针。
+
+    DATA 是实际存储用户数据的段。
+*/
 struct Alloc_pfs : public allocator_traits<true> {
   using pfs_metadata = PFS_metadata;
 
   /** This is how much the metadata (PFS-META | VARLEN | PFS-META-OFFSET)
       segment will be big.
     */
+  /* 元数据（PFS-META | VARLEN | PFS-META-OFFSET）段的大小。 */
   static constexpr auto metadata_len =
       calc_align(pfs_metadata::size, alignof(max_align_t));
 
@@ -268,6 +312,12 @@ struct Alloc_pfs : public allocator_traits<true> {
       @return Pointer to the allocated storage. nullptr if dynamic storage
       allocation failed.
    */
+  /* 动态分配给定大小的存储空间，地址对齐到请求的对齐方式。
+
+      @param[in] size 请求分配的存储大小（以字节为单位）。
+      @param[in] key 用于 PFS 内存检测的 PSI 内存键。
+      @return 指向分配存储的指针。如果动态存储分配失败，则返回 nullptr。
+   */
   template <bool Zero_initialized>
   static inline void *alloc(std::size_t size,
                             pfs_metadata::pfs_memory_key_t key) {
@@ -278,12 +328,15 @@ struct Alloc_pfs : public allocator_traits<true> {
 #ifdef HAVE_PSI_MEMORY_INTERFACE
     // The point of this allocator variant is to trace the memory allocations
     // through PFS (PSI) so do it.
+    /* 此分配器变体的目的是通过 PFS（PSI）跟踪内存分配，因此执行此操作。 */
     pfs_metadata::pfs_owning_thread_t owner;
     key = PSI_MEMORY_CALL(memory_alloc)(key, total_len, &owner);
     // To be able to do the opposite action of tracing when we are releasing the
     // memory, we need right about the same data we passed to the tracing
     // memory_alloc function. Let's encode this it into our allocator so we
     // don't have to carry and keep this data around.
+    /* 为了在释放内存时执行相反的跟踪操作，我们需要与传递给 memory_alloc 函数相同的数据。
+       让我们将这些数据编码到分配器中，这样我们就不必携带和保留这些数据。 */
     pfs_metadata::pfs_owning_thread(mem, owner);
     pfs_metadata::pfs_datalen(mem, total_len);
     pfs_metadata::pfs_key(mem, key);
@@ -308,15 +361,28 @@ struct Alloc_pfs : public allocator_traits<true> {
       @return Pointer to the reallocated storage. nullptr if dynamic storage
       allocation or reallocation failed or if new size requested was 0.
    */
+  /* 重新分配给定的内存区域，如果指针不为 nullptr，则必须先前由 Alloc_pfs::alloc() 或 Alloc_pfs::realloc() 分配。
+
+      模仿不幸的 realloc() 设计，因此：
+        * 如果传递的指针为 nullptr，则行为类似于调用了 Alloc_pfs::alloc()。
+        * 如果请求的新存储大小为 0，则行为类似于调用了 Alloc_pfs::free()。
+
+      @param[in] data 指向要重新分配的内存的指针。
+      @param[in] size 请求分配的新存储大小（以字节为单位）。
+      @param[in] key 用于 PFS 内存检测的 PSI 内存键。
+      @return 指向重新分配存储的指针。如果动态存储分配或重新分配失败，或者请求的新大小为 0，则返回 nullptr。
+   */
   static inline void *realloc(PFS_metadata::data_segment_ptr data,
                               std::size_t size,
                               pfs_metadata::pfs_memory_key_t key) {
     // Allocate memory if pointer passed in is nullptr
+    /* 如果传入的指针为 nullptr，则分配内存。 */
     if (!data) {
       return Alloc_pfs::alloc<false>(size, key);
     }
 
     // Free the memory if passed in size is zero
+    /* 如果传入的大小为零，则释放内存。 */
     if (size == 0) {
       Alloc_pfs::free(data);
       return nullptr;
@@ -324,15 +390,18 @@ struct Alloc_pfs : public allocator_traits<true> {
 
 #ifdef HAVE_PSI_MEMORY_INTERFACE
     // Deduce the PFS data we encoded in Alloc_pfs::alloc()
+    /* 推导我们在 Alloc_pfs::alloc() 中编码的 PFS 数据。 */
     auto key_curr = pfs_metadata::pfs_key(data);
     auto owner_curr = pfs_metadata::pfs_owning_thread(data);
     auto datalen_curr = pfs_metadata::pfs_datalen(data);
     // With the deduced PFS data, now trace the memory release action.
+    /* 使用推导出的 PFS 数据，现在跟踪内存释放操作。 */
     PSI_MEMORY_CALL(memory_free)
     (key_curr, datalen_curr, owner_curr);
 #endif
 
     // Otherwise, continue with the plain realloc
+    /* 否则，继续普通的 realloc。 */
     const auto total_len = size + Alloc_pfs::metadata_len;
     auto mem = Alloc_fn::realloc(deduce(data), total_len);
     if (unlikely(!mem)) return nullptr;
@@ -340,12 +409,15 @@ struct Alloc_pfs : public allocator_traits<true> {
 #ifdef HAVE_PSI_MEMORY_INTERFACE
     // The point of this allocator variant is to trace the memory allocations
     // through PFS (PSI) so do it.
+    /* 此分配器变体的目的是通过 PFS（PSI）跟踪内存分配，因此执行此操作。 */
     pfs_metadata::pfs_owning_thread_t owner;
     key = PSI_MEMORY_CALL(memory_alloc)(key, total_len, &owner);
     // To be able to do the opposite action of tracing when we are releasing the
     // memory, we need right about the same data we passed to the tracing
     // memory_alloc function. Let's encode this it into our allocator so we
     // don't have to carry and keep this data around.
+    /* 为了在释放内存时执行相反的跟踪操作，我们需要与传递给 memory_alloc 函数相同的数据。
+       让我们将这些数据编码到分配器中，这样我们就不必携带和保留这些数据。 */
     pfs_metadata::pfs_owning_thread(mem, owner);
     pfs_metadata::pfs_datalen(mem, total_len);
     pfs_metadata::pfs_key(mem, key);
@@ -361,15 +433,21 @@ struct Alloc_pfs : public allocator_traits<true> {
       @param[in] data Pointer to storage allocated through
       Alloc_pfs::alloc()
    */
+  /* 释放通过 Alloc_pfs::alloc() 动态分配的存储空间。
+
+      @param[in] data 指向通过 Alloc_pfs::alloc() 分配的存储空间的指针。
+   */
   static inline void free(PFS_metadata::data_segment_ptr data) noexcept {
     if (unlikely(!data)) return;
 
 #ifdef HAVE_PSI_MEMORY_INTERFACE
     // Deduce the PFS data we encoded in Alloc_pfs::alloc()
+    /* 推导我们在 Alloc_pfs::alloc() 中编码的 PFS 数据。 */
     auto key = pfs_metadata::pfs_key(data);
     auto owner = pfs_metadata::pfs_owning_thread(data);
     auto datalen = pfs_metadata::pfs_datalen(data);
     // With the deduced PFS data, now trace the memory release action.
+    /* 使用推导出的 PFS 数据，现在跟踪内存释放操作。 */
     PSI_MEMORY_CALL(memory_free)
     (key, datalen, owner);
 #endif
@@ -377,6 +455,7 @@ struct Alloc_pfs : public allocator_traits<true> {
     // Here we make use of the offset which has been encoded by
     // Alloc_pfs::alloc() to be able to deduce the original pointer and
     // simply forward it to std::free.
+    /* 在这里，我们利用 Alloc_pfs::alloc() 编码的偏移量来推导原始指针，并简单地将其转发给 std::free。 */
     Alloc_fn::free(deduce(data));
   }
 
@@ -386,6 +465,11 @@ struct Alloc_pfs : public allocator_traits<true> {
     Alloc_pfs::alloc()
     @return Number of bytes.
    */
+  /* 返回请求分配的字节数。
+
+    @param[in] data 指向通过 Alloc_pfs::alloc() 分配的存储空间的指针。
+    @return 字节数。
+   */
   static inline size_t datalen(PFS_metadata::data_segment_ptr data) {
     return pfs_metadata::pfs_datalen(data) - Alloc_pfs::metadata_len;
   }
@@ -394,35 +478,62 @@ struct Alloc_pfs : public allocator_traits<true> {
   /** Helper function which deduces the original pointer returned by
       Alloc_pfs::alloc() from a pointer which is passed to us by the call-site.
    */
+  /* 辅助函数，从调用站点传递给我们的指针推导出 Alloc_pfs::alloc() 返回的原始指针。 */
   static inline void *deduce(PFS_metadata::data_segment_ptr data) noexcept {
     return pfs_metadata::deduce_pfs_meta(data);
   }
 };
 
+
 /** Simple utility metafunction which selects appropriate allocator variant
     (implementation) depending on the input parameter(s).
   */
+/* 简单的工具元函数，根据输入参数选择适当的内存分配器变体（实现）。 */
 template <bool Pfs_memory_instrumentation_on, bool Array_specialization>
+/*
+这是一个模板元函数（Metafunction）的声明。它定义了一个模板类 select_malloc_impl，但没有实现任何功能。
+它是一个通用的模板，用于根据输入参数选择适当的内存分配器变体。
+*/
 struct select_malloc_impl {};
 
+// 模板元函数的特化版本，根据输入参数选择适当的内存分配器变体
 template <>
 struct select_malloc_impl<false, false> {
   using type = Alloc;  // When PFS is OFF, pick ordinary, non-PFS, variant
+                       // 当 PFS 关闭时，选择普通的非 PFS 变体
 };
 
+// 模板元函数的特化版本，根据输入参数选择适当的内存分配器变体
 template <>
 struct select_malloc_impl<false, true> {
   using type = Alloc_arr;  // When needed, take special care to pick the variant
                            // which specializes for arrays
+                           // 当需要时，选择专门用于数组的变体
 };
 
+//无论 Array_specialization 是 true 还是 false，都选择 Alloc_pfs 类型
+// 模板元函数的特化版本，根据输入参数选择适当的内存分配器变体
 template <bool Array_specialization>
 struct select_malloc_impl<true, Array_specialization> {
   using type = Alloc_pfs;  // Otherwise, pick PFS variant
+                           // 否则，选择 PFS 变体
 };
 
 /** Just a small helper type which saves us some keystrokes. */
+/* 只是一个小的辅助类型，帮助我们节省一些输入。 */
 template <bool Pfs_memory_instrumentation_on, bool Array_specialization>
+/*
+using :
+是 C++11 引入的关键字，用于定义类型别名（Type Alias）。它类似于 typedef，但语法更清晰，功能更强大。 
+select_malloc_impl_t: 类型别名
+
+select_malloc_impl<Pfs_memory_instrumentation_on,  Array_specialization>：
+模板类
+::type 
+是 select_malloc_impl 类中的一个类型成员，表示选择的内存分配器类型。
+typename 
+关键字用于告诉编译器 ::type 是一个类型，而不是一个静态成员变量。
+*/
 using select_malloc_impl_t =
     typename select_malloc_impl<Pfs_memory_instrumentation_on,
                                 Array_specialization>::type;
@@ -430,39 +541,46 @@ using select_malloc_impl_t =
 /** Small wrapper which utilizes SFINAE to dispatch the call to appropriate
     allocator implementation.
   */
+/* 一个小的包装器，利用 SFINAE 将调用分派到适当的内存分配器实现。 */
+// Alloc_ 是一个模板类，它有一个模板参数 Impl
 template <typename Impl>
 struct Alloc_ {
+  //嵌套的模板函数：模板类的成员函数
+  //可以有跟外围模板类不一样的模板参数，通过 Impl:: 访问外围模板类的模板参数 Impl 的成员
   template <bool Zero_initialized, typename T = Impl>
+
+  // 静态成员函数的返回类型声明，使用了 SFINAE 技术
+  // 如果 T::is_pfs_instrumented_v 为 true，则返回 void * 类型
   static inline typename std::enable_if<T::is_pfs_instrumented_v, void *>::type
   alloc(size_t size, PSI_memory_key key) {
-    return Impl::template alloc<Zero_initialized>(size, key);
+    return Impl::template alloc<Zero_initialized>(size, key);  // 调用 PFS 变体的分配函数
   }
   template <bool Zero_initialized, typename T = Impl>
   static inline typename std::enable_if<!T::is_pfs_instrumented_v, void *>::type
   alloc(size_t size, PSI_memory_key /*key*/) {
-    return Impl::template alloc<Zero_initialized>(size);
+    return Impl::template alloc<Zero_initialized>(size);  // 调用非 PFS 变体的分配函数
   }
   template <typename T = Impl>
   static inline typename std::enable_if<T::is_pfs_instrumented_v, void *>::type
   realloc(void *ptr, size_t size, PSI_memory_key key) {
-    return Impl::realloc(ptr, size, key);
+    return Impl::realloc(ptr, size, key);  // 调用 PFS 变体的重新分配函数
   }
   template <typename T = Impl>
   static inline typename std::enable_if<!T::is_pfs_instrumented_v, void *>::type
   realloc(void *ptr, size_t size, PSI_memory_key /*key*/) {
-    return Impl::realloc(ptr, size);
+    return Impl::realloc(ptr, size);  // 调用非 PFS 变体的重新分配函数
   }
-  static inline void free(void *ptr) { Impl::free(ptr); }
-  static inline size_t datalen(void *ptr) { return Impl::datalen(ptr); }
+  static inline void free(void *ptr) { Impl::free(ptr); }  // 调用释放函数
+  static inline size_t datalen(void *ptr) { return Impl::datalen(ptr); }  // 调用获取数据长度函数
   template <typename T = Impl>
   static inline typename std::enable_if<T::is_pfs_instrumented_v, size_t>::type
   pfs_overhead() {
-    return Alloc_pfs::metadata_len;
+    return Alloc_pfs::metadata_len;  // 返回 PFS 变体的元数据长度
   }
   template <typename T = Impl>
   static inline typename std::enable_if<!T::is_pfs_instrumented_v, size_t>::type
   pfs_overhead() {
-    return 0;
+    return 0;  // 返回非 PFS 变体的元数据长度（0）
   }
 };
 

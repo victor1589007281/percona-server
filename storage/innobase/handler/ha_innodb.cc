@@ -23739,11 +23739,25 @@ static MYSQL_SYSVAR_BOOL(optimize_fulltext_only, innodb_optimize_fulltext_only,
                          "Only optimize the Fulltext index of the table",
                          nullptr, nullptr, false);
 
+// 定义 InnoDB 存储引擎的读 I/O 线程数量的系统变量
+// This defines a system variable for the number of read I/O threads in InnoDB.
+/*
+read_io_threads           参数名:对应的变量为innodb_read_io_threads
+srv_n_read_io_threads     系统内的程序参数变量
+PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY: 这些标志表示该变量在运行时是只读的，并且可以通过命令行参数进行配置。
+PLUGIN_VAR_RQCMDARG： 表示可以在MySQL启动命令中设定
+PLUGIN_VAR_READONLY： 表示该变量是只读的，数据库启动后不能被修改。
+
+nullptr, nullptr: 这些是回调函数指针，这里没有使用。
+4, 1, 64, 0: 这些是变量的默认值、最小值、最大值和步长。例如，read_io_threads 的默认值是 4，最小值是 1，最大值是 64。
+*/
 static MYSQL_SYSVAR_ULONG(read_io_threads, srv_n_read_io_threads,
                           PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
                           "Number of background read I/O threads in InnoDB.",
                           nullptr, nullptr, 4, 1, 64, 0);
 
+// 定义 InnoDB 存储引擎的写 I/O 线程数量的系统变量
+// This defines a system variable for the number of write I/O threads in InnoDB.
 static MYSQL_SYSVAR_ULONG(write_io_threads, srv_n_write_io_threads,
                           PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
                           "Number of background write I/O threads in InnoDB.",
@@ -24117,6 +24131,7 @@ static MYSQL_SYSVAR_STR(version, innodb_version_str,
                             PLUGIN_VAR_NOPERSIST,
                         "InnoDB version", nullptr, nullptr, INNODB_VERSION_STR);
 
+// 是否使用Linux原生的AIO机制
 static MYSQL_SYSVAR_BOOL(use_native_aio, srv_use_native_aio,
                          PLUGIN_VAR_NOCMDARG | PLUGIN_VAR_READONLY,
                          "Use native AIO if supported on this platform.",

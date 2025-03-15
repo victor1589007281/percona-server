@@ -605,6 +605,8 @@ constexpr bool WITH_PFS_MEMORY = false;
      int *x = static_cast<int*>(ut::malloc_withkey(key, 10*sizeof(int)));
  */
 inline void *malloc_withkey(PSI_memory_key_t key, std::size_t size) noexcept {
+  // WITH_PFS_MEMORY 为 true：选择 Alloc_pfs 类型，使用 PFS 内存监控。
+  // WITH_PFS_MEMORY 为 false：选择 Alloc 类型，不使用 PFS 内存监控。
   using impl = detail::select_malloc_impl_t<WITH_PFS_MEMORY, false>; // 选择内存分配实现
   using malloc_impl = detail::Alloc_<impl>; // 定义内存分配实现类型
   return malloc_impl::alloc<false>(size, key()); // 调用分配实现进行内存分配

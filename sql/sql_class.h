@@ -4746,8 +4746,11 @@ class THD : public MDL_context_owner,
     Initialize the optimizer cost model.
 
     This function should be called each time a new query is started.
+    初始化优化器成本模型。
+
+    每次启动新查询时都应调用此函数。
   */
-  void init_cost_model() { m_cost_model.init(); }
+ void init_cost_model() { m_cost_model.init(); }
 
   /**
     Retrieve the optimizer cost model for this connection.

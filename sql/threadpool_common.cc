@@ -134,23 +134,28 @@ static void threadpool_init_net_server_extension(THD *thd) {
 #endif
 }
 
+// 添加新连接的处理函数
 int threadpool_add_connection(THD *thd) {
-  int retval = 1;
-  Worker_thread_context worker_context;
+  int retval = 1;  // 返回值，默认设置为 1（表示失败）
+  Worker_thread_context worker_context;  // 工作线程上下文
 
+  // 初始化线程特定的变量
   my_thread_init();
 
   /* Create new PSI thread for use with the THD. */
+  // 创建新的 PSI 线程用于 THD
 #ifdef HAVE_PSI_THREAD_INTERFACE
   thd->set_psi(PSI_THREAD_CALL(new_thread)(key_thread_one_connection, 0, thd,
                                            thd->thread_id()));
 #endif
 
   /* Login. */
-  thread_attach(thd);
-  thd->start_utime = my_micro_time();
-  thd->store_globals();
+  // 登录操作
+  thread_attach(thd);  // 将 THD 附加到当前线程
+  thd->start_utime = my_micro_time();  // 记录线程启动时间
+  thd->store_globals();  // 存储全局变量
 
+  // 准备连接，如果失败则跳转到结束部分
   if (thd_prepare_connection(thd)) {
     goto end;
   }
@@ -159,23 +164,25 @@ int threadpool_add_connection(THD *thd) {
     Check if THD is ok, as prepare_new_connection_state()
     can fail, for example if init command failed.
   */
+  // 检查 THD 是否正常，因为 prepare_new_connection_state() 可能会失败，例如初始化命令失败
   if (thd_connection_alive(thd)) {
-    retval = 0;
-    thd_set_net_read_write(thd, 1);
-    thd->skip_wait_timeout = true;
+    retval = 0;  // 设置返回值为 0（表示成功）
+    thd_set_net_read_write(thd, 1);  // 设置网络读写状态
+    thd->skip_wait_timeout = true;  // 跳过等待超时
     MYSQL_SOCKET_SET_STATE(thd->get_protocol_classic()->get_vio()->mysql_socket,
-                           PSI_SOCKET_STATE_IDLE);
-    thd->m_server_idle = true;
-    threadpool_init_net_server_extension(thd);
+                           PSI_SOCKET_STATE_IDLE);  // 设置套接字状态为 IDLE
+    thd->m_server_idle = true;  // 标记服务器为空闲状态
+    threadpool_init_net_server_extension(thd);  // 初始化网络服务器扩展
   }
 
 end:
+  // 如果连接失败，增加中止连接计数
   if (retval) {
     Connection_handler_manager *handler_manager =
         Connection_handler_manager::get_instance();
     handler_manager->inc_aborted_connects();
   }
-  return retval;
+  return retval;  // 返回结果
 }
 
 void threadpool_remove_connection(THD *thd) {

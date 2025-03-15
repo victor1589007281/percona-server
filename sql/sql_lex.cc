@@ -508,25 +508,40 @@ void LEX::reset() {
 
   The function creates a query_block and a query_block_query_expression object.
   These objects should rather be created by the parser bottom-up.
+  在每个查询准备和执行之前调用 lex_start()。
+  因此，这里不要做太多事情是至关重要的。（我们已经做得太多了）
+
+  该函数创建一个 query_block 和一个 query_block_query_expression 对象。
+  这些对象应该由解析器自底向上创建。
 */
 
 bool lex_start(THD *thd) {
+  // 进入调试模式，记录函数调用
   DBUG_TRACE;
 
+  // 获取当前线程的 LEX 对象
   LEX *lex = thd->lex;
 
+  // 设置 LEX 对象的 THD 指针
   lex->thd = thd;
+  // 重置 LEX 对象的状态
   lex->reset();
+  // 初始化用于此查询的成本模型
   // Initialize the cost model to be used for this query
   thd->init_cost_model();
 
+  // 创建一个新的顶层查询
   const bool status = lex->new_top_level_query();
+  // 断言当前查询块为空
   assert(lex->current_query_block() == nullptr);
+  // 设置当前查询块为 LEX 的查询块
   lex->m_current_query_block = lex->query_block;
 
+  // 断言 IS_table_stats 和 IS_tablespace_stats 无效
   assert(lex->m_IS_table_stats.is_valid() == false);
   assert(lex->m_IS_tablespace_stats.is_valid() == false);
 
+  // 返回状态
   return status;
 }
 
