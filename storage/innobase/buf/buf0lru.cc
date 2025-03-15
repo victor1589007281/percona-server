@@ -1243,6 +1243,17 @@ buf_block_t *buf_LRU_get_free_only(buf_pool_t *buf_pool) {
     UT_LIST_REMOVE(buf_pool->free, &block->page); // 从空闲列表中移除块
     mutex_exit(&buf_pool->free_list_mutex); // 退出空闲列表互斥锁
 
+//没有需要撤回的块，或者需要撤回，但是块不在撤回区域
+/*
+如果条件为假，则继续：
+!(!buf_get_withdraw_depth(buf_pool) ||
+        !buf_block_will_withdrawn(buf_pool, block))
+=>
+(buf_get_withdraw_depth(buf_pool) &&
+        buf_block_will_withdrawn(buf_pool, block))  
+=>
+这个块是在撤回区域，需要被撤回的              
+*/
     if (!buf_get_withdraw_depth(buf_pool) ||
         !buf_block_will_withdrawn(buf_pool, block)) {
       /* found valid free block */

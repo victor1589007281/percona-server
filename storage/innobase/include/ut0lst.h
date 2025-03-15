@@ -169,41 +169,61 @@ struct ut_list_base {
   which let you remove the current item or items after it during the loop, while
   still having O(1) space and time complexity.
   NOTE: do not attempt to (re)move the previous element! */
+  // 一个辅助包装类，用于链表，暴露 begin() 和 end() 迭代器，
+  // 允许在循环中删除当前项或之后的项，同时保持 O(1) 的空间和时间复杂度。
+  // 注意：不要尝试删除前一个元素！
   class Removable {
    private:
+    // 底层链表的引用
     ut_list_base &m_list;
 
    public:
+    // 嵌套的迭代器类
     class iterator {
      private:
+      // 底层链表的引用
       ut_list_base &m_list;
+      // 当前迭代的元素
       elem_type *m_elem;
+      // 当前元素的前一个元素
       elem_type *m_prev_elem;
 
      public:
+      // 构造函数，初始化迭代器
       iterator(ut_list_base &list, elem_type *elem)
           : m_list{list},
             m_elem{elem},
             m_prev_elem{elem ? prev(*elem) : nullptr} {
+        // 我们尚未测试其他情况，确保前一个元素为空
         // We haven't really tested any other case yet:
         ut_ad(m_prev_elem == nullptr);
       }
+      // 重载 == 操作符，用于比较两个迭代器是否相等
       bool operator==(const iterator &other) const {
         return m_elem == other.m_elem;
       }
+      // 重载 != 操作符，用于比较两个迭代器是否不相等
       bool operator!=(const iterator &other) const { return !(*this == other); }
+      // 重载 * 操作符，返回当前迭代的元素
       elem_type *operator*() const { return m_elem; }
+      // 重载 ++ 操作符，移动到下一个元素
       iterator &operator++() {
         /* if m_prev_elem existed before, then it should still belong to the
         list, which we verify partially here, by checking it's linked to next
         element or is the last. If this assert fails, it means the m_prev_elem
         was removed from the list during loop, which is violation of the
         contract with the user of .removable(). */
+        // 如果 m_prev_elem 存在，则它应该仍然属于链表，
+        // 我们通过检查它是否链接到下一个元素或是最后一个元素来部分验证这一点。
+        // 如果此断言失败，意味着在循环中 m_prev_elem 被从链表中移除，
+        // 这违反了与 .removable() 用户的约定。
         ut_ad(!m_prev_elem || next(*m_prev_elem) ||
               m_list.last_element == m_prev_elem);
         /* The reason this is so complicated is that we want to support cases in
         which the body of the loop removed not only the current element, but
         also some elements even further after it. */
+        // 之所以如此复杂，是因为我们希望支持循环体中不仅删除当前元素，
+        // 还删除其后的某些元素的情况。
         auto here =
             m_prev_elem == nullptr ? m_list.first_element : next(*m_prev_elem);
         if (here != m_elem) {
@@ -215,8 +235,11 @@ struct ut_list_base {
         return *this;
       }
     };
+    // 构造函数，初始化 Removable 实例
     Removable(ut_list_base &list) : m_list{list} {}
+    // 返回指向链表第一个元素的迭代器
     iterator begin() { return iterator{m_list, m_list.first_element}; }
+    // 返回指向链表末尾的迭代器（nullptr）
     iterator end() { return iterator{m_list, nullptr}; }
   };
   /** Returns a wrapper which lets you remove current item or items after it.
@@ -238,6 +261,24 @@ struct ut_list_base {
     A safe subcase of this is reinserting the current item, in which case it
     won't be processed again. This lets you implement "move to front" easily.
   @see Removable */
+  // 返回一个包装器，允许删除当前项或之后的项。
+  // 可以像以下示例一样使用：
+  //     for (auto lock : table->locks.removable()) {
+  //       lock_remove_all_on_table_for_trx(table, lock->trx,..);
+  //     }
+  // 或者一般情况下：
+  //     for (auto item : list.removable()) {
+  //       remove_items_which_are_similar_to(item);
+  //     }
+  // 基本上，你可以删除任何项，除了前一项（prev(item)）。
+
+  // 你还可以在迭代期间插入元素，但要注意插入位置的影响：
+  // - 在当前项之后插入：新项最终会被处理，
+  // - 在前一项之前插入：新项不会被处理，
+  // - 在当前项之前插入：不要这样做，因为这可能导致无限循环！
+  //   一个安全的子情况是重新插入当前项，这样它不会被再次处理。
+  //   这让你可以轻松实现“移动到前端”功能。
+  // @see Removable
   Removable removable() { return Removable{*this}; }
 };
 template <typename Type, ut_list_node<Type> Type::*node_ptr>

@@ -1605,150 +1605,199 @@ dberr_t buf_pool_init(ulint total_size, bool populate, ulint n_instances) {
 static bool buf_page_realloc(buf_pool_t *buf_pool, buf_block_t *block) {
   buf_block_t *new_block;
 
-  // 确保当前线程持有 LRU 列表的互斥锁
+  // 确保当前线程持有LRU列表的互斥锁
   ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
+  // 确保自适应哈希索引（AHI）未启用
   // 确保自适应哈希索引（AHI）未启用
   ut_ad(!btr_search_enabled);
 
-  /* 尝试从 buf_pool->free 列表中分配一个块。这个方法仅在缓冲池调整大小的撤回阶段执行。
-     为了尽可能不阻塞其他用户线程，主要策略是使用已经在 free 列表中的块。
-     否则，如果我们调用 `buf_LRU_get_free_block` 而不是 `buf_LRU_get_free_only`，
-     我们将不得不在调用之前释放 LRU 互斥锁，这将导致需要在 `buf_pool_withdraw_blocks`
-     中中断重新分配循环，从而使撤回过程更加低效。 */
+  /* Try allocating from the buf_pool->free list if it is not empty. This
+  method is executed during withdrawing phase of BufferPool resize only. It is
+  better to not block other user threads as much as possible. So, the main
+  strategy is to passively reserve and use blocks that are already on the free
+  list. Otherwise, if we were to call `buf_LRU_get_free_block` instead of
+  `buf_LRU_get_free_only`, we would have to release the LRU mutex before the
+  call and this would cause a need to break the reallocation loop in
+  `buf_pool_withdraw_blocks`, which would render withdrawing even more
+  inefficient. */
+  // 尝试从buf_pool的free列表中分配一个新块
   new_block = buf_LRU_get_free_only(buf_pool);
 
-  // 如果没有可用的空闲块，返回 false
+  // 如果free列表为空，返回false
   if (new_block == nullptr) {
     return (false); /* free_list 不足 */
   }
 
   // 获取块的哈希锁
+  // 获取块的哈希锁
   rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, block->page.id);
 
-  // 获取哈希锁和块的互斥锁
+  // 获取哈希锁的写锁
   rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
+  // 进入块的互斥锁
   mutex_enter(&block->mutex);
 
   // 检查块是否可以重新分配
+  // 检查块是否可以重新分配
   if (buf_page_can_relocate(&block->page)) {
-    // 获取新块的互斥锁
+    // 进入新块的互斥锁
     mutex_enter(&new_block->mutex);
 
     // 将旧块的内容复制到新块
+    // 将旧块的数据复制到新块
     memcpy(new_block->frame, block->frame, UNIV_PAGE_SIZE);
-    // 使用旧块的页面信息初始化新块的页面
+    // 使用placement new初始化新块的page
     new (&new_block->page) buf_page_t(block->page);
 
-    /* 重新定位 LRU 列表 */
+    /* relocate LRU list */
+    // 确保旧块在LRU列表中
     ut_ad(block->page.in_LRU_list);
+    // 确保旧块不在zip哈希中
     ut_ad(!block->page.in_zip_hash);
+    // 在调试模式下，标记旧块不在LRU列表中
     ut_d(block->page.in_LRU_list = false);
 
-    // 调整缓冲池的 LRU 列表中的热点指针
+    // 调整LRU列表的高优先级指针
     buf_LRU_adjust_hp(buf_pool, &block->page);
 
-    // 从 LRU 列表中移除旧块
+    // 获取旧块在LRU列表中的前一个块
     auto prev_b = UT_LIST_GET_PREV(LRU, &block->page);
+    // 从LRU列表中移除旧块
     UT_LIST_REMOVE(buf_pool->LRU, &block->page);
 
-    // 将新块插入到 LRU 列表中的正确位置
+    // 将新块插入到LRU列表中
     if (prev_b != nullptr) {
       UT_LIST_INSERT_AFTER(buf_pool->LRU, prev_b, &new_block->page);
     } else {
       UT_LIST_ADD_FIRST(buf_pool->LRU, &new_block->page);
     }
 
-    // 如果旧块是 LRU 列表中的旧块，更新 LRU_old 指针
+    // 如果旧块是LRU_old，更新LRU_old为新块
     if (buf_pool->LRU_old == &block->page) {
       buf_pool->LRU_old = &new_block->page;
     }
 
+    // 确保新块在LRU列表中
     ut_ad(new_block->page.in_LRU_list);
 
-    /* 重新定位 unzip_LRU 列表 */
+    /* relocate unzip_LRU list */
+    // 如果旧块有压缩数据，处理unzip_LRU列表
     if (block->page.zip.data != nullptr) {
+      // 确保旧块在unzip_LRU列表中
       ut_ad(block->in_unzip_LRU_list);
+      // 在调试模式下，标记新块在unzip_LRU列表中
       ut_d(new_block->in_unzip_LRU_list = true);
+      // 描述新块的压缩数据内存
       UNIV_MEM_DESC(&new_block->page.zip.data,
                     page_zip_get_size(&new_block->page.zip));
 
-      // 从 unzip_LRU 列表中移除旧块
+      // 获取旧块在unzip_LRU列表中的前一个块
       auto prev_block = UT_LIST_GET_PREV(unzip_LRU, block);
+      // 从unzip_LRU列表中移除旧块
       UT_LIST_REMOVE(buf_pool->unzip_LRU, block);
 
+      // 在调试模式下，标记旧块不在unzip_LRU列表中
       ut_d(block->in_unzip_LRU_list = false);
+      // 清空旧块的压缩数据
       block->page.zip.data = nullptr;
+      // 设置旧块的压缩数据大小为0
       page_zip_set_size(&block->page.zip, 0);
 
-      // 将新块插入到 unzip_LRU 列表中的正确位置
+      // 将新块插入到unzip_LRU列表中
       if (prev_block != nullptr) {
         UT_LIST_INSERT_AFTER(buf_pool->unzip_LRU, prev_block, new_block);
       } else {
         UT_LIST_ADD_FIRST(buf_pool->unzip_LRU, new_block);
       }
     } else {
+      // 确保旧块不在unzip_LRU列表中
       ut_ad(!block->in_unzip_LRU_list);
+      // 在调试模式下，标记新块不在unzip_LRU列表中
       ut_d(new_block->in_unzip_LRU_list = false);
     }
 
-    /* 重新定位 buf_pool->page_hash */
+    /* relocate buf_pool->page_hash */
+    // 确保旧块在page_hash中
     ut_ad(block->page.in_page_hash);
+    // 确保旧块是page_hash中的正确块
     ut_ad(&block->page == buf_page_hash_get_low(buf_pool, block->page.id));
+    // 在调试模式下，标记旧块不在page_hash中
     ut_d(block->page.in_page_hash = false);
+    // 计算旧块的哈希值
     const auto hash_value = block->page.id.hash();
+    // 确保新旧块的哈希值相同
     ut_ad(hash_value == new_block->page.id.hash());
-    // 从哈希表中删除旧块
+    // 从page_hash中删除旧块
     HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, hash_value,
                 (&block->page));
-    // 将新块插入到哈希表中
+    // 将新块插入到page_hash中
     HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, hash_value,
                 (&new_block->page));
 
+    // 确保新块在page_hash中
     ut_ad(new_block->page.in_page_hash);
 
     // 增加块的修改时钟
+    // 增加块的修改时钟
     buf_block_modify_clock_inc(block);
-    // 将旧块的页面标记为无效
+    // 清空旧块的帧数据
     memset(block->frame + FIL_PAGE_OFFSET, 0xff, 4);
     memset(block->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, 0xff, 4);
+    // 标记旧块的帧数据为无效
     UNIV_MEM_INVALID(block->frame, UNIV_PAGE_SIZE);
-    // 将旧块的状态设置为 BUF_BLOCK_REMOVE_HASH
+    // 设置旧块的状态为BUF_BLOCK_REMOVE_HASH
     buf_block_set_state(block, BUF_BLOCK_REMOVE_HASH);
 
-    /* 重新定位 buf_pool->flush_list */
+    /* Relocate buf_pool->flush_list. */
+    // 如果旧块是脏页，将其从flush列表中移除并插入新块
     if (block->page.is_dirty()) {
       buf_flush_relocate_on_flush_list(&block->page, &new_block->page);
     }
 
     /* 设置 buf_block_t 的其他标志 */
 
-    /* 这段代码仅在缓冲池调整大小期间执行，且自适应哈希索引被禁用。 */
+    /* This code should only be executed by buf_pool_resize(),
+    while the adaptive hash index is disabled. */
+    // 确保旧块的AHI为空
     block->ahi.assert_empty();
+    // 确保新块的AHI在初始化时为空
     new_block->ahi.assert_empty_on_init();
+    // 确保旧块的AHI索引为空
     ut_ad(!block->ahi.index);
+    // 设置新块的AHI索引为空
     new_block->ahi.index = nullptr;
+    // 重置新块的哈希帮助计数
     new_block->n_hash_helps = 0;
+    // 设置新块的推荐前缀信息
     new_block->ahi.recommended_prefix_info = {0, 1, true};
 
-    // 释放哈希锁和块的互斥锁
+    // 释放哈希锁
     rw_lock_x_unlock(hash_lock);
+    // 退出旧块的互斥锁
     mutex_exit(&block->mutex);
+    // 退出新块的互斥锁
     mutex_exit(&new_block->mutex);
 
-    /* 释放旧块 */
+    /* Free block */
+    // 设置旧块的状态为BUF_BLOCK_MEMORY
     buf_block_set_state(block, BUF_BLOCK_MEMORY);
+    // 释放旧块的内存
     buf_LRU_block_free_non_file_page(block);
   } else {
-    // 如果块不能被重新分配，释放哈希锁和块的互斥锁
+    // 如果块不能重新分配，释放哈希锁
     rw_lock_x_unlock(hash_lock);
+    // 退出旧块的互斥锁
     mutex_exit(&block->mutex);
 
-    /* 释放新块 */
+    /* Free new_block */
+    // 释放新块的内存
     buf_LRU_block_free_non_file_page(new_block);
   }
 
-  return (true); /* free_list 足够 */
+  // 返回true，表示free列表足够
+  return (true); /* free_list was enough */
 }
+
 
 static void buf_resize_status(buf_pool_resize_status_code_t status,
                               const char *fmt, ...)
