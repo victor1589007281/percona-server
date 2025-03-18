@@ -374,10 +374,15 @@ class Master_info : public Rpl_info {
     @param  gtid_arg         the gtid of the trx
     @param  original_ts_arg  the original commit timestamp of the transaction
     @param  immediate_ts_arg the immediate commit timestamp of the transaction
+    存储接收线程刚刚开始排队的事务的详细信息。
+
+    @param  gtid_arg         事务的 GTID
+    @param  original_ts_arg  事务的原始提交时间戳
+    @param  immediate_ts_arg 事务的立即提交时间戳
   */
   void started_queueing(Gtid gtid_arg, ulonglong original_ts_arg,
                         ulonglong immediate_ts_arg) {
-    gtid_monitoring_info->start(gtid_arg, original_ts_arg, immediate_ts_arg);
+    gtid_monitoring_info->start(gtid_arg, original_ts_arg, immediate_ts_arg);  // 调用 gtid_monitoring_info 的 start 方法，存储事务的 GTID 和时间戳
   }
 
   /**

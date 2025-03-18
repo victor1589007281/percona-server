@@ -628,7 +628,14 @@ static bool inline is_slave_configured() {
      including the default channel one.
      Hence, channel_map.get_default_channel_mi() will return NULL.
   */
+  // 服务器启动时 server_id == 0
+  // 或者
+  // 由于存储库不匹配导致无法加载从库信息存储库
+  // 例如假设从库具有多源复制，并且使用 TABLE 存储库设置了多个通道。
+  // 然后，如果从库使用 FILE 存储库重新启动，我们将无法加载任何从库存储库，包括默认通道的存储库。
+  // 因此，channel_map.get_default_channel_mi() 将返回 NULL。
   return (channel_map.get_default_channel_mi() != nullptr);
+  // 返回默认通道的主库信息是否不为空
 }
 
 #endif /*RPL_MSR_H*/

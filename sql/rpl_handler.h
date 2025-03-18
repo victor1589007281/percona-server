@@ -398,31 +398,50 @@ extern PSI_rwlock_key key_rwlock_Binlog_relay_IO_delegate_lock;
 #endif
 
 class Binlog_relay_IO_delegate : public Delegate {
- public:
-  Binlog_relay_IO_delegate()
-      : Delegate(
-#ifdef HAVE_PSI_RWLOCK_INTERFACE
-            key_rwlock_Binlog_relay_IO_delegate_lock
-#endif
-        ) {
-  }
-
-  typedef Binlog_relay_IO_observer Observer;
-  int thread_start(THD *thd, Master_info *mi);
-  int thread_stop(THD *thd, Master_info *mi);
-  int applier_start(THD *thd, Master_info *mi);
-  int applier_stop(THD *thd, Master_info *mi, bool aborted);
-  int before_request_transmit(THD *thd, Master_info *mi, ushort flags);
-  int after_read_event(THD *thd, Master_info *mi, const char *packet, ulong len,
-                       const char **event_buf, ulong *event_len);
-  int after_queue_event(THD *thd, Master_info *mi, const char *event_buf,
-                        ulong event_len, bool synced);
-  int after_reset_slave(THD *thd, Master_info *mi);
-  int applier_log_event(THD *thd, int &out);
-
- private:
-  void init_param(Binlog_relay_IO_param *param, Master_info *mi);
-};
+  public:
+   Binlog_relay_IO_delegate()
+       : Delegate(
+ #ifdef HAVE_PSI_RWLOCK_INTERFACE
+             key_rwlock_Binlog_relay_IO_delegate_lock  // 如果有 PSI_RWLOCK_INTERFACE，初始化锁
+ #endif
+         ) {
+   }
+ 
+   typedef Binlog_relay_IO_observer Observer;  // 定义 Binlog_relay_IO_observer 类型
+ 
+   // 线程启动时调用的钩子函数
+   int thread_start(THD *thd, Master_info *mi);
+ 
+   // 线程停止时调用的钩子函数
+   int thread_stop(THD *thd, Master_info *mi);
+ 
+   // 应用线程启动时调用的钩子函数
+   int applier_start(THD *thd, Master_info *mi);
+ 
+   // 应用线程停止时调用的钩子函数
+   int applier_stop(THD *thd, Master_info *mi, bool aborted);
+ 
+   // 在请求传输之前调用的钩子函数
+   int before_request_transmit(THD *thd, Master_info *mi, ushort flags);
+ 
+   // 在读取事件之后调用的钩子函数
+   int after_read_event(THD *thd, Master_info *mi, const char *packet, ulong len,
+                        const char **event_buf, ulong *event_len);
+ 
+   // 在事件排队之后调用的钩子函数
+   int after_queue_event(THD *thd, Master_info *mi, const char *event_buf,
+                         ulong event_len, bool synced);
+ 
+   // 在重置从服务器之后调用的钩子函数
+   int after_reset_slave(THD *thd, Master_info *mi);
+ 
+   // 在应用日志事件时调用的钩子函数
+   int applier_log_event(THD *thd, int &out);
+ 
+  private:
+   // 初始化参数
+   void init_param(Binlog_relay_IO_param *param, Master_info *mi);
+ };
 
 int delegates_init();
 /**

@@ -572,7 +572,7 @@ class MYSQL_BIN_LOG::Binlog_ofile : public Basic_ostream {
     return false;
   }
 
-  bool flush() { return m_pipeline_head->flush(); }
+  bool flush() { return m_pipeline_head->flush(); }  // 调用 m_pipeline_head 的 flush 方法刷新数据
   bool sync() { return m_pipeline_head->sync(); }
   bool flush_and_sync() { return flush() || sync(); }
   my_off_t position() { return m_position; }
@@ -5790,6 +5790,23 @@ std::pair<int, std::list<std::string>> MYSQL_BIN_LOG::get_log_index(
   @retval
     1   error
 */
+/**
+  删除文件，作为 RESET MASTER 或 RESET SLAVE 语句的一部分，
+  通过删除索引文件中引用的所有日志文件和索引文件。然后，创建一个新的索引文件和一个新的日志文件。
+
+  新的索引文件将只包含新的日志文件。
+
+  @param thd 线程
+  @param delete_only 如果为 true，则不创建新的索引文件和新的日志文件。
+
+  @note
+    如果不是从从库线程调用，向新日志写入开始事件
+
+  @retval
+    0	成功
+  @retval
+    1   错误
+*/
 bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
   LOG_INFO linfo;
   bool error = false;
@@ -5802,34 +5819,41 @@ bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
     Flush logs for storage engines, so that the last transaction
     is persisted inside storage engines.
   */
+  /*
+    刷新存储引擎的日志，以便最后一个事务在存储引擎中持久化。
+  */
   assert(!thd->is_log_reset());
   thd->set_log_reset();
-  if (ha_flush_logs()) {
+  if (ha_flush_logs()) {  // 刷新存储引擎日志
     thd->clear_log_reset();
     return true;
   }
   thd->clear_log_reset();
 
-  ha_reset_logs(thd);
+  ha_reset_logs(thd);  // 重置存储引擎日志
 
   /*
     We need to get both locks to be sure that no one is trying to
     write to the index log file.
   */
-  mysql_mutex_lock(&LOCK_log);
-  mysql_mutex_lock(&LOCK_index);
+  /*
+    我们需要获取两个锁，以确保没有人在尝试写入索引日志文件。
+  */
+  mysql_mutex_lock(&LOCK_log);  // 加锁 LOCK_log
+  mysql_mutex_lock(&LOCK_index);  // 加锁 LOCK_index
 
   if (is_relay_log)
-    sid_lock = previous_gtid_set_relaylog->get_sid_map()->get_sid_lock();
+    sid_lock = previous_gtid_set_relaylog->get_sid_map()->get_sid_lock();  // 如果是中继日志，获取 sid_lock(从中继日志的 GTID 集合中获取)
   else
-    sid_lock = global_sid_lock;
-  sid_lock->wrlock();
+    sid_lock = global_sid_lock;  // 否则获取全局 sid_lock
+  sid_lock->wrlock();  // 加写锁
 
   /* Save variables so that we can reopen the log */
+  /* 保存变量以便我们可以重新打开日志 */
   save_name = name;
-  name = nullptr;  // Protect against free
+  name = nullptr;  // Protect against free  // 防止释放
   close(LOG_CLOSE_TO_BE_OPENED, false /*need_lock_log=false*/,
-        false /*need_lock_index=false*/);
+        false /*need_lock_index=false*/);  // 关闭日志文件
 
   /*
     First delete all old log files and then update the index file.
@@ -5840,24 +5864,30 @@ bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
     We need to invert the steps and use the purge_index_file methods
     in order to make the operation safe.
   */
+  /*
+    首先删除所有旧的日志文件，然后更新索引文件。
+    由于我们首先删除日志文件并且不使用某种日志记录，
+    崩溃可能导致索引引用不存在的文件的不一致状态。
 
+    我们需要反转步骤并使用 purge_index_file 方法以使操作安全。
+  */
   if ((err = find_log_pos(&linfo, NullS, false /*need_lock_index=false*/)) !=
-      0) {
+      0) {  // 查找日志位置
     uint errcode = purge_log_get_error_code(err);
-    LogErr(ERROR_LEVEL, ER_BINLOG_CANT_LOCATE_OLD_BINLOG_OR_RELAY_LOG_FILES);
+    LogErr(ERROR_LEVEL, ER_BINLOG_CANT_LOCATE_OLD_BINLOG_OR_RELAY_LOG_FILES);  // 记录错误信息
     my_error(errcode, MYF(0));
     error = true;
     goto err;
   }
 
   for (;;) {
-    if ((error = my_delete_allow_opened(linfo.log_file_name, MYF(0))) != 0) {
-      if (my_errno() == ENOENT) {
+    if ((error = my_delete_allow_opened(linfo.log_file_name, MYF(0))) != 0) {  // 删除日志文件
+      if (my_errno() == ENOENT) {  // 如果文件不存在
         push_warning_printf(
             current_thd, Sql_condition::SL_WARNING, ER_LOG_PURGE_NO_FILE,
-            ER_THD(current_thd, ER_LOG_PURGE_NO_FILE), linfo.log_file_name);
+            ER_THD(current_thd, ER_LOG_PURGE_NO_FILE), linfo.log_file_name);  // 推送警告信息
         LogErr(INFORMATION_LEVEL, ER_BINLOG_CANT_DELETE_FILE,
-               linfo.log_file_name);
+               linfo.log_file_name);  // 记录信息
         set_my_errno(0);
         error = false;
       } else {
@@ -5867,27 +5897,28 @@ bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
                             "consider examining correspondence "
                             "of your binlog index file "
                             "to the actual binlog files",
-                            linfo.log_file_name);
-        LogErr(ERROR_LEVEL, ER_BINLOG_CANT_DELETE_FILE, linfo.log_file_name);
+                            linfo.log_file_name);  // 推送警告信息
+        LogErr(ERROR_LEVEL, ER_BINLOG_CANT_DELETE_FILE, linfo.log_file_name);  // 记录错误信息
         my_error(ER_BINLOG_PURGE_FATAL_ERR, MYF(0));
         error = true;
         goto err;
       }
     }
-    if (find_next_log(&linfo, false /*need_lock_index=false*/)) break;
+    if (find_next_log(&linfo, false /*need_lock_index=false*/)) break;  // 查找下一个日志文件
   }
 
   /* Start logging with a new file */
+  /* 开始使用新文件记录日志 */
   close(LOG_CLOSE_INDEX | LOG_CLOSE_TO_BE_OPENED, false /*need_lock_log=false*/,
-        false /*need_lock_index=false*/);
+        false /*need_lock_index=false*/);  // 关闭日志文件
   if ((error = my_delete_allow_opened(index_file_name,
-                                      MYF(0))))  // Reset (open will update)
+                                      MYF(0))))  // Reset (open will update)  // 删除索引文件
   {
-    if (my_errno() == ENOENT) {
+    if (my_errno() == ENOENT) {  // 如果文件不存在
       push_warning_printf(
           current_thd, Sql_condition::SL_WARNING, ER_LOG_PURGE_NO_FILE,
-          ER_THD(current_thd, ER_LOG_PURGE_NO_FILE), index_file_name);
-      LogErr(INFORMATION_LEVEL, ER_BINLOG_CANT_DELETE_FILE, index_file_name);
+          ER_THD(current_thd, ER_LOG_PURGE_NO_FILE), index_file_name);  // 推送警告信息
+      LogErr(INFORMATION_LEVEL, ER_BINLOG_CANT_DELETE_FILE, index_file_name);  // 记录信息
       set_my_errno(0);
       error = false;
     } else {
@@ -5897,8 +5928,8 @@ bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
                           "consider examining correspondence "
                           "of your binlog index file "
                           "to the actual binlog files",
-                          index_file_name);
-      LogErr(ERROR_LEVEL, ER_BINLOG_CANT_DELETE_FILE, index_file_name);
+                          index_file_name);  // 推送警告信息
+      LogErr(ERROR_LEVEL, ER_BINLOG_CANT_DELETE_FILE, index_file_name);  // 记录错误信息
       my_error(ER_BINLOG_PURGE_FATAL_ERR, MYF(0));
       error = true;
       goto err;
@@ -5906,47 +5937,54 @@ bool MYSQL_BIN_LOG::reset_logs(THD *thd, bool delete_only) {
   }
   DBUG_EXECUTE_IF("wait_for_kill_gtid_state_clear", {
     const char action[] = "now WAIT_FOR kill_gtid_state_clear";
-    assert(!debug_sync_set_action(thd, STRING_WITH_LEN(action)));
+    assert(!debug_sync_set_action(thd, STRING_WITH_LEN(action)));  // 调试同步点
   };);
 
   /*
     For relay logs we clear the gtid state associated per channel(i.e rli)
     in the purge_relay_logs()
   */
-  if (!is_relay_log) {
-    if (gtid_state->clear(thd)) {
+  /*
+    对于中继日志，我们在 purge_relay_logs() 中清除每个通道（即 rli）关联的 gtid 状态
+  */
+  if (!is_relay_log) {  // 如果不是中继日志
+    if (gtid_state->clear(thd)) {  // 清除 GTID 状态
       error = true;
     }
     /*
       Don't clear global_sid_map because gtid_state->clear() above didn't
       touched owned_gtids GTID set.
     */
-    error = error || gtid_state->init();
+    /*
+      不要清除 global_sid_map，因为上面的 gtid_state->clear() 没有触及 owned_gtids GTID 集合。
+    */
+    error = error || gtid_state->init();  // 初始化 GTID 状态
   }
 
-  if (!delete_only) {
+  if (!delete_only) {  // 如果不只是删除
     if (!open_index_file(index_file_name, nullptr,
-                         false /*need_lock_index=false*/))
+                         false /*need_lock_index=false*/))  // 打开索引文件
       error = open_binlog(save_name, nullptr, max_size, false,
                           false /*need_lock_index=false*/,
                           false /*need_sid_lock=false*/, nullptr,
                           thd->lex->next_binlog_file_nr) ||
-              error;
+              error;  // 打开二进制日志文件
   }
   /* String has been duplicated, free old file-name */
+  /* 字符串已被复制，释放旧的文件名 */
   if (name != nullptr) {
-    my_free(const_cast<char *>(save_name));
+    my_free(const_cast<char *>(save_name));  // 释放旧的文件名
     save_name = nullptr;
   }
 
 err:
   if (name == nullptr)
-    name = const_cast<char *>(save_name);  // restore old file-name
-  sid_lock->unlock();
-  count_binlog_space(false);
-  mysql_mutex_unlock(&LOCK_index);
-  mysql_mutex_unlock(&LOCK_log);
-  return error;
+    name = const_cast<char *>(save_name);  // restore old file-name  // 恢复旧的文件名
+  sid_lock->unlock();  // 解锁
+  count_binlog_space(false);  // 计算二进制日志空间
+  mysql_mutex_unlock(&LOCK_index);  // 解锁 LOCK_index
+  mysql_mutex_unlock(&LOCK_log);  // 解锁 LOCK_log
+  return error;  // 返回错误状态
 }
 
 /**
@@ -7074,73 +7112,88 @@ end:
 
   @retval false success
   @retval true error
+  在 IO 线程将事件写入 relay log 后调用。此函数根据同步选项刷新并可能同步文件，
+  如果文件大小超过限制则进行文件轮换，最后调用 signal_update()。
+
+  @note 调用者在调用此函数之前必须持有 LOCK_log。
+
+  @param mi IO 线程的 Master_info。
+
+  @retval false 成功
+  @retval true 错误
 */
 bool MYSQL_BIN_LOG::after_write_to_relay_log(Master_info *mi) {
-  DBUG_TRACE;
-  DBUG_PRINT("info", ("max_size: %lu", max_size));
+  DBUG_TRACE;  // 调试跟踪
+  DBUG_PRINT("info", ("max_size: %lu", max_size));  // 打印最大文件大小
 
   // Check pre-conditions
-  mysql_mutex_assert_owner(&LOCK_log);
-  assert(is_relay_log);
+  // 检查前置条件
+  mysql_mutex_assert_owner(&LOCK_log);  // 断言持有 LOCK_log 锁
+  assert(is_relay_log);  // 断言当前是 relay log
 
   /*
     We allow the relay log rotation by relay log size
     only if the trx parser is not inside a transaction.
+    只有在事务解析器不在事务中时，才允许根据 relay log 大小进行轮换。
   */
-  bool can_rotate = mi->transaction_parser.is_not_inside_transaction();
+  bool can_rotate = mi->transaction_parser.is_not_inside_transaction();  // 检查是否可以轮换
 
 #ifndef NDEBUG
   if (m_binlog_file->get_real_file_size() >
           DBUG_EVALUATE_IF("rotate_replica_debug_group", 500, max_size) &&
       !can_rotate) {
     DBUG_PRINT("info", ("Postponing the rotation by size waiting for "
-                        "the end of the current transaction."));
+                        "the end of the current transaction."));  // 打印调试信息
   }
 #endif
 
   // Flush and sync
-  bool error = flush_and_sync(false);
+  // 刷新并同步
+  bool error = flush_and_sync(false);  // 刷新并同步文件
   if (error) {
     mi->report(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_WRITE_FAILURE,
                ER_THD(current_thd, ER_SLAVE_RELAY_LOG_WRITE_FAILURE),
-               "failed to flush event to relay log file");
-    truncate_relaylog_file(mi, atomic_binlog_end_pos);
+               "failed to flush event to relay log file");  // 报告刷新失败
+    truncate_relaylog_file(mi, atomic_binlog_end_pos);  // 截断 relay log 文件
   } else {
     if (can_rotate) {
-      mysql_mutex_lock(&mi->data_lock);
+      mysql_mutex_lock(&mi->data_lock);  // 加锁
       /*
         If the last event of the transaction has been flushed, we can add
         the GTID (if it is not empty) to the logged set, or else it will
         not be available in the Previous GTIDs of the next relay log file
         if we are going to rotate the relay log.
+        如果事务的最后一个事件已被刷新，我们可以将 GTID（如果不为空）添加到已记录的集合中，
+        否则如果我们要轮换 relay log，它将不会在下一个 relay log 文件的 Previous GTIDs 中可用。
       */
-      const Gtid *last_gtid_queued = mi->get_queueing_trx_gtid();
+      const Gtid *last_gtid_queued = mi->get_queueing_trx_gtid();  // 获取最后一个排队的 GTID
       if (!last_gtid_queued->is_empty()) {
-        mi->rli->get_sid_lock()->rdlock();
+        mi->rli->get_sid_lock()->rdlock();  // 加锁
         DBUG_SIGNAL_WAIT_FOR(current_thd, "updating_received_transaction_set",
                              "reached_updating_received_transaction_set",
-                             "continue_updating_received_transaction_set");
+                             "continue_updating_received_transaction_set");  // 调试信号
         mi->rli->add_logged_gtid(last_gtid_queued->sidno,
-                                 last_gtid_queued->gno);
-        mi->rli->get_sid_lock()->unlock();
+                                 last_gtid_queued->gno);  // 添加已记录的 GTID
+        mi->rli->get_sid_lock()->unlock();  // 解锁
       }
 
       if (mi->is_queueing_trx()) {
-        mi->finished_queueing();
+        mi->finished_queueing();  // 完成排队
 
         Trx_monitoring_info processing;
         Trx_monitoring_info last;
-        mi->get_gtid_monitoring_info()->copy_info_to(&processing, &last);
+        mi->get_gtid_monitoring_info()->copy_info_to(&processing, &last);  // 复制监控信息
 
         // update the compression information
+        // 更新压缩信息
         binlog::global_context.monitoring_context()
             .transaction_compression()
             .update(binlog::monitoring::log_type::RELAY, last.compression_type,
                     last.gtid, last.end_time, last.compressed_bytes,
                     last.uncompressed_bytes,
-                    mi->rli->get_gtid_set()->get_sid_map());
+                    mi->rli->get_gtid_set()->get_sid_map());  // 更新压缩信息
       }
-      mysql_mutex_unlock(&mi->data_lock);
+      mysql_mutex_unlock(&mi->data_lock);  // 解锁
 
       /*
         If relay log is too big, rotate. But only if not in the middle of a
@@ -7152,23 +7205,29 @@ bool MYSQL_BIN_LOG::after_write_to_relay_log(Master_info *mi) {
         is written in one chunk to the binary log, so it is never split between
         several binary logs. Therefore, if you have big transactions, you might
         see binary log files larger than max_binlog_size."
+        如果 relay log 太大，则进行轮换。但仅在启用 GTID 时不在事务中间时。
+
+        如果已放置延迟刷新请求，则也进行轮换。
+
+        我们现在尝试模仿以下主 binlog 行为：“事务作为一个块写入二进制日志，因此它永远不会被拆分到多个二进制日志中。
+        因此，如果您有大型事务，您可能会看到二进制日志文件大于 max_binlog_size。”
       */
       if (m_binlog_file->get_real_file_size() >
               DBUG_EVALUATE_IF("rotate_replica_debug_group", 500, max_size) ||
           mi->is_rotate_requested()) {
-        error = new_file_without_locking(mi->get_mi_description_event());
-        mi->clear_rotate_requests();
+        error = new_file_without_locking(mi->get_mi_description_event());  // 创建新文件
+        mi->clear_rotate_requests();  // 清除轮换请求
       }
     }
   }
 
-  lock_binlog_end_pos();
-  mi->rli->ign_master_log_name_end[0] = 0;
-  update_binlog_end_pos(false /*need_lock*/);
-  harvest_bytes_written(mi->rli, true /*need_log_space_lock=true*/);
-  unlock_binlog_end_pos();
+  lock_binlog_end_pos();  // 锁定 binlog 结束位置
+  mi->rli->ign_master_log_name_end[0] = 0;  // 清空忽略的主日志名称
+  update_binlog_end_pos(false /*need_lock*/);  // 更新 binlog 结束位置
+  harvest_bytes_written(mi->rli, true /*need_log_space_lock=true*/);  // 收集已写入的字节数
+  unlock_binlog_end_pos();  // 解锁 binlog 结束位置
 
-  return error;
+  return error;  // 返回错误标志
 }
 
 bool MYSQL_BIN_LOG::write_event(Log_event *ev, Master_info *mi) {
@@ -7197,40 +7256,42 @@ bool MYSQL_BIN_LOG::write_event(Log_event *ev, Master_info *mi) {
 }
 
 bool MYSQL_BIN_LOG::write_buffer(uchar *buf, uint len, Master_info *mi) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
   // check preconditions
-  assert(is_relay_log);
-  mysql_mutex_assert_owner(&LOCK_log);
+  // 检查前置条件
+  assert(is_relay_log);  // 断言当前是 relay log
+  mysql_mutex_assert_owner(&LOCK_log);  // 断言持有 LOCK_log 锁
 
   // write data
-  bool error = false;
-  if (m_binlog_file->write(pointer_cast<const uchar *>(buf), len) == 0) {
-    bytes_written += len;
-    error = after_write_to_relay_log(mi);
+  // 写入数据
+  bool error = false;  // 初始化错误标志为 false
+  if (m_binlog_file->write(pointer_cast<const uchar *>(buf), len) == 0) {  // 将数据写入 binlog 文件
+    bytes_written += len;  // 更新已写入的字节数
+    error = after_write_to_relay_log(mi);  // 调用 after_write_to_relay_log 处理写入后的逻辑
   } else {
     mi->report(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_WRITE_FAILURE,
                ER_THD(current_thd, ER_SLAVE_RELAY_LOG_WRITE_FAILURE),
-               "failed to write event to the relay log file");
-    truncate_relaylog_file(mi, atomic_binlog_end_pos);
-    error = true;
+               "failed to write event to the relay log file");  // 报告写入失败
+    truncate_relaylog_file(mi, atomic_binlog_end_pos);  // 截断 relay log 文件
+    error = true;  // 设置错误标志为 true
   }
 
-  return error;
+  return error;  // 返回错误标志
 }
 
 bool MYSQL_BIN_LOG::flush() {
-  return m_binlog_file->is_open() && m_binlog_file->flush();
+  return m_binlog_file->is_open() && m_binlog_file->flush();  // 如果 binlog 文件已打开，则刷新 binlog 文件
 }
 
 bool MYSQL_BIN_LOG::flush_and_sync(const bool force) {
-  mysql_mutex_assert_owner(&LOCK_log);
+  mysql_mutex_assert_owner(&LOCK_log);  // 断言持有 LOCK_log 锁
 
-  if (m_binlog_file->flush()) return true;
+  if (m_binlog_file->flush()) return true;  // 刷新 binlog 文件，如果失败返回 true
 
-  std::pair<bool, bool> result = sync_binlog_file(force);
+  std::pair<bool, bool> result = sync_binlog_file(force);  // 同步 binlog 文件
 
-  return result.first;
+  return result.first;  // 返回同步结果
 }
 
 void MYSQL_BIN_LOG::start_union_events(THD *thd, query_id_t query_id_param) {
@@ -9010,27 +9071,30 @@ int MYSQL_BIN_LOG::flush_cache_to_file(my_off_t *end_pos_var) {
 
 /**
   Call fsync() to sync the file to disk.
+  调用 fsync() 将文件同步到磁盘。
 */
 std::pair<bool, bool> MYSQL_BIN_LOG::sync_binlog_file(bool force) {
-  bool synced = false;
-  unsigned int sync_period = get_sync_period();
-  if (force || (sync_period && ++sync_counter >= sync_period)) {
-    sync_counter = 0;
+  bool synced = false;  // 初始化同步标志为 false
+  unsigned int sync_period = get_sync_period();  // 获取同步周期
+  if (force || (sync_period && ++sync_counter >= sync_period)) {  // 如果需要强制同步或达到同步周期
+    sync_counter = 0;  // 重置同步计数器
 
     /*
       There is a chance that binlog file could be closed by 'RESET MASTER' or
       or 'FLUSH LOGS' just after the leader releases LOCK_log and before it
       acquires LOCK_sync log. So it should check if m_binlog_file is opened.
+      有可能在释放 LOCK_log 之后和获取 LOCK_sync 之前，binlog 文件被 'RESET MASTER' 或 'FLUSH LOGS' 关闭。
+      因此，应检查 m_binlog_file 是否已打开。
     */
     if (DBUG_EVALUATE_IF("simulate_error_during_sync_binlog_file", 1,
-                         m_binlog_file->is_open() && m_binlog_file->sync())) {
+                         m_binlog_file->is_open() && m_binlog_file->sync())) {  // 如果文件未打开或同步失败
       THD *thd = current_thd;
-      thd->commit_error = THD::CE_SYNC_ERROR;
-      return std::make_pair(true, synced);
+      thd->commit_error = THD::CE_SYNC_ERROR;  // 设置提交错误
+      return std::make_pair(true, synced);  // 返回错误标志和同步标志
     }
-    synced = true;
+    synced = true;  // 设置同步标志为 true
   }
-  return std::make_pair(false, synced);
+  return std::make_pair(false, synced);  // 返回成功标志和同步标志
 }
 
 /**

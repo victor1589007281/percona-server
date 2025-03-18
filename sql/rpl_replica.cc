@@ -729,37 +729,42 @@ int stop_slave(THD *thd) {
   @retval      false      ok
   @retval      true       not ok.
 */
+// START SLAVE 命令的入口点。该函数决定在多个通道或单个给定通道上启动复制线程。
+// @param[in]   thd        携带命令的客户端线程。
+// @retval      false      成功
+// @retval      true       失败
 bool start_slave_cmd(THD *thd) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  Master_info *mi;
-  LEX *lex = thd->lex;
-  bool res = true; /* default, an error */
+  Master_info *mi;  // 主库信息
+  LEX *lex = thd->lex;  // 获取当前线程的LEX对象
+  bool res = true; /* default, an error */  // 默认结果为错误
 
-  DEBUG_SYNC(thd, "begin_start_replica");
+  DEBUG_SYNC(thd, "begin_start_replica");  // 调试同步点
 
-  channel_map.wrlock();
+  channel_map.wrlock();  // 获取通道映射的写锁
 
-  DEBUG_SYNC(thd, "after_locking_channel_map_in_start_replica");
+  DEBUG_SYNC(thd, "after_locking_channel_map_in_start_replica");  // 调试同步点
 
-  if (!is_slave_configured()) {
-    my_error(ER_SLAVE_CONFIGURATION, MYF(0));
-    goto err;
+  if (!is_slave_configured()) {  // 检查从库是否已配置
+    my_error(ER_SLAVE_CONFIGURATION, MYF(0));  // 抛出从库未配置的错误
+    goto err;  // 跳转到错误处理
   }
 
-  if (!lex->mi.for_channel) {
+  if (!lex->mi.for_channel) {  // 如果没有指定通道
     /*
       If slave_until options are provided when multiple channels exist
       without explicitly providing FOR CHANNEL clause, error out.
     */
-    if (lex->mi.slave_until && channel_map.get_num_instances() > 1) {
-      my_error(ER_SLAVE_MULTIPLE_CHANNELS_CMD, MYF(0));
-      goto err;
+    // 如果存在多个通道且未明确提供 FOR CHANNEL 子句时提供了 slave_until 选项，则报错。
+    if (lex->mi.slave_until && channel_map.get_num_instances() > 1) {  // 检查是否有多个通道且未指定通道
+      my_error(ER_SLAVE_MULTIPLE_CHANNELS_CMD, MYF(0));  // 抛出多个通道的错误
+      goto err;  // 跳转到错误处理
     }
 
-    res = start_slave(thd);
-  } else {
-    mi = channel_map.get_mi(lex->mi.channel);
+    res = start_slave(thd);  // 启动从库复制
+  } else {  // 如果指定了通道
+    mi = channel_map.get_mi(lex->mi.channel);  // 获取指定通道的主库信息
 
     /*
       If the channel being used is a group replication channel we need to
@@ -772,49 +777,53 @@ bool start_slave_cmd(THD *thd) {
       For channel group_replication_recovery we disable START SLAVE command
       and its two thread variants.
     */
+    // 如果使用的通道是组复制通道，我们需要在此禁用此命令，因为在某些情况下，组复制不支持它们。
+    // 对于通道 group_replication_applier，我们禁用 START SLAVE [IO_THREAD] 命令。
+    // 对于通道 group_replication_recovery，我们禁用 START SLAVE 命令及其两个线程变体。
     if (mi &&
         channel_map.is_group_replication_channel_name(mi->get_channel()) &&
         ((!thd->lex->slave_thd_opt || (thd->lex->slave_thd_opt & SLAVE_IO)) ||
          (!(channel_map.is_group_replication_channel_name(mi->get_channel(),
                                                           true)) &&
-          (thd->lex->slave_thd_opt & SLAVE_SQL)))) {
-      const char *command = "START SLAVE FOR CHANNEL";
-      if (thd->lex->slave_thd_opt & SLAVE_IO)
-        command = "START SLAVE IO_THREAD FOR CHANNEL";
-      else if (thd->lex->slave_thd_opt & SLAVE_SQL)
-        command = "START SLAVE SQL_THREAD FOR CHANNEL";
+          (thd->lex->slave_thd_opt & SLAVE_SQL)))) {  // 检查是否是组复制通道
+      const char *command = "START SLAVE FOR CHANNEL";  // 命令名称
+      if (thd->lex->slave_thd_opt & SLAVE_IO)  // 如果是IO线程
+        command = "START SLAVE IO_THREAD FOR CHANNEL";  // 设置命令名称
+      else if (thd->lex->slave_thd_opt & SLAVE_SQL)  // 如果是SQL线程
+        command = "START SLAVE SQL_THREAD FOR CHANNEL";  // 设置命令名称
 
       my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0), command,
-               mi->get_channel());
+               mi->get_channel());  // 抛出不允许的操作错误
 
-      goto err;
+      goto err;  // 跳转到错误处理
     }
     /*
       START SLAVE for channel group_replication_applier is disallowed while
       Group Replication is running.
     */
+    // 当组复制正在运行时，禁止对通道 group_replication_applier 执行 START SLAVE。
     if (mi &&
         channel_map.is_group_replication_channel_name(mi->get_channel(),
                                                       true) &&
-        is_group_replication_running()) {
+        is_group_replication_running()) {  // 检查是否是组复制通道且组复制正在运行
       const char *command =
-          "START SLAVE FOR CHANNEL while Group Replication is running";
+          "START SLAVE FOR CHANNEL while Group Replication is running";  // 命令名称
       my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0), command,
-               mi->get_channel());
-      goto err;
+               mi->get_channel());  // 抛出不允许的操作错误
+      goto err;  // 跳转到错误处理
     }
 
-    if (mi)
+    if (mi)  // 如果主库信息存在
       res = start_slave(thd, &thd->lex->slave_connection, &thd->lex->mi,
-                        thd->lex->slave_thd_opt, mi, true);
-    else if (strcmp(channel_map.get_default_channel(), lex->mi.channel))
-      my_error(ER_SLAVE_CHANNEL_DOES_NOT_EXIST, MYF(0), lex->mi.channel);
+                        thd->lex->slave_thd_opt, mi, true);  // 启动从库复制
+    else if (strcmp(channel_map.get_default_channel(), lex->mi.channel))  // 如果通道不存在
+      my_error(ER_SLAVE_CHANNEL_DOES_NOT_EXIST, MYF(0), lex->mi.channel);  // 抛出通道不存在的错误
 
-    if (!res) my_ok(thd);
+    if (!res) my_ok(thd);  // 如果成功，返回OK
   }
 err:
-  channel_map.unlock();
-  return res;
+  channel_map.unlock();  // 释放通道映射的锁
+  return res;  // 返回结果
 }
 
 /**
@@ -1481,12 +1490,12 @@ bool reset_info(Master_info *mi) {
 
 int flush_master_info(Master_info *mi, bool force, bool need_lock,
                       bool do_flush_relay_log, bool skip_repo_persistence) {
-  DBUG_TRACE;
-  assert(mi != nullptr && mi->rli != nullptr);
-  DBUG_EXECUTE_IF("fail_to_flush_source_info", { return 1; });
+  DBUG_TRACE;  // 调试跟踪
+  assert(mi != nullptr && mi->rli != nullptr);  // 断言 mi 和 mi->rli 不为空
+  DBUG_EXECUTE_IF("fail_to_flush_source_info", { return 1; });  // 调试执行点，模拟刷新失败
 
   if (skip_repo_persistence && !do_flush_relay_log) {
-    return 0;
+    return 0;  // 如果跳过持久化且不需要刷新 relay log，直接返回 0
   }
 
   /*
@@ -1504,33 +1513,45 @@ int flush_master_info(Master_info *mi, bool force, bool need_lock,
     the I/O thread will fetch binlogs from 150, so in the relay log we will
     have "[0, 100] U [150, infinity[" and nobody will notice it, so the SQL
     thread will jump from 100 to 150, and replication will silently break.
-  */
-  mysql_mutex_t *log_lock = mi->rli->relay_log.get_log_lock();
-  mysql_mutex_t *data_lock = &mi->data_lock;
+    通过适当的恢复过程，我们将不需要刷新当前日志的内容。
 
-  if (need_lock) {
-    mysql_mutex_lock(log_lock);
-    mysql_mutex_lock(data_lock);
+    目前，我们在刷新 master.info 文件之前刷新 relay log，因为如果崩溃，
+    我们将在重启时在 relay log 中获得重复的事件。如果我们改变顺序，可能会有事件丢失。
+
+    如果我们不这样做，并且从服务器在 relay log 的某些部分（其最后几千字节）仅在内存中时崩溃，
+    例如，主服务器的位置 100 到 150 仅在内存中（不在磁盘上），而位置 150 在 master.info 中，
+    将会丢失信息。当从服务器重新启动时，I/O 线程将从 150 获取 binlog，
+    因此在 relay log 中我们将有 "[0, 100] U [150, infinity["，没有人会注意到它，
+    因此 SQL 线程将从 100 跳到 150，复制将无声地中断。
+  */
+  mysql_mutex_t *log_lock = mi->rli->relay_log.get_log_lock();  // 获取 relay log 的锁
+  mysql_mutex_t *data_lock = &mi->data_lock;  // 获取 data_lock
+
+  if (need_lock) {  // 如果需要加锁
+    mysql_mutex_lock(log_lock);  // 加锁 relay log
+    mysql_mutex_lock(data_lock);  // 加锁 data_lock
   } else {
-    mysql_mutex_assert_owner(log_lock);
-    mysql_mutex_assert_owner(&mi->data_lock);
+    mysql_mutex_assert_owner(log_lock);  // 断言持有 relay log 的锁
+    mysql_mutex_assert_owner(&mi->data_lock);  // 断言持有 data_lock
   }
 
-  int err = 0;
+  int err = 0;  // 初始化错误标志为 0
   /*
     We can skip flushing the relay log when this function is called from
     queue_event(), as after_write_to_relay_log() will already flush it.
+    当此函数从 queue_event() 调用时，我们可以跳过刷新 relay log，
+    因为 after_write_to_relay_log() 已经刷新了它。
   */
-  if (do_flush_relay_log) err |= mi->rli->flush_current_log();
+  if (do_flush_relay_log) err |= mi->rli->flush_current_log();  // 如果需要刷新 relay log，则刷新
 
-  if (!skip_repo_persistence) err |= mi->flush_info(force);
+  if (!skip_repo_persistence) err |= mi->flush_info(force);  // 如果不需要跳过持久化，则刷新 master.info
 
-  if (need_lock) {
-    mysql_mutex_unlock(data_lock);
-    mysql_mutex_unlock(log_lock);
+  if (need_lock) {  // 如果需要解锁
+    mysql_mutex_unlock(data_lock);  // 解锁 data_lock
+    mysql_mutex_unlock(log_lock);  // 解锁 relay log
   }
 
-  return err;
+  return err;  // 返回错误标志
 }
 
 /**
@@ -3217,58 +3238,68 @@ static bool wait_for_relay_log_space(Relay_log_info *rli) {
                              flush.
 
   @return 0 if everything went fine, 1 otherwise.
+  构建一个 Rotate 事件并将其写入 relay log。
+
+  调用者必须持有 mi->data_lock。
+
+  @param thd 指向 I/O 线程的 Thd。
+  @param mi  指向 I/O 线程的元数据类。
+  @param force_flush_mi_info 当为 true 时，不尊重同步周期并强制刷新信息。
+                             当为 false 时，刷新仅在需要时进行。
+
+  @return 如果一切正常返回 0，否则返回 1。
 */
 static int write_rotate_to_master_pos_into_relay_log(THD *thd, Master_info *mi,
                                                      bool force_flush_mi_info) {
-  Relay_log_info *rli = mi->rli;
-  int error = 0;
-  DBUG_TRACE;
+  Relay_log_info *rli = mi->rli;  // 获取 Relay_log_info 对象
+  int error = 0;  // 初始化错误标志为 0
+  DBUG_TRACE;  // 调试跟踪
 
-  assert(thd == mi->info_thd);
-  mysql_mutex_assert_owner(rli->relay_log.get_log_lock());
+  assert(thd == mi->info_thd);  // 断言 thd 是 mi->info_thd
+  mysql_mutex_assert_owner(rli->relay_log.get_log_lock());  // 断言持有 relay log 的锁
 
-  DBUG_PRINT("info", ("writing a Rotate event to the relay log"));
+  DBUG_PRINT("info", ("writing a Rotate event to the relay log"));  // 打印调试信息
   Rotate_log_event *ev = new Rotate_log_event(mi->get_master_log_name(), 0,
                                               mi->get_master_log_pos(),
-                                              Rotate_log_event::DUP_NAME);
+                                              Rotate_log_event::DUP_NAME);  // 创建 Rotate 事件
 
   DBUG_EXECUTE_IF("fail_generating_rotate_event_on_write_rotate_to_source_pos",
                   {
                     if (likely((bool)ev)) {
-                      delete ev;
-                      ev = nullptr;
+                      delete ev;  // 删除事件
+                      ev = nullptr;  // 将事件指针置为空
                     }
                   });
 
-  if (likely((bool)ev)) {
+  if (likely((bool)ev)) {  // 如果事件创建成功
     if (mi->get_mi_description_event() != nullptr)
       ev->common_footer->checksum_alg =
-          mi->get_mi_description_event()->common_footer->checksum_alg;
+          mi->get_mi_description_event()->common_footer->checksum_alg;  // 设置校验和算法
 
-    ev->server_id = 0;  // don't be ignored by slave SQL thread
-    if (unlikely(rli->relay_log.write_event(ev, mi) != 0))
+    ev->server_id = 0;  // don't be ignored by slave SQL thread 设置 server_id 为 0，避免被从服务器 SQL 线程忽略
+    if (unlikely(rli->relay_log.write_event(ev, mi) != 0))  // 将事件写入 relay log
       mi->report(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_WRITE_FAILURE,
                  ER_THD(thd, ER_SLAVE_RELAY_LOG_WRITE_FAILURE),
                  "failed to write a Rotate event"
                  " to the relay log, SHOW SLAVE STATUS may be"
-                 " inaccurate");
-    mysql_mutex_lock(&mi->data_lock);
+                 " inaccurate");  // 报告写入失败
+    mysql_mutex_lock(&mi->data_lock);  // 加锁
     if (flush_master_info(mi, force_flush_mi_info, false, false,
-                          mi->is_gtid_only_mode())) {
-      error = 1;
-      LogErr(ERROR_LEVEL, ER_RPL_SLAVE_CANT_FLUSH_MASTER_INFO_FILE);
+                          mi->is_gtid_only_mode())) {  // 刷新主信息
+      error = 1;  // 设置错误标志
+      LogErr(ERROR_LEVEL, ER_RPL_SLAVE_CANT_FLUSH_MASTER_INFO_FILE);  // 记录错误日志
     }
-    mysql_mutex_unlock(&mi->data_lock);
-    delete ev;
+    mysql_mutex_unlock(&mi->data_lock);  // 解锁
+    delete ev;  // 删除事件
   } else {
-    error = 1;
+    error = 1;  // 设置错误标志
     mi->report(ERROR_LEVEL, ER_SLAVE_CREATE_EVENT_FAILURE,
                ER_THD(thd, ER_SLAVE_CREATE_EVENT_FAILURE),
                "Rotate_event (out of memory?),"
-               " SHOW SLAVE STATUS may be inaccurate");
+               " SHOW SLAVE STATUS may be inaccurate");  // 报告事件创建失败
   }
 
-  return error;
+  return error;  // 返回错误标志
 }
 
 /*
@@ -7635,22 +7666,22 @@ static int process_io_rotate(Master_info *mi, Rotate_log_event *rev) {
 int heartbeat_queue_event(bool is_valid, Master_info *&mi,
                           std::string binlog_name, uint64_t position,
                           unsigned long &inc_pos, bool &do_flush_mi) {
-  if (!is_valid) {
-    char errbuf[1024];
-    char llbuf[22];
+  if (!is_valid) {  // 如果心跳事件无效
+    char errbuf[1024];  // 定义错误信息缓冲区
+    char llbuf[22];  // 定义位置信息缓冲区
     sprintf(errbuf,
             "inconsistent heartbeat event content; the event's data: "
             "log_file_name %-.512s log_pos %s",
-            binlog_name.c_str(), llstr(position, llbuf));
+            binlog_name.c_str(), llstr(position, llbuf));  // 格式化错误信息
     mi->report(ERROR_LEVEL, ER_SLAVE_HEARTBEAT_FAILURE,
-               ER_THD(current_thd, ER_SLAVE_HEARTBEAT_FAILURE), errbuf);
-    return 1;
+               ER_THD(current_thd, ER_SLAVE_HEARTBEAT_FAILURE), errbuf);  // 报告错误
+    return 1;  // 返回错误
   }
-  mysql_mutex_lock(&mi->data_lock);
-  mi->received_heartbeats++;
-  mi->last_heartbeat = my_getsystime() / 10;
+  mysql_mutex_lock(&mi->data_lock);  // 加锁
+  mi->received_heartbeats++;  // 增加接收到的心跳计数
+  mi->last_heartbeat = my_getsystime() / 10;  // 更新最后接收到心跳的时间
   std::string mi_log_filename{
-      mi->get_master_log_name() != nullptr ? mi->get_master_log_name() : ""};
+      mi->get_master_log_name() != nullptr ? mi->get_master_log_name() : ""};  // 获取主日志文件名
 
   /*
     compare local and event's versions of log_file, log_pos.
@@ -7664,26 +7695,34 @@ int heartbeat_queue_event(bool is_valid, Master_info *&mi,
     NULL).
 
     TODO: handling `when' for SHOW REPLICA STATUS' snds behind
+    比较本地和事件中的日志文件和日志位置。
+
+    心跳仅在对应于心跳携带的坐标的事件之后发送。
+    从服务器的坐标不应有差异，除非在特殊情况下，
+    mi->get_master_log_name() 和 mi->get_master_log_pos() 从未被 Rotate 事件更新，
+    即从服务器与主服务器没有任何历史记录（因此 mi->get_master_log_pos() 为 NULL）。
+
+    TODO: 处理 SHOW REPLICA STATUS 的 `when` 条件
   */
-  if (mi_log_filename.compare(binlog_name) != 0) {
+  if (mi_log_filename.compare(binlog_name) != 0) {  // 如果日志文件名不一致
     std::ostringstream oss;
     oss << "Replication heartbeat event contained the filename '" << binlog_name
         << "' which is different from '" << mi_log_filename
-        << "' that was specified in earlier Rotate events.";
+        << "' that was specified in earlier Rotate events.";  // 生成错误信息
     mi->report(ERROR_LEVEL, ER_SLAVE_HEARTBEAT_FAILURE,
                ER_THD(current_thd, ER_SLAVE_HEARTBEAT_FAILURE),
-               oss.str().c_str());
-    return 1;
-  } else if (mi->get_master_log_pos() > position) {
+               oss.str().c_str());  // 报告错误
+    return 1;  // 返回错误
+  } else if (mi->get_master_log_pos() > position) {  // 如果本地日志位置大于事件中的位置
     std::ostringstream oss;
     oss << "Replication heartbeat event contained the position " << position
         << " which is smaller than the position " << mi->get_master_log_pos()
         << " that was computed from earlier events received in the stream. "
-        << "The filename is '" << mi_log_filename << "'.";
+        << "The filename is '" << mi_log_filename << "'.";  // 生成错误信息
     mi->report(ERROR_LEVEL, ER_SLAVE_HEARTBEAT_FAILURE,
                ER_THD(current_thd, ER_SLAVE_HEARTBEAT_FAILURE),
-               oss.str().c_str());
-    return 1;
+               oss.str().c_str());  // 报告错误
+    return 1;  // 返回错误
   }
   /*
     During GTID protocol, if the master skips transactions,
@@ -7704,52 +7743,102 @@ int heartbeat_queue_event(bool is_valid, Master_info *&mi,
     As Start_encryption_event is not sent to slave, the master
     informs the slave to update it's master_log_pos by sending
     heartbeat event.
+    在 GTID 协议期间，如果主服务器跳过事务，
+    则在最后一个跳过的事务结束时向从服务器发送心跳事件以更新坐标。
+
+    I/O 线程接收心跳事件并更新 mi，
+    仅当接收到的心跳位置大于 mi->get_master_log_pos() 时。
+    此事件作为被忽略的 Rotate 事件写入 relay log。
+    SQL 线程读取 rotate 事件仅用于更新与最后一个跳过的事务对应的坐标。
+    注意，我们仅更新位置而不更新文件名，因为在此之前的 ROTATE 事件将更新文件名。
+
+    当主服务器的 binlog 是 PS 5_7 加密时，它也会在从 binlog 读取 Start_encryption_event 后发送心跳事件。
+    由于 Start_encryption_event 不会发送给从服务器，
+    主服务器通过发送心跳事件通知从服务器更新其 master_log_pos。
   */
-  if (mi->get_master_log_pos() < position && !mi_log_filename.empty()) {
+  /*
+     触发记录 Rotate 事件的条件是：
+
+       主服务器的日志位置大于从服务器当前记录的位置：
+       
+       即 mi->get_master_log_pos() < position。
+       这意味着主服务器已经跳过了一些事务，或者主服务器的日志位置已经更新。
+       从服务器的主日志文件名不为空：
+       
+       即 !mi_log_filename.empty()。
+       这确保从服务器已经知道主服务器的日志文件名。
+  */
+  if (mi->get_master_log_pos() < position && !mi_log_filename.empty()) {  // 如果本地日志位置小于事件中的位置且日志文件名不为空
     DBUG_EXECUTE_IF("reached_heart_beat_queue_event",
-                    { rpl_replica_debug_point(DBUG_RPL_S_HEARTBEAT_EV); };);
-    mi->set_master_log_pos(position);
+                    { rpl_replica_debug_point(DBUG_RPL_S_HEARTBEAT_EV); };);  // 调试点
+    mi->set_master_log_pos(position);  // 更新主日志位置
 
     /*
        Put this heartbeat event in the relay log as a Rotate Event.
+       将此心跳事件作为 Rotate 事件放入 relay log。
     */
-    inc_pos = 0;
-    mysql_mutex_unlock(&mi->data_lock);
+    inc_pos = 0;  // 增量位置设置为 0
+    mysql_mutex_unlock(&mi->data_lock);  // 解锁
     if (write_rotate_to_master_pos_into_relay_log(mi->info_thd, mi, false
-                                                  /* force_flush_mi_info */))
-      return 0;
-    do_flush_mi = false; /* write_rotate_... above flushed master info */
+                                                  /* force_flush_mi_info */))  // 写入 Rotate 事件
+      return 0;  // 返回成功
+    do_flush_mi = false; /* write_rotate_... above flushed master info */  // 不需要再次刷新主信息
   } else
-    mysql_mutex_unlock(&mi->data_lock);
+    mysql_mutex_unlock(&mi->data_lock);  // 解锁
 
-  return 0;
+  return 0;  // 返回成功
 }
 
 /**
   Store an event received from the master connection into the relay
   log.
+  将从主连接接收到的事件存储到中继日志中。
 
   @param mi The Master_info object representing this connection.
+            表示此连接的 Master_info 对象。
   @param buf Pointer to the event data.
+             指向事件数据的指针。
   @param event_len Length of event data.
+                   事件数据的长度。
   @param do_flush_mi True to flush master info after successfully queuing the
                      event.
+                     成功排队事件后刷新主信息为真。
 
   @retval QUEUE_EVENT_OK                  on success.
+                                          成功时返回 QUEUE_EVENT_OK。
   @retval QUEUE_EVENT_ERROR_QUEUING       if there was an error while queuing.
+                                          排队时出错返回 QUEUE_EVENT_ERROR_QUEUING。
   @retval QUEUE_EVENT_ERROR_FLUSHING_INFO if there was an error while
                                           flushing master info.
+                                          刷新主信息时出错返回 QUEUE_EVENT_ERROR_FLUSHING_INFO。
 
   @todo Make this a member of Master_info.
+        将此函数作为 Master_info 的成员。
+*/
+/*
+  queue_event 这个函数是做什么的？
+
+  queue_event 函数的主要作用是将从主服务器接收到的事件（event）写入到从服务器的 relay log 中。这个函数是 MySQL 复制过程中 I/O 线程的核心部分，负责将从主服务器读取的事件存储到从服务器的 relay log 中，以便 SQL 线程后续读取并应用这些事件。
+
+  具体功能包括：
+  1. **事件校验**：检查事件的校验和（checksum）是否有效，确保事件的完整性。
+  2. **事件写入**：将事件写入到 relay log 中，并更新从服务器的主日志位置（master log position）。
+  3. **事务边界处理**：处理事务的开始和结束，确保事务的完整性。
+  4. **GTID 处理**：如果事件是 GTID 事件，更新从服务器的 GTID 集合。
+  5. **心跳事件处理**：处理心跳事件，确保从服务器知道主服务器的状态。
+  6. **错误处理**：如果在事件写入过程中发生错误，记录错误并返回相应的错误码。
+
+  总结：
+  queue_event 函数负责将从主服务器接收到的事件写入到从服务器的 relay log 中，并处理事务边界、GTID 和心跳事件等。它是 MySQL 复制过程中 I/O 线程的核心部分，确保从服务器能够正确同步主服务器的数据。
 */
 QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
                                ulong event_len, bool do_flush_mi) {
-  QUEUE_EVENT_RESULT res = QUEUE_EVENT_OK;
-  ulong inc_pos = 0;
-  Relay_log_info *rli = mi->rli;
-  mysql_mutex_t *log_lock = rli->relay_log.get_log_lock();
-  ulong s_id;
-  int lock_count = 0;
+  QUEUE_EVENT_RESULT res = QUEUE_EVENT_OK; // 初始化结果为成功
+  ulong inc_pos = 0; // 初始化增量位置为0
+  Relay_log_info *rli = mi->rli; // 获取中继日志信息
+  mysql_mutex_t *log_lock = rli->relay_log.get_log_lock(); // 获取日志锁
+  ulong s_id; // 服务器ID
+  int lock_count = 0; // 锁计数器
 
   DBUG_EXECUTE_IF("wait_in_the_middle_of_trx", {
     /*
@@ -7757,6 +7846,9 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
       1) Add a debug sync point that holds and makes the applier thread to
          wait, in the middle of a transaction -
          `signal.rpl_requested_for_a_flush`.
+      参见 `gr_flush_relay_log_no_split_trx.test`
+      1) 添加一个调试同步点，使应用线程在事务中间等待 -
+         `signal.rpl_requested_for_a_flush`。
     */
     DBUG_SET("-d,wait_in_the_middle_of_trx");
     const char dbug_wait[] = "now WAIT_FOR signal.rpl_requested_for_a_flush";
@@ -7767,6 +7859,8 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
     inside get_master_version_and_clock()
     Show-up of FD:s affects checksum_alg at once because
     that changes FD_queue.
+    在 get_master_version_and_clock() 内部
+    FD 的出现会立即影响 checksum_alg，因为这会改变 FD_queue。
   */
   enum_binlog_checksum_alg checksum_alg =
       mi->checksum_alg_before_fd != binary_log::BINLOG_CHECKSUM_ALG_UNDEF
@@ -7775,28 +7869,30 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
 
   const char *save_buf =
       nullptr;  // needed for checksumming the fake Rotate event
+                // 用于校验伪 Rotate 事件的校验和
   char rot_buf[LOG_EVENT_HEADER_LEN + Binary_log_event::ROTATE_HEADER_LEN +
                FN_REFLEN];
-  Gtid gtid = {0, 0};
-  ulonglong immediate_commit_timestamp = 0;
-  ulonglong original_commit_timestamp = 0;
-  bool info_error{false};
-  binary_log::Log_event_basic_info log_event_info;
-  ulonglong compressed_transaction_bytes = 0;
-  ulonglong uncompressed_transaction_bytes = 0;
-  auto compression_type = binary_log::transaction::compression::type::NONE;
+  Gtid gtid = {0, 0}; // 初始化 GTID
+  ulonglong immediate_commit_timestamp = 0; // 初始化立即提交时间戳
+  ulonglong original_commit_timestamp = 0; // 初始化原始提交时间戳
+  bool info_error{false}; // 初始化信息错误标志
+  binary_log::Log_event_basic_info log_event_info; // 初始化日志事件基本信息
+  ulonglong compressed_transaction_bytes = 0; // 初始化压缩事务字节数
+  ulonglong uncompressed_transaction_bytes = 0; // 初始化未压缩事务字节数
+  auto compression_type = binary_log::transaction::compression::type::NONE; // 初始化压缩类型
   Log_event_type event_type =
-      (Log_event_type) static_cast<uchar>(buf[EVENT_TYPE_OFFSET]);
+      (Log_event_type) static_cast<uchar>(buf[EVENT_TYPE_OFFSET]); // 获取事件类型
 
   assert(checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_OFF ||
          checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_UNDEF ||
-         checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_CRC32);
+         checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_CRC32); // 断言校验和算法
 
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
   /*
     Pause the IO thread execution and wait for 'continue_queuing_event'
     signal to continue IO thread execution.
+    暂停 IO 线程执行并等待 'continue_queuing_event' 信号以继续 IO 线程执行。
   */
   DBUG_EXECUTE_IF("pause_on_queuing_event",
                   { rpl_replica_debug_point(DBUG_RPL_S_PAUSE_QUEUING); };);
@@ -7804,20 +7900,24 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
   /*
     FD_queue checksum alg description does not apply in a case of
     FD itself. The one carries both parts of the checksum data.
+    FD_queue 校验和算法描述不适用于 FD 本身。它携带校验和数据的两个部分。
   */
   if (event_type == binary_log::FORMAT_DESCRIPTION_EVENT) {
     checksum_alg = Log_event_footer::get_checksum_alg(buf, event_len);
   }
 
   // does not hold always because of old binlog can work with NM
+  // 并不总是成立，因为旧的 binlog 可以与 NM 一起工作
   // assert(checksum_alg != BINLOG_CHECKSUM_ALG_UNDEF);
 
   // should hold unless manipulations with RL. Tests that do that
   // will have to refine the clause.
+  // 除非对 RL 进行操作，否则应该成立。进行此操作的测试将不得不细化条款。
   assert(mi->rli->relay_log.relay_log_checksum_alg !=
          binary_log::BINLOG_CHECKSUM_ALG_UNDEF);
 
   // Emulate the network corruption
+  // 模拟网络损坏
   DBUG_EXECUTE_IF(
       "corrupt_queue_event",
       if (event_type != binary_log::FORMAT_DESCRIPTION_EVENT &&
@@ -7843,6 +7943,7 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
   /*
     From now, and up to finishing queuing the event, no other thread is allowed
     to write to the relay log, or to rotate it.
+    从现在开始，直到完成事件排队为止，不允许其他线程写入中继日志或旋转它。
   */
   mysql_mutex_lock(log_lock);
   assert(lock_count == 0);
@@ -7857,17 +7958,21 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
   /*
     Simulate an unknown ignorable log event by rewriting a Xid
     log event before queuing it into relay log.
+    通过在将 Xid 日志事件排队到中继日志之前重写它来模拟一个未知的可忽略日志事件。
   */
   DBUG_EXECUTE_IF(
       "simulate_unknown_ignorable_log_event_with_xid",
       if (event_type == binary_log::XID_EVENT) {
         uchar *ev_buf = const_cast<uchar *>(pointer_cast<const uchar *>(buf));
         /* Overwrite the log event type with an unknown type. */
+        /* 用未知类型覆盖日志事件类型。 */
         ev_buf[EVENT_TYPE_OFFSET] = binary_log::ENUM_END_EVENT + 1;
         /* Set LOG_EVENT_IGNORABLE_F for the log event. */
+        /* 为日志事件设置 LOG_EVENT_IGNORABLE_F。 */
         int2store(ev_buf + FLAGS_OFFSET,
                   uint2korr(ev_buf + FLAGS_OFFSET) | LOG_EVENT_IGNORABLE_F);
         /* Recalc event's CRC */
+        /* 重新计算事件的 CRC */
         ha_checksum ev_crc = checksum_crc32(0L, nullptr, 0);
         ev_crc = checksum_crc32(ev_crc, (const uchar *)ev_buf,
                                 event_len - BINLOG_CHECKSUM_LEN);
@@ -7879,6 +7984,8 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
           But we have to keep the unknown ignorable error to let the
           "stop_io_after_reading_unknown_event" debug point to work after
           "queuing" this event.
+          我们将跳过将此事件写入中继日志，以便启动过程不会找到它并假设此事务不完整。
+          但我们必须保留未知的可忽略错误，以便在“排队”此事件后让“stop_io_after_reading_unknown_event”调试点工作。
         */
         mysql_mutex_lock(&mi->data_lock);
         mi->set_master_log_pos(mi->get_master_log_pos() + event_len);
@@ -7892,6 +7999,12 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
     last event of the transaction be queued.
     It will also be used to avoid rotating the relay log in the middle of
     a transaction.
+    此事务解析器用于确保事务的 GTID（如果有）仅在事务的最后一个事件排队后才会添加到 Retrieved_Gtid_Set 中。
+    它还将用于避免在事务中间旋转中继日志。
+  */
+  /*
+   std::tie 是 C++ 标准库中的一个函数，用于将多个变量绑定到一个元组（tuple）中，方便一次性赋值。
+   这里 info_error 和 log_event_info 是两个变量，std::tie 将它们绑定在一起，以便从 extract_log_event_basic_info 函数的返回值中一次性赋值。
   */
   std::tie(info_error, log_event_info) = extract_log_event_basic_info(
       buf, event_len, mi->get_mi_description_event());
@@ -7900,17 +8013,21 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
       The transaction parser detected a problem while changing state and threw
       a warning message. We are taking care of avoiding transaction boundary
       issues, but it can happen.
+      事务解析器在更改状态时检测到问题并抛出警告消息。我们正在努力避免事务边界问题，但它可能会发生。
 
       Transaction boundary errors might happen mostly because of bad master
       positioning in 'CHANGE MASTER TO' (or bad manipulation of master.info)
       when GTID auto positioning is off. Errors can also happen when using
       cross-version replication, replicating from a master that supports more
       event types than this slave.
+      事务边界错误可能主要是由于在 GTID 自动定位关闭时 'CHANGE MASTER TO' 中的主定位不佳（或对 master.info 的不当操作）引起的。
+      在使用跨版本复制时，也可能会发生错误，从支持更多事件类型的主服务器复制到此从服务器。
 
       The IO thread will keep working and queuing events regardless of the
       transaction parser error, but we will throw another warning message to
       log the relay log file and position of the parser error to help
       forensics.
+      IO 线程将继续工作并排队事件，无论事务解析器错误如何，但我们将抛出另一个警告消息，以记录中继日志文件和解析器错误的位置，以帮助取证。
     */
     LogErr(WARNING_LEVEL,
            ER_RPL_SLAVE_IO_THREAD_DETECTED_UNEXPECTED_EVENT_SEQUENCE,
@@ -7919,31 +8036,38 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
 
   switch (event_type) {
     case binary_log::STOP_EVENT:
+      //STOP_EVENT 是 MySQL 二进制日志（binlog）中的一种事件类型。
+      //它表示主服务器已经停止记录二进制日志。这个事件通常在主服务器关闭时生成，用于通知从服务器主服务器已经停止。
       /*
         We needn't write this event to the relay log. Indeed, it just indicates
         a master server shutdown. The only thing this does is cleaning. But
         cleaning is already done on a per-master-thread basis (as the master
         server is shutting down cleanly, it has written all DROP TEMPORARY TABLE
         prepared statements' deletion are TODO only when we binlog prep stmts).
-
+        我们不需要将此事件写入中继日志。实际上，它只是表示主服务器关闭。唯一要做的就是清理。
+        但是清理已经在每个主线程的基础上完成（由于主服务器正在干净地关闭，它已经写入了所有 DROP TEMPORARY TABLE
+        准备语句的删除仅在我们 binlog 准备语句时才需要做）。
         We don't even increment mi->get_master_log_pos(), because we may be just
         after a Rotate event. Btw, in a few milliseconds we are going to have a
         Start event from the next binlog (unless the master is presently running
         without --log-bin).
+        我们甚至不会增加 mi->get_master_log_pos()，因为我们可能刚刚在 Rotate 事件之后。
+        顺便说一句，在几毫秒内，我们将从下一个 binlog 中获得一个 Start 事件（除非主服务器当前运行时没有 --log-bin）。
       */
-      do_flush_mi = false;
-      goto end;
+      do_flush_mi = false; // 不刷新主信息
+      goto end; // 跳转到 end 标签
     case binary_log::ROTATE_EVENT: {
-      Format_description_log_event *fde = mi->get_mi_description_event();
-      enum_binlog_checksum_alg fde_checksum_alg = fde->footer()->checksum_alg;
-      if (fde_checksum_alg != checksum_alg)
-        fde->footer()->checksum_alg = checksum_alg;
-      Rotate_log_event rev(buf, fde);
-      fde->footer()->checksum_alg = fde_checksum_alg;
+      Format_description_log_event *fde = mi->get_mi_description_event(); // 获取格式描述日志事件
+      enum_binlog_checksum_alg fde_checksum_alg = fde->footer()->checksum_alg; // 获取校验和算法
+      if (fde_checksum_alg != checksum_alg) // 如果校验和算法不同
+        fde->footer()->checksum_alg = checksum_alg; // 设置校验和算法
+      Rotate_log_event rev(buf, fde); // 创建 Rotate 日志事件
+      fde->footer()->checksum_alg = fde_checksum_alg; // 恢复校验和算法
 
-      if (unlikely(process_io_rotate(mi, &rev))) {
+      if (unlikely(process_io_rotate(mi, &rev))) { // 如果处理 Rotate 事件失败
         // This error will be reported later at handle_slave_io().
-        goto err;
+        // 此错误将在 handle_slave_io() 中报告。
+        goto err; // 跳转到 err 标签
       }
       /*
          Checksum special cases for the fake Rotate (R_f) event caused by the
@@ -7953,139 +8077,151 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
          apply only to the first R_f which comes in before any FD_m. The 2nd R_f
          should be compatible with the FD_s that must have taken over the last
          seen FD_m's (A).
-
+         伪 Rotate (R_f) 事件的校验和特殊情况是由事件生成和序列化协议在 RL 中引起的，
+         其中主服务器的 Rotate 紧挨着从服务器的 FD 排队。由于只有 FD 携带 FD_s 的算法描述，
+         因此必须应用于 R_m。两个特殊规则仅适用于在任何 FD_m 之前出现的第一个 R_f。
+         第二个 R_f 应与必须接管最后看到的 FD_m 的 FD_s 兼容 (A)。
          RSC_1: If OM \and fake Rotate \and slave is configured to
                 to compute checksum for its first FD event for RL
                 the fake Rotate gets checksummed here.
+                如果 OM 和伪 Rotate 和从服务器配置为计算其第一个 FD 事件的校验和，
+                则在此处对伪 Rotate 进行校验和。
       */
-      if (uint4korr(&buf[0]) == 0 &&
-          checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_OFF &&
-          mi->rli->relay_log.relay_log_checksum_alg !=
-              binary_log::BINLOG_CHECKSUM_ALG_OFF) {
-        ha_checksum rot_crc = checksum_crc32(0L, nullptr, 0);
-        event_len += BINLOG_CHECKSUM_LEN;
-        memcpy(rot_buf, buf, event_len - BINLOG_CHECKSUM_LEN);
-        int4store(&rot_buf[EVENT_LEN_OFFSET],
-                  uint4korr(rot_buf + EVENT_LEN_OFFSET) + BINLOG_CHECKSUM_LEN);
-        rot_crc = checksum_crc32(rot_crc, (const uchar *)rot_buf,
-                                 event_len - BINLOG_CHECKSUM_LEN);
-        int4store(&rot_buf[event_len - BINLOG_CHECKSUM_LEN], rot_crc);
-        assert(event_len == uint4korr(&rot_buf[EVENT_LEN_OFFSET]));
-        assert(mi->get_mi_description_event()->common_footer->checksum_alg ==
-               mi->rli->relay_log.relay_log_checksum_alg);
+      if (uint4korr(&buf[0]) == 0 && // 如果事件头的前四个字节为 0
+          checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_OFF && // 并且校验和算法关闭
+          mi->rli->relay_log.relay_log_checksum_alg != binary_log::BINLOG_CHECKSUM_ALG_OFF) { // 并且中继日志的校验和算法未关闭
+        ha_checksum rot_crc = checksum_crc32(0L, nullptr, 0); // 初始化校验和
+        event_len += BINLOG_CHECKSUM_LEN; // 增加事件长度
+        memcpy(rot_buf, buf, event_len - BINLOG_CHECKSUM_LEN); // 复制事件数据
+        int4store(&rot_buf[EVENT_LEN_OFFSET], uint4korr(rot_buf + EVENT_LEN_OFFSET) + BINLOG_CHECKSUM_LEN); // 存储事件长度
+        rot_crc = checksum_crc32(rot_crc, (const uchar *)rot_buf, event_len - BINLOG_CHECKSUM_LEN); // 计算校验和
+        int4store(&rot_buf[event_len - BINLOG_CHECKSUM_LEN], rot_crc); // 存储校验和
+        assert(event_len == uint4korr(&rot_buf[EVENT_LEN_OFFSET])); // 断言事件长度
+        assert(mi->get_mi_description_event()->common_footer->checksum_alg == mi->rli->relay_log.relay_log_checksum_alg); // 断言校验和算法
         /* the first one */
-        assert(mi->checksum_alg_before_fd !=
-               binary_log::BINLOG_CHECKSUM_ALG_UNDEF);
-        save_buf = buf;
-        buf = rot_buf;
+        /* 第一个 */
+        assert(mi->checksum_alg_before_fd != binary_log::BINLOG_CHECKSUM_ALG_UNDEF); // 断言校验和算法未定义
+        save_buf = buf; // 保存缓冲区
+        buf = rot_buf; // 设置缓冲区为 rot_buf
       } else
           /*
             RSC_2: If NM \and fake Rotate \and slave does not compute checksum
             the fake Rotate's checksum is stripped off before relay-logging.
+            如果 NM 和伪 Rotate 和从服务器不计算校验和，则在中继日志记录之前去除伪 Rotate 的校验和。
           */
-          if (uint4korr(&buf[0]) == 0 &&
-              checksum_alg != binary_log::BINLOG_CHECKSUM_ALG_OFF &&
-              mi->rli->relay_log.relay_log_checksum_alg ==
-                  binary_log::BINLOG_CHECKSUM_ALG_OFF) {
-        event_len -= BINLOG_CHECKSUM_LEN;
-        memcpy(rot_buf, buf, event_len);
-        int4store(&rot_buf[EVENT_LEN_OFFSET],
-                  uint4korr(rot_buf + EVENT_LEN_OFFSET) - BINLOG_CHECKSUM_LEN);
-        assert(event_len == uint4korr(&rot_buf[EVENT_LEN_OFFSET]));
-        assert(mi->get_mi_description_event()->common_footer->checksum_alg ==
-               mi->rli->relay_log.relay_log_checksum_alg);
+          if (uint4korr(&buf[0]) == 0 && // 如果事件头的前四个字节为 0
+              checksum_alg != binary_log::BINLOG_CHECKSUM_ALG_OFF && // 并且校验和算法未关闭
+              mi->rli->relay_log.relay_log_checksum_alg == binary_log::BINLOG_CHECKSUM_ALG_OFF) { // 并且中继日志的校验和算法关闭
+        event_len -= BINLOG_CHECKSUM_LEN; // 减少事件长度
+        memcpy(rot_buf, buf, event_len); // 复制事件数据
+        int4store(&rot_buf[EVENT_LEN_OFFSET], uint4korr(rot_buf + EVENT_LEN_OFFSET) - BINLOG_CHECKSUM_LEN); // 存储事件长度
+        assert(event_len == uint4korr(&rot_buf[EVENT_LEN_OFFSET])); // 断言事件长度
+        assert(mi->get_mi_description_event()->common_footer->checksum_alg == mi->rli->relay_log.relay_log_checksum_alg); // 断言校验和算法
         /* the first one */
-        assert(mi->checksum_alg_before_fd !=
-               binary_log::BINLOG_CHECKSUM_ALG_UNDEF);
-        save_buf = buf;
-        buf = rot_buf;
+        /* 第一个 */
+        assert(mi->checksum_alg_before_fd != binary_log::BINLOG_CHECKSUM_ALG_UNDEF); // 断言校验和算法未定义
+        save_buf = buf; // 保存缓冲区
+        buf = rot_buf; // 设置缓冲区为 rot_buf
       }
       /*
         Now the I/O thread has just changed its mi->get_master_log_name(), so
         incrementing mi->get_master_log_pos() is nonsense.
+        现在 I/O 线程刚刚更改了其 mi->get_master_log_name()，因此增加 mi->get_master_log_pos() 是没有意义的。
       */
-      inc_pos = 0;
-      break;
+      inc_pos = 0; // 设置增量位置为 0
+      break; // 跳出 switch 语句
     }
     case binary_log::FORMAT_DESCRIPTION_EVENT: {
       /*
         Create an event, and save it (when we rotate the relay log, we will have
         to write this event again).
+        创建一个事件，并保存它（当我们旋转中继日志时，我们将不得不再次写入此事件）。
       */
       /*
         We are the only thread which reads/writes mi_description_event.
         The relay_log struct does not move (though some members of it can
         change), so we needn't any lock (no rli->data_lock, no log lock).
+        我们是唯一读取/写入 mi_description_event 的线程。
+        relay_log 结构不会移动（尽管它的一些成员可以更改），所以我们不需要任何锁（没有 rli->data_lock，没有日志锁）。
       */
       // mark it as undefined that is irrelevant anymore
+      // 将其标记为未定义，不再相关
       mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_UNDEF;
-      Format_description_log_event *new_fdle;
-      Log_event *ev = nullptr;
+      Format_description_log_event *new_fdle; // 新的格式描述日志事件
+      Log_event *ev = nullptr; // 日志事件指针初始化为空
       if (binlog_event_deserialize(reinterpret_cast<const unsigned char *>(buf),
                                    event_len, mi->get_mi_description_event(),
                                    true, &ev) != Binlog_read_error::SUCCESS) {
         // This error will be reported later at handle_slave_io().
-        goto err;
+        // 此错误将在 handle_slave_io() 中报告。
+        goto err; // 跳转到错误处理
       }
 
-      new_fdle = dynamic_cast<Format_description_log_event *>(ev);
+      new_fdle = dynamic_cast<Format_description_log_event *>(ev); // 动态转换为格式描述日志事件
       if (new_fdle->common_footer->checksum_alg ==
           binary_log::BINLOG_CHECKSUM_ALG_UNDEF)
         new_fdle->common_footer->checksum_alg =
             binary_log::BINLOG_CHECKSUM_ALG_OFF;
 
-      mi->set_mi_description_event(new_fdle);
+      mi->set_mi_description_event(new_fdle); // 设置新的格式描述日志事件
 
       /* installing new value of checksum Alg for relay log */
+      /* 为中继日志安装新的校验和算法值 */
       mi->rli->relay_log.relay_log_checksum_alg =
           new_fdle->common_footer->checksum_alg;
 
       /*
          Though this does some conversion to the slave's format, this will
          preserve the master's binlog format version, and number of event types.
+         尽管这会对从服务器的格式进行一些转换，但这将保留主服务器的 binlog 格式版本和事件类型数量。
       */
       /*
          If the event was not requested by the slave (the slave did not ask for
          it), i.e. has end_log_pos=0, we do not increment
          mi->get_master_log_pos()
+         如果事件不是由从服务器请求的（从服务器没有请求它），即 end_log_pos=0，我们不会增加
+         mi->get_master_log_pos()
       */
-      inc_pos = uint4korr(buf + LOG_POS_OFFSET) ? event_len : 0;
+      inc_pos = uint4korr(buf + LOG_POS_OFFSET) ? event_len : 0; // 设置增量位置
       DBUG_PRINT("info", ("binlog format is now %d",
-                          mi->get_mi_description_event()->binlog_version));
+                          mi->get_mi_description_event()->binlog_version)); // 调试打印 binlog 格式版本
 
     } break;
 
     case binary_log::HEARTBEAT_LOG_EVENT: {
       /*
         HB (heartbeat) cannot come before RL (Relay)
+        心跳事件不能在中继日志之前到来
       */
-      Heartbeat_log_event hb(buf, mi->get_mi_description_event());
+     // 主库给从库发送的心跳事件，避免从库认为主库挂了。间隔设定为：slave_net_timeout，由Dumper线程发送。
+      Heartbeat_log_event hb(buf, mi->get_mi_description_event()); // 创建心跳日志事件
       std::string mi_log_filename{mi->get_master_log_name() != nullptr
                                       ? mi->get_master_log_name()
-                                      : ""};
+                                      : ""}; // 获取主日志文件名
       if (heartbeat_queue_event(hb.is_valid(), mi, mi_log_filename,
                                 hb.header()->log_pos, inc_pos, do_flush_mi))
-        goto err;
+        goto err; // 如果心跳事件无效，跳转到错误处理
       else
-        goto end;
+        goto end; // 否则跳转到结束处理
     } break;
 
     case binary_log::HEARTBEAT_LOG_EVENT_V2: {
       /*
         HB (heartbeat) cannot come before RL (Relay)
+        心跳事件不能在中继日志之前到来
       */
-      Heartbeat_log_event_v2 hb(buf, mi->get_mi_description_event());
-      auto hb_log_filename = hb.get_log_filename();
+      Heartbeat_log_event_v2 hb(buf, mi->get_mi_description_event()); // 创建心跳日志事件 V2
+      auto hb_log_filename = hb.get_log_filename(); // 获取心跳日志文件名
       auto hb_log_position = hb.get_log_position() == 0 ? hb.header()->log_pos
-                                                        : hb.get_log_position();
+                                                        : hb.get_log_position(); // 获取心跳日志位置
       std::string mi_log_filename{mi->get_master_log_name() != nullptr
                                       ? mi->get_master_log_name()
-                                      : ""};
+                                      : ""}; // 获取主日志文件名
       if (heartbeat_queue_event(hb.is_valid(), mi, mi_log_filename,
                                 hb_log_position, inc_pos, do_flush_mi))
-        goto err;
+        goto err; // 如果心跳事件无效，跳转到错误处理
       else
-        goto end;
+        goto end; // 否则跳转到结束处理
     } break;
     case binary_log::PREVIOUS_GTIDS_LOG_EVENT: {
       /*
@@ -8095,31 +8231,38 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         So at this point, the event is replaced by a rotate
         event what will make the slave to update what it knows
         about the master's coordinates.
+        这个事件对从服务器没有实际意义，
+        它只是用来向从服务器表明主服务器正在取得进展，
+        并避免可能的死锁。
+        因此，此时该事件被替换为一个旋转事件，
+        这将使从服务器更新它所知道的主服务器坐标。
+
+        通常是binlog 文件头中，用于记录当前已经执行过的GTID集合
       */
-      inc_pos = 0;
-      mysql_mutex_lock(&mi->data_lock);
-      mi->set_master_log_pos(mi->get_master_log_pos() + event_len);
-      mysql_mutex_unlock(&mi->data_lock);
+      inc_pos = 0;  // 增量位置设置为0
+      mysql_mutex_lock(&mi->data_lock);  // 加锁
+      mi->set_master_log_pos(mi->get_master_log_pos() + event_len);  // 更新主日志位置
+      mysql_mutex_unlock(&mi->data_lock);  // 解锁
 
       if (write_rotate_to_master_pos_into_relay_log(
-              mi->info_thd, mi, true /* force_flush_mi_info */))
+              mi->info_thd, mi, true /* force_flush_mi_info */))  // 将旋转事件写入relay log
         goto err;
 
-      do_flush_mi = false; /* write_rotate_... above flushed master info */
+      do_flush_mi = false; /* write_rotate_... above flushed master info */  // 不需要再次刷新主信息
       goto end;
     } break;
 
     case binary_log::TRANSACTION_PAYLOAD_EVENT: {
       binary_log::Transaction_payload_event tpe(buf,
-                                                mi->get_mi_description_event());
-      compression_type = tpe.get_compression_type();
-      compressed_transaction_bytes = tpe.get_payload_size();
-      uncompressed_transaction_bytes = tpe.get_uncompressed_size();
-      auto gtid_monitoring_info = mi->get_gtid_monitoring_info();
+                                                mi->get_mi_description_event());  // 解析事务负载事件
+      compression_type = tpe.get_compression_type();  // 获取压缩类型
+      compressed_transaction_bytes = tpe.get_payload_size();  // 获取压缩后的事务字节数
+      uncompressed_transaction_bytes = tpe.get_uncompressed_size();  // 获取未压缩的事务字节数
+      auto gtid_monitoring_info = mi->get_gtid_monitoring_info();  // 获取GTID监控信息
       gtid_monitoring_info->update(compression_type,
                                    compressed_transaction_bytes,
-                                   uncompressed_transaction_bytes);
-      inc_pos = event_len;
+                                   uncompressed_transaction_bytes);  // 更新GTID监控信息
+      inc_pos = event_len;  // 增量位置设置为事件长度
       break;
     }
 
@@ -8133,27 +8276,36 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         connection is allowed, but the master A will generate GTID
         transactions which will be sent through B to C.  Then C will hit
         this error.
+        如果主服务器使用GTID_MODE=OFF_PERMISSIVE，
+        并向从服务器发送GTID事件，可能会发生这种情况。
+        可能的场景是用户没有遵循GTID的升级过程，
+        并创建了一个像A->B->C的拓扑结构，
+        其中A使用GTID_MODE=ON_PERMISSIVE，
+        B使用GTID_MODE=OFF_PERMISSIVE，
+        C使用GTID_MODE=OFF。
+        每个连接都是允许的，但主服务器A将生成GTID事务，
+        这些事务将通过B发送到C。然后C将遇到此错误。
       */
       if (global_gtid_mode.get() == Gtid_mode::OFF) {
         mi->report(
             ERROR_LEVEL, ER_CANT_REPLICATE_GTID_WITH_GTID_MODE_OFF,
             ER_THD(current_thd, ER_CANT_REPLICATE_GTID_WITH_GTID_MODE_OFF),
-            mi->get_master_log_name(), mi->get_master_log_pos());
+            mi->get_master_log_name(), mi->get_master_log_pos());  // 报告错误
         goto err;
       }
-      Gtid_log_event gtid_ev(buf, mi->get_mi_description_event());
-      if (!gtid_ev.is_valid()) goto err;
-      rli->get_sid_lock()->rdlock();
-      gtid.sidno = gtid_ev.get_sidno(rli->get_gtid_set()->get_sid_map());
-      rli->get_sid_lock()->unlock();
-      if (gtid.sidno < 0) goto err;
-      gtid.gno = gtid_ev.get_gno();
-      original_commit_timestamp = gtid_ev.original_commit_timestamp;
-      immediate_commit_timestamp = gtid_ev.immediate_commit_timestamp;
+      Gtid_log_event gtid_ev(buf, mi->get_mi_description_event());  // 解析GTID事件
+      if (!gtid_ev.is_valid()) goto err;  // 如果事件无效，跳转到错误处理
+      rli->get_sid_lock()->rdlock();  // 获取SID锁
+      gtid.sidno = gtid_ev.get_sidno(rli->get_gtid_set()->get_sid_map());  // 获取SID编号
+      rli->get_sid_lock()->unlock();  // 释放SID锁
+      if (gtid.sidno < 0) goto err;  // 如果SID编号无效，跳转到错误处理
+      gtid.gno = gtid_ev.get_gno();  // 获取GNO
+      original_commit_timestamp = gtid_ev.original_commit_timestamp;  // 获取原始提交时间戳
+      immediate_commit_timestamp = gtid_ev.immediate_commit_timestamp;  // 获取立即提交时间戳
       compressed_transaction_bytes = uncompressed_transaction_bytes =
-          gtid_ev.transaction_length - gtid_ev.get_event_length();
+          gtid_ev.transaction_length - gtid_ev.get_event_length();  // 计算压缩和未压缩的事务字节数
 
-      inc_pos = event_len;
+      inc_pos = event_len;  // 增量位置设置为事件长度
     } break;
 
     case binary_log::ANONYMOUS_GTID_LOG_EVENT: {
@@ -8164,12 +8316,38 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         mysqld, which could contain bugs that we have no control over.
         So we need this check on the slave to be sure that whoever is on
         the other side of the protocol does not break the protocol.
+        这通常不会发生，因为主服务器有一个检查，
+        防止在启用auto_position时发送匿名事件。
+        然而，主服务器可能是mysqld以外的其他东西，
+        可能包含我们无法控制的错误。
+        因此，我们需要在从服务器上进行此检查，
+        以确保协议的另一端不会破坏协议。
+      */
+      /*
+        ANONYMOUS_GTID_LOG_EVENT 事件是什么内容？什么时候会触发？解决什么问题？      
+
+        ANONYMOUS_GTID_LOG_EVENT 是 MySQL 二进制日志中的一种事件类型，用于在没有启用 GTID（Global Transaction Identifier）的情况下，记录匿名事务的信息。      
+
+        1. **ANONYMOUS_GTID_LOG_EVENT 的内容**：
+           - ANONYMOUS_GTID_LOG_EVENT 包含一个匿名事务的基本信息，例如事务的提交时间戳（original_commit_timestamp 和 immediate_commit_timestamp）。
+           - 由于事务是匿名的，因此没有 GTID 信息。      
+
+        2. **ANONYMOUS_GTID_LOG_EVENT 的触发时机**：
+           - 当主服务器没有启用 GTID（即 GTID_MODE=OFF）时，所有事务都是匿名的。
+           - 在这种情况下，主服务器会在每个事务的 binlog 事件之前写入一个 ANONYMOUS_GTID_LOG_EVENT，用于记录事务的基本信息。      
+
+        3. **ANONYMOUS_GTID_LOG_EVENT 解决的问题**：
+           - 在没有启用 GTID 的情况下，ANONYMOUS_GTID_LOG_EVENT 提供了一种方式来记录事务的基本信息，例如提交时间戳。
+           - 这对于从服务器在复制过程中正确处理事务的顺序和时间戳非常重要。      
+
+        总结：
+        ANONYMOUS_GTID_LOG_EVENT 是 MySQL 二进制日志中的一种事件类型，用于在没有启用 GTID 的情况下记录匿名事务的基本信息。它在每个事务的 binlog 事件之前写入，用于解决在没有 GTID 的情况下正确处理事务的顺序和时间戳的问题。
       */
       if (mi->is_auto_position()) {
         mi->report(
             ERROR_LEVEL, ER_CANT_REPLICATE_ANONYMOUS_WITH_AUTO_POSITION,
             ER_THD(current_thd, ER_CANT_REPLICATE_ANONYMOUS_WITH_AUTO_POSITION),
-            mi->get_master_log_name(), mi->get_master_log_pos());
+            mi->get_master_log_name(), mi->get_master_log_pos());  // 报告错误
         goto err;
       }
       /*
@@ -8185,6 +8363,18 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS= LOCAL/UUID in that case it is
         possible to replicate from a GTID_MODE=OFF master to a GTID_MODE=ON
         slave
+        如果主服务器使用GTID_MODE=ON_PERMISSIVE，
+        并向从服务器发送匿名事件，可能会发生这种情况。
+        可能的场景是用户没有遵循GTID的升级过程，
+        并创建了一个像A->B->C的拓扑结构，
+        其中A使用GTID_MODE=OFF_PERMISSIVE，
+        B使用GTID_MODE=ON_PERMISSIVE，
+        C使用GTID_MODE=ON。
+        每个连接都是允许的，但主服务器A将生成匿名事务，
+        这些事务将通过B发送到C。然后C将遇到此错误。
+        有一种特殊情况，即在从服务器上
+        ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS= LOCAL/UUID，
+        在这种情况下，可以从GTID_MODE=OFF的主服务器复制到GTID_MODE=ON的从服务器。
       */
       else if (mi->rli->m_assign_gtids_to_anonymous_transactions_info
                    .get_type() == Assign_gtids_to_anonymous_transactions_info::
@@ -8193,41 +8383,45 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
           mi->report(ERROR_LEVEL, ER_CANT_REPLICATE_ANONYMOUS_WITH_GTID_MODE_ON,
                      ER_THD(current_thd,
                             ER_CANT_REPLICATE_ANONYMOUS_WITH_GTID_MODE_ON),
-                     mi->get_master_log_name(), mi->get_master_log_pos());
+                     mi->get_master_log_name(), mi->get_master_log_pos());  // 报告错误
           goto err;
         }
       }
       /*
        save the original_commit_timestamp and the immediate_commit_timestamp to
        be later used for monitoring
+       保存原始提交时间戳和立即提交时间戳，
+       以便稍后用于监控
       */
-      Gtid_log_event anon_gtid_ev(buf, mi->get_mi_description_event());
-      original_commit_timestamp = anon_gtid_ev.original_commit_timestamp;
-      immediate_commit_timestamp = anon_gtid_ev.immediate_commit_timestamp;
+      Gtid_log_event anon_gtid_ev(buf, mi->get_mi_description_event());  // 解析匿名GTID事件
+      original_commit_timestamp = anon_gtid_ev.original_commit_timestamp;  // 获取原始提交时间戳
+      immediate_commit_timestamp = anon_gtid_ev.immediate_commit_timestamp;  // 获取立即提交时间戳
       compressed_transaction_bytes = uncompressed_transaction_bytes =
-          anon_gtid_ev.transaction_length - anon_gtid_ev.get_event_length();
+          anon_gtid_ev.transaction_length - anon_gtid_ev.get_event_length();  // 计算压缩和未压缩的事务字节数
     }
       [[fallthrough]];
     default:
-      inc_pos = event_len;
+      inc_pos = event_len;  // 增量位置设置为事件长度
       break;
   }
 
   /*
     Simulate an unknown ignorable log event by rewriting the write_rows log
     event and previous_gtids log event before writing them in relay log.
+    通过重写write_rows日志事件和previous_gtids日志事件来模拟一个未知的可忽略日志事件，
+    然后再将它们写入relay log。
   */
   DBUG_EXECUTE_IF(
       "simulate_unknown_ignorable_log_event",
       if (event_type == binary_log::WRITE_ROWS_EVENT ||
           event_type == binary_log::PREVIOUS_GTIDS_LOG_EVENT) {
         uchar *event_buf =
-            const_cast<uchar *>(reinterpret_cast<const uchar *>(buf));
+            const_cast<uchar *>(reinterpret_cast<const uchar *>(buf));  // 强制转换缓冲区
         /* Overwrite the log event type with an unknown type. */
-        event_buf[EVENT_TYPE_OFFSET] = binary_log::ENUM_END_EVENT + 1;
+        event_buf[EVENT_TYPE_OFFSET] = binary_log::ENUM_END_EVENT + 1;  // 覆盖事件类型为未知类型
         /* Set LOG_EVENT_IGNORABLE_F for the log event. */
         int2store(event_buf + FLAGS_OFFSET,
-                  uint2korr(event_buf + FLAGS_OFFSET) | LOG_EVENT_IGNORABLE_F);
+                  uint2korr(event_buf + FLAGS_OFFSET) | LOG_EVENT_IGNORABLE_F);  // 设置可忽略标志
       });
 
   /*
@@ -8241,22 +8435,35 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
      for STOP_EVENT/ROTATE_EVENT/START_EVENT: these cannot come from ourselves
      (--log-replica-updates would not log that) unless this slave is also its
      direct master (an unsupported, useless setup!).
+     如果此事件源自此服务器，则不要将其排队。
+     我们不检查3.23事件，因为这样更简单；3.23事件无论如何都会被SQL从线程过滤掉，
+     该线程也会测试服务器ID（我们还必须在SQL线程中保留此测试，
+     以防有人升级具有未过滤relay log的4.0从服务器）。
+     任何来自我们自己的事件都可以被忽略：对于查询来说这是显而易见的；
+     对于STOP_EVENT/ROTATE_EVENT/START_EVENT：这些事件不能来自我们自己
+     （--log-replica-updates不会记录这些事件），除非此从服务器也是其直接主服务器
+     （一个不受支持且无用的设置！）。
   */
 
-  s_id = uint4korr(buf + SERVER_ID_OFFSET);
+  s_id = uint4korr(buf + SERVER_ID_OFFSET);  // 从事件缓冲区中提取服务器ID
 
   /*
     If server_id_bits option is set we need to mask out irrelevant bits
     when checking server_id, but we still put the full unmasked server_id
     into the Relay log so that it can be accessed when applying the event
+    如果设置了server_id_bits选项，我们需要在检查服务器ID时屏蔽掉不相关的位，
+    但我们仍然将完整的未屏蔽的服务器ID放入Relay log中，
+    以便在应用事件时可以访问它。
   */
-  s_id &= opt_server_id_mask;
+  s_id &= opt_server_id_mask;  // 屏蔽掉不相关的位
 
   if ((s_id == ::server_id && !mi->rli->replicate_same_server_id) ||
       /*
         the following conjunction deals with IGNORE_SERVER_IDS, if set
         If the master is on the ignore list, execution of
         format description log events and rotate events is necessary.
+        以下条件处理IGNORE_SERVER_IDS（如果设置）。
+        如果主服务器在忽略列表中，则必须执行格式描述日志事件和旋转事件。
       */
       (mi->ignore_server_ids->dynamic_ids.size() > 0 &&
        mi->shall_ignore_server_id(s_id) &&
@@ -8281,45 +8488,56 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
       If the event is originated remotely and is being filtered out by
       IGNORE_SERVER_IDS it increments mi->get_master_log_pos()
       as well as rli->group_relay_log_pos.
+      不要将其写入relay log。
+      a) 我们仍然希望增加mi->get_master_log_pos()，以便如果从服务器IO线程现在停止/重新启动，
+      我们不会从主服务器重新读取此事件（如果我们忽略的事件是大的LOAD DATA INFILE，则更高效）。
+      b) 我们希望记录我们正在跳过事件，以便从服务器SQL线程知道，
+      否则如果最后一个binlog的事件被忽略，该线程可能会让rli->group_relay_log_pos保持太小。
+      但是由该从服务器生成且不存在于主服务器binlog中的事件（即Format_desc、Rotate和Stop）
+      不应增加mi->get_master_log_pos()。
+      如果事件源自远程并且被IGNORE_SERVER_IDS过滤掉，
+      它也会增加mi->get_master_log_pos()以及rli->group_relay_log_pos。
     */
     if (!(s_id == ::server_id && !mi->rli->replicate_same_server_id) ||
         (event_type != binary_log::FORMAT_DESCRIPTION_EVENT &&
          event_type != binary_log::ROTATE_EVENT &&
          event_type != binary_log::STOP_EVENT)) {
-      rli->relay_log.lock_binlog_end_pos();
-      mi->set_master_log_pos(mi->get_master_log_pos() + inc_pos);
+      rli->relay_log.lock_binlog_end_pos();  // 锁定binlog结束位置
+      mi->set_master_log_pos(mi->get_master_log_pos() + inc_pos);  // 更新主日志位置
       memcpy(rli->ign_master_log_name_end, mi->get_master_log_name(),
-             FN_REFLEN);
-      assert(rli->ign_master_log_name_end[0]);
-      rli->ign_master_log_pos_end = mi->get_master_log_pos();
+             FN_REFLEN);  // 复制主日志名称
+      assert(rli->ign_master_log_name_end[0]);  // 断言主日志名称不为空
+      rli->ign_master_log_pos_end = mi->get_master_log_pos();  // 设置忽略的主日志位置
       // the slave SQL thread needs to re-check
-      rli->relay_log.update_binlog_end_pos(false /*need_lock*/);
-      rli->relay_log.unlock_binlog_end_pos();
+      rli->relay_log.update_binlog_end_pos(false /*need_lock*/);  // 更新binlog结束位置
+      rli->relay_log.unlock_binlog_end_pos();  // 解锁binlog结束位置
     }
     DBUG_PRINT(
         "info",
         ("master_log_pos: %lu, event originating from %u server, ignored",
-         (ulong)mi->get_master_log_pos(), uint4korr(buf + SERVER_ID_OFFSET)));
+         (ulong)mi->get_master_log_pos(), uint4korr(buf + SERVER_ID_OFFSET)));  // 打印忽略事件信息
   } else {
     bool is_error = false;
     /* write the event to the relay log */
     if (likely(rli->relay_log.write_buffer(
                    reinterpret_cast<uchar *>(const_cast<char *>(buf)),
-                   event_len, mi) == 0)) {
+                   event_len, mi) == 0)) {  // 将事件写入relay log
       DBUG_SIGNAL_WAIT_FOR(current_thd,
                            "pause_on_queue_event_after_write_buffer",
                            "receiver_reached_pause_on_queue_event",
-                           "receiver_continue_queuing_event");
-      mysql_mutex_lock(&mi->data_lock);
-      lock_count = 2;
-      mi->set_master_log_pos(mi->get_master_log_pos() + inc_pos);
+                           "receiver_continue_queuing_event");  // 等待信号
+      mysql_mutex_lock(&mi->data_lock);  // 加锁
+      lock_count = 2;  // 锁计数加1
+      mi->set_master_log_pos(mi->get_master_log_pos() + inc_pos);  // 更新主日志位置
       DBUG_PRINT("info",
-                 ("master_log_pos: %lu", (ulong)mi->get_master_log_pos()));
+                 ("master_log_pos: %lu", (ulong)mi->get_master_log_pos()));  // 打印主日志位置
 
       /*
         If we are starting an anonymous transaction, we will discard
         the GTID of the partial transaction that was not finished (if
         there is one) when calling mi->started_queueing().
+        如果我们正在启动一个匿名事务，我们将在调用mi->started_queueing()时
+        丢弃未完成的部分事务的GTID（如果有的话）。
       */
 #ifndef NDEBUG
       if (event_type == binary_log::ANONYMOUS_GTID_LOG_EVENT) {
@@ -8329,7 +8547,7 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
                       "wasn't complete and we found an "
                       "ANONYMOUS_GTID_LOG_EVENT.",
                       mi->get_queueing_trx_gtid()->sidno,
-                      mi->get_queueing_trx_gtid()->gno));
+                      mi->get_queueing_trx_gtid()->gno));  // 打印丢弃GTID信息
         }
       }
 #endif
@@ -8342,17 +8560,21 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         add to the Retrieved_Gtid_Set later, when the last event of the
         transaction be queued. The call to mi->started_queueing() will save
         the GTID to be used later.
+        我们必须将此GTID（无论是匿名的还是非匿名的）标记为已开始排队。
+        此外，如果此事件是GTID_LOG_EVENT，我们必须存储其GTID，
+        以便在事务的最后一个事件排队时将其添加到Retrieved_Gtid_Set中。
+        调用mi->started_queueing()将保存GTID以供以后使用。
       */
       if (event_type == binary_log::GTID_LOG_EVENT ||
           event_type == binary_log::ANONYMOUS_GTID_LOG_EVENT) {
         // set the timestamp for the start time of queueing this transaction
         mi->started_queueing(gtid, original_commit_timestamp,
-                             immediate_commit_timestamp);
+                             immediate_commit_timestamp);  // 标记GTID开始排队
 
         auto gtid_monitoring_info = mi->get_gtid_monitoring_info();
         gtid_monitoring_info->update(
             binary_log::transaction::compression::type::NONE,
-            compressed_transaction_bytes, uncompressed_transaction_bytes);
+            compressed_transaction_bytes, uncompressed_transaction_bytes);  // 更新GTID监控信息
       }
     } else {
       /*
@@ -8361,21 +8583,24 @@ QUEUE_EVENT_RESULT queue_event(Master_info *mi, const char *buf,
         We have to "rollback" the transaction parser state, or else, when
         restarting the I/O thread without GTID auto positing the parser
         would assume the failed event as queued.
+        我们未能写入事件并且没有更新从服务器位置。
+        我们必须“回滚”事务解析器状态，否则在重新启动I/O线程时，
+        如果没有GTID自动定位，解析器将假定失败的事件已排队。
       */
-      mi->transaction_parser.rollback();
-      is_error = true;
+      mi->transaction_parser.rollback();  // 回滚事务解析器状态
+      is_error = true;  // 标记错误
     }
 
-    if (save_buf != nullptr) buf = save_buf;
+    if (save_buf != nullptr) buf = save_buf;  // 恢复缓冲区
     if (is_error) {
       // This error will be reported later at handle_slave_io().
-      goto err;
+      goto err;  // 跳转到错误处理
     }
   }
   goto end;
 
 err:
-  res = QUEUE_EVENT_ERROR_QUEUING;
+  res = QUEUE_EVENT_ERROR_QUEUING;  // 设置结果为排队错误
 
 end:
   if (res == QUEUE_EVENT_OK && do_flush_mi) {
@@ -8385,23 +8610,26 @@ end:
       JAG: TODO: Notice that we could only flush master info if we are
                  not in the middle of a transaction. Having a proper
                  relay log recovery can allow us to do this.
+      利用已经锁定的LOCK_log来刷新主信息。
+      JAG: TODO: 注意，我们只能在不在事务中间时刷新主信息。
+      拥有适当的relay log恢复可以让我们做到这一点。
     */
     if (lock_count == 1) {
-      mysql_mutex_lock(&mi->data_lock);
-      lock_count = 2;
+      mysql_mutex_lock(&mi->data_lock);  // 加锁
+      lock_count = 2;  // 锁计数加1
     }
 
     if (flush_master_info(mi, false /*force*/, lock_count == 0 /*need_lock*/,
-                          false /*flush_relay_log*/, mi->is_gtid_only_mode()))
-      res = QUEUE_EVENT_ERROR_FLUSHING_INFO;
+                          false /*flush_relay_log*/, mi->is_gtid_only_mode()))  // 刷新主信息
+      res = QUEUE_EVENT_ERROR_FLUSHING_INFO;  // 设置结果为刷新信息错误
     if (mi->is_gtid_only_mode()) {
-      mi->update_flushed_relay_log_info();
+      mi->update_flushed_relay_log_info();  // 更新已刷新的relay log信息
     }
   }
-  if (lock_count >= 2) mysql_mutex_unlock(&mi->data_lock);
-  if (lock_count >= 1) mysql_mutex_unlock(log_lock);
-  DBUG_PRINT("info", ("queue result: %d", res));
-  return res;
+  if (lock_count >= 2) mysql_mutex_unlock(&mi->data_lock);  // 解锁
+  if (lock_count >= 1) mysql_mutex_unlock(log_lock);  // 解锁
+  DBUG_PRINT("info", ("queue result: %d", res));  // 打印排队结果
+  return res;  // 返回结果
 }
 
 /**
@@ -9136,7 +9364,8 @@ bool start_slave(THD *thd, LEX_SLAVE_CONNECTION *connection_param,
     start only one thread, do as if the other thread was running (as we
     don't want to touch the other thread), so set the bit to 0 for the
     other thread
-    下面我们将启动所有停止的线程。但如果用户只想启动一个线程，则将其他线程视为正在运行（因为我们不想触碰其他线程），因此将其他线程的位设置为 0。
+    下面我们将启动所有停止的线程。但如果用户只想启动一个线程，
+    则将其他线程视为正在运行（因为我们不想触碰其他线程），因此将其他线程的位设置为 0。
   */
   if (thread_mask_input) {
     thread_mask &= thread_mask_input; // 根据输入的线程掩码更新线程掩码
@@ -9255,7 +9484,7 @@ bool start_slave(THD *thd, LEX_SLAVE_CONNECTION *connection_param,
   return is_error; // 返回错误状态
 }
 
-sql/rpl_replica.cc
+
 /**
   Execute a STOP SLAVE statement.
   执行 STOP SLAVE 语句。
@@ -9736,25 +9965,44 @@ static bool have_change_replication_source_receive_option(
   @retval false No change replication source execute option.
   @retval true  At least one execute option was there.
 */
+/**
+  该函数检查给定的 CHANGE MASTER/REPLICATION SOURCE 命令是否设置了任何执行选项。
+
+  - 用于 change_master() 函数中。
+
+  @param  lex_mi 结构体，包含在更改复制源命令中提供的所有选项。
+
+  @param[out] need_relay_log_purge
+              - 如果使用了 relay_log_file/relay_log_pos 选项，
+                我们将不会删除中继日志。我们将此布尔标志设置为 false。
+              - 如果未使用 relay_log_file/relay_log_pos 选项，
+                我们将返回未更改的布尔标志。
+              - 用于 change_receive_options() 和 change_master() 函数中。
+
+  @retval false 没有更改复制源执行选项。
+  @retval true  至少有一个执行选项被设置。
+*/
 static bool have_change_replication_source_execute_option(
-    const LEX_MASTER_INFO *lex_mi, bool *need_relay_log_purge) {
-  bool have_execute_option = false;
+  const LEX_MASTER_INFO *lex_mi, bool *need_relay_log_purge) {
+bool have_execute_option = false;  // 初始化标志，表示是否有执行选项
 
-  DBUG_TRACE;
+DBUG_TRACE;
 
-  /* Check if *at least one* execute option is given on change master command*/
-  if (lex_mi->relay_log_name || lex_mi->relay_log_pos ||
-      lex_mi->sql_delay != -1 || lex_mi->privilege_checks_username != nullptr ||
-      lex_mi->privilege_checks_none ||
-      lex_mi->require_row_format != LEX_MASTER_INFO::LEX_MI_UNCHANGED ||
-      lex_mi->require_table_primary_key_check !=
-          LEX_MASTER_INFO::LEX_MI_PK_CHECK_UNCHANGED)
-    have_execute_option = true;
+/* Check if *at least one* execute option is given on change master command*/
+/* 检查在更改主库命令中是否提供了至少一个执行选项 */
+if (lex_mi->relay_log_name || lex_mi->relay_log_pos ||  // 检查是否有中继日志文件名或位置
+    lex_mi->sql_delay != -1 ||  // 检查是否有SQL延迟设置
+    lex_mi->privilege_checks_username != nullptr ||  // 检查是否有权限检查用户名
+    lex_mi->privilege_checks_none ||  // 检查是否禁用权限检查
+    lex_mi->require_row_format != LEX_MASTER_INFO::LEX_MI_UNCHANGED ||  // 检查是否需要行格式
+    lex_mi->require_table_primary_key_check !=  // 检查是否需要主键检查
+        LEX_MASTER_INFO::LEX_MI_PK_CHECK_UNCHANGED)
+  have_execute_option = true;  // 如果有任一执行选项，设置标志为true
 
-  if (lex_mi->relay_log_name || lex_mi->relay_log_pos)
-    *need_relay_log_purge = false;
+if (lex_mi->relay_log_name || lex_mi->relay_log_pos)  // 如果指定了中继日志文件名或位置
+  *need_relay_log_purge = false;  // 设置不需要清除中继日志
 
-  return have_execute_option;
+return have_execute_option;  // 返回是否有执行选项
 }
 
 /**
@@ -10807,33 +11055,33 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
   int error = 0;
 
   /* Do we have at least one receive related (IO thread) option? */
-  bool have_receive_option = false;
+  bool have_receive_option = false;  // 是否有接收相关的选项
   /* Do we have at least one execute related (SQL/coord/worker) option? */
-  bool have_execute_option = false;
+  bool have_execute_option = false;  // 是否有执行相关的选项
   /* Do we have at least one option that relates to receival and execution? */
-  bool have_both_receive_execute_option = false;
+  bool have_both_receive_execute_option = false;  // 是否有同时影响接收和执行的选项
   /** Is there a an error during validation */
-  bool validation_error = false;
+  bool validation_error = false;  // 验证过程中是否出错
   /* If there are no mts gaps, we delete the rows in this table. */
-  bool mta_remove_worker_info = false;
+  bool mta_remove_worker_info = false;  // 是否需要删除worker信息
   /* used as a bit mask to indicate running slave threads. */
-  int thread_mask;
+  int thread_mask;  // 用于表示正在运行的从库线程的位掩码
   /*
     Relay logs are purged only if both receive and execute threads are
     stopped before executing CHANGE MASTER and relay_log_file/relay_log_pos
     options are not used.
   */
-  bool need_relay_log_purge = true;
+  bool need_relay_log_purge = true;  // 是否需要清除中继日志
 
   /*
     We want to save the old receive configurations so that we can use them to
     print the changes in these configurations (from-to form). This is used in
     LogErr() later.
   */
-  char saved_host[HOSTNAME_LENGTH + 1], saved_bind_addr[HOSTNAME_LENGTH + 1];
-  uint saved_port = 0;
-  char saved_log_name[FN_REFLEN];
-  my_off_t saved_log_pos = 0;
+  char saved_host[HOSTNAME_LENGTH + 1], saved_bind_addr[HOSTNAME_LENGTH + 1];  // 保存旧的主机名和绑定地址
+  uint saved_port = 0;  // 保存旧的端口号
+  char saved_log_name[FN_REFLEN];  // 保存旧的日志文件名
+  my_off_t saved_log_pos = 0;  // 保存旧的日志位置
 
   DBUG_TRACE;
 
@@ -10842,8 +11090,8 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
     options so that it can update 'mysql.slave_master_info' replication
     repository tables.
   */
-  thd->set_skip_readonly_check();
-  mi->channel_wrlock();
+  thd->set_skip_readonly_check();  // 忽略只读选项
+  mi->channel_wrlock();  // 对主信息对象加写锁
   /*
     When we change master, we first decide which thread is running and
     which is not. We dont want this assumption to break while we change master.
@@ -10853,14 +11101,14 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
     the receive thread is started, we may have a race condition between
     the client thread and receiver thread.
   */
-  lock_slave_threads(mi);
+  lock_slave_threads(mi);  // 锁定从库线程
 
   /*
     Get a bit mask for the slave threads that are running.
     Since the third argument is 0, thread_mask after the function
     returns stands for running threads.
   */
-  init_thread_mask(&thread_mask, mi, false);
+  init_thread_mask(&thread_mask, mi, false);  // 初始化线程掩码，表示正在运行的线程
 
   if (thread_mask) /* If any thread is running */
   {
@@ -10878,19 +11126,19 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
       a CHANGE MASTER without stopping any one thread, the relay log purge
       should be controlled via the 'relay_log_purge' option.
     */
-    need_relay_log_purge = false;
+    need_relay_log_purge = false;  // 如果有线程在运行，不需要清除中继日志
   }
 
   /* Check if at least one receive option is given on change master */
-  have_receive_option = have_change_replication_source_receive_option(lex_mi);
+  have_receive_option = have_change_replication_source_receive_option(lex_mi);  // 检查是否有接收选项
 
   /* Check if at least one execute option is given on change master */
   have_execute_option = have_change_replication_source_execute_option(
-      lex_mi, &need_relay_log_purge);
+      lex_mi, &need_relay_log_purge);  // 检查是否有执行选项
   /* Check if at least one execute option affects both the applier and receiver
    */
   have_both_receive_execute_option =
-      have_change_replication_source_applier_and_receive_option(lex_mi);
+      have_change_replication_source_applier_and_receive_option(lex_mi);  // 检查是否有同时影响接收和执行的选项
 
   /* If either:
       + An option affects both the applier and receiver and one of the threads
@@ -10902,21 +11150,21 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
        ((thread_mask & SLAVE_IO) || (thread_mask & SLAVE_SQL))) ||
       (have_receive_option && have_execute_option && (thread_mask & SLAVE_IO) &&
        (thread_mask & SLAVE_SQL))) {
-    error = ER_SLAVE_CHANNEL_MUST_STOP;
+    error = ER_SLAVE_CHANNEL_MUST_STOP;  // 如果有同时影响接收和执行的选项且线程在运行，报错
     my_error(ER_SLAVE_CHANNEL_MUST_STOP, MYF(0), mi->get_channel());
     goto err;
   }
 
   /* With receiver thread running, we dont allow changing receive options. */
   if (have_receive_option && (thread_mask & SLAVE_IO)) {
-    error = ER_SLAVE_CHANNEL_IO_THREAD_MUST_STOP;
+    error = ER_SLAVE_CHANNEL_IO_THREAD_MUST_STOP;  // 如果接收线程在运行且尝试更改接收选项，报错
     my_error(ER_SLAVE_CHANNEL_IO_THREAD_MUST_STOP, MYF(0), mi->get_channel());
     goto err;
   }
 
   /* With an execute thread running, we don't allow changing execute options. */
   if (have_execute_option && (thread_mask & SLAVE_SQL)) {
-    error = ER_SLAVE_CHANNEL_SQL_THREAD_MUST_STOP;
+    error = ER_SLAVE_CHANNEL_SQL_THREAD_MUST_STOP;  // 如果执行线程在运行且尝试更改执行选项，报错
     my_error(ER_SLAVE_CHANNEL_SQL_THREAD_MUST_STOP, MYF(0), mi->get_channel());
     goto err;
   }
@@ -10928,12 +11176,12 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
      point where AUTO_POSITION is stored in the table and in mi.
   */
   if (global_gtid_mode.get() != Gtid_mode::ON) {
-    if ((error = validate_gtid_option_restrictions(lex_mi, mi))) {
+    if ((error = validate_gtid_option_restrictions(lex_mi, mi))) {  // 检查GTID选项限制
       goto err;
     }
   }
 
-  if ((error = evaluate_inter_option_dependencies(lex_mi, mi))) {
+  if ((error = evaluate_inter_option_dependencies(lex_mi, mi))) {  // 评估选项之间的依赖关系
     goto err;
   }
 
@@ -10941,10 +11189,10 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
       preserve_logs &&        /* And we were asked to keep them */
       mi->rli->inited)        /* And the channel was initialized properly */
   {
-    need_relay_log_purge = false;
+    need_relay_log_purge = false;  // 如果需要保留日志且通道已初始化，不需要清除中继日志
   }
 
-  THD_STAGE_INFO(thd, stage_changing_source);
+  THD_STAGE_INFO(thd, stage_changing_source);  // 设置线程阶段为正在更改源
 
   int thread_mask_stopped_threads;
 
@@ -10954,20 +11202,20 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
     is 1, thread_mask when the function returns stands for stopped threads.
   */
 
-  init_thread_mask(&thread_mask_stopped_threads, mi, true);
+  init_thread_mask(&thread_mask_stopped_threads, mi, true);  // 初始化线程掩码，表示已停止的线程
 
   if (load_mi_and_rli_from_repositories(mi, false, thread_mask_stopped_threads,
-                                        need_relay_log_purge)) {
-    error = ER_MASTER_INFO;
+                                        need_relay_log_purge)) {  // 从存储库加载主信息和从信息
+    error = ER_MASTER_INFO;  // 如果加载失败，报错
     my_error(ER_MASTER_INFO, MYF(0));
     goto err;
   }
 
   std::tie(validation_error, mta_remove_worker_info) =
-      validate_change_replication_source_options(thd, lex_mi, mi, thread_mask);
+      validate_change_replication_source_options(thd, lex_mi, mi, thread_mask);  // 验证更改源选项
 
   if (validation_error) {
-    error = 1;
+    error = 1;  // 如果验证出错，设置错误标志
     goto err;
   }
 
@@ -10980,17 +11228,17 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
    */
 
   if (have_receive_option) {
-    strmake(saved_host, mi->host, HOSTNAME_LENGTH);
-    strmake(saved_bind_addr, mi->bind_addr, HOSTNAME_LENGTH);
-    saved_port = mi->port;
-    strmake(saved_log_name, mi->get_master_log_name(), FN_REFLEN - 1);
-    saved_log_pos = mi->get_master_log_pos();
+    strmake(saved_host, mi->host, HOSTNAME_LENGTH);  // 保存旧的主机名
+    strmake(saved_bind_addr, mi->bind_addr, HOSTNAME_LENGTH);  // 保存旧的绑定地址
+    saved_port = mi->port;  // 保存旧的端口号
+    strmake(saved_log_name, mi->get_master_log_name(), FN_REFLEN - 1);  // 保存旧的日志文件名
+    saved_log_pos = mi->get_master_log_pos();  // 保存旧的日志位置
   }
 
   if (update_change_replication_source_options(
           thd, lex_mi, mi, have_both_receive_execute_option,
-          have_execute_option, have_receive_option)) {
-    error = 1;
+          have_execute_option, have_receive_option)) {  // 更新更改源选项
+    error = 1;  // 如果更新失败，设置错误标志
     goto err;
   }
 
@@ -11019,8 +11267,8 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
         is not 100% clear, so we guard against problems using max().
       */
       mi->set_master_log_pos(max<ulonglong>(
-          BIN_LOG_HEADER_SIZE, mi->rli->get_group_master_log_pos()));
-      mi->set_master_log_name(mi->rli->get_group_master_log_name());
+          BIN_LOG_HEADER_SIZE, mi->rli->get_group_master_log_pos()));  // 设置主日志位置
+      mi->set_master_log_name(mi->rli->get_group_master_log_name());  // 设置主日志文件名
     }
   }
 
@@ -11029,11 +11277,11 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
            mi->get_for_channel_str(true), saved_host, saved_port,
            saved_log_name, (ulong)saved_log_pos, saved_bind_addr, mi->host,
            mi->port, mi->get_master_log_name(), (ulong)mi->get_master_log_pos(),
-           mi->bind_addr);
+           mi->bind_addr);  // 记录更改主库的日志
 
   /* If the receiver is stopped, flush master_info to disk. */
-  if ((thread_mask & SLAVE_IO) == 0 && flush_master_info(mi, true)) {
-    error = ER_RELAY_LOG_INIT;
+  if ((thread_mask & SLAVE_IO) == 0 && flush_master_info(mi, true)) {  // 如果接收线程停止，刷新主信息到磁盘
+    error = ER_RELAY_LOG_INIT;  // 如果刷新失败，报错
     my_error(ER_RELAY_LOG_INIT, MYF(0), "Failed to flush master info file");
     goto err;
   }
@@ -11053,9 +11301,9 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
         purge_relay_log() assumes that we have run_lock and no slave threads
         are running.
       */
-      THD_STAGE_INFO(thd, stage_purging_old_relay_logs);
-      if (mi->rli->purge_relay_logs(thd, &errmsg)) {
-        error = ER_RELAY_LOG_FAIL;
+      THD_STAGE_INFO(thd, stage_purging_old_relay_logs);  // 设置线程阶段为清除旧的中继日志
+      if (mi->rli->purge_relay_logs(thd, &errmsg)) {  // 清除中继日志
+        error = ER_RELAY_LOG_FAIL;  // 如果清除失败，报错
         my_error(ER_RELAY_LOG_FAIL, MYF(0), errmsg);
         goto err;
       }
@@ -11069,16 +11317,25 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
         to ''/0, then second CHANGE MASTER would set the coords in mi to those
         of rli, i.e. to ''/0: we have lost all copies of the original good
         coordinates. That's why we always save good coords in rli.
-*/
+      */
+      /*
+        由于 purge_relay_logs() 破坏了 rli 中的坐标，
+        因此需要将它们恢复到正确的值。如果我们将它们保留为 ''/0，那也可以工作。
+        但在连续两次 CHANGE MASTER（中间没有 START SLAVE）的情况下会失败：
+        因为第一次 CHANGE MASTER 会将 mi 中的坐标设置为 rli 中的正确值，
+        然后将 rli 中的坐标设置为 ''/0，第二次 CHANGE MASTER 会将 mi 中的坐标设置为 rli 中的值，
+        即 ''/0：这样我们就丢失了所有原始正确坐标的副本。
+        这就是为什么我们总是将正确的坐标保存在 rli 中。
+      */
       if (!mi->is_receiver_position_info_invalid()) {
-        mi->rli->set_group_master_log_pos(mi->get_master_log_pos());
-        mi->rli->set_group_master_log_name(mi->get_master_log_name());
-        DBUG_PRINT("info", ("master_log_pos: %llu", mi->get_master_log_pos()));
+        mi->rli->set_group_master_log_pos(mi->get_master_log_pos());  // 恢复主日志位置
+        mi->rli->set_group_master_log_name(mi->get_master_log_name());  // 恢复主日志文件名
+        DBUG_PRINT("info", ("master_log_pos: %llu", mi->get_master_log_pos()));  // 打印主日志位置信息
       }
     } else {
       const char *errmsg = nullptr;
-      if (mi->rli->is_group_relay_log_name_invalid(&errmsg)) {
-        error = ER_RELAY_LOG_INIT;
+      if (mi->rli->is_group_relay_log_name_invalid(&errmsg)) {  // 检查中继日志文件名是否无效
+        error = ER_RELAY_LOG_INIT;  // 如果无效，报错
         my_error(ER_RELAY_LOG_INIT, MYF(0), errmsg);
         goto err;
       }
@@ -11089,15 +11346,15 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
 
     if (!var_group_master_log_name[0] &&  // uninitialized case
         !mi->rli->is_applier_source_position_info_invalid())
-      mi->rli->set_group_master_log_pos(0);
+      mi->rli->set_group_master_log_pos(0);  // 如果未初始化，设置主日志位置为0
 
     mi->rli->abort_pos_wait++; /* for SOURCE_POS_WAIT() to abort */
 
     /* Clear the errors, for a clean start */
-    mi->rli->clear_error();
+    mi->rli->clear_error();  // 清除错误
     if (mi->rli->workers_array_initialized) {
       for (size_t i = 0; i < mi->rli->get_worker_count(); i++) {
-        mi->rli->get_worker(i)->clear_error();
+        mi->rli->get_worker(i)->clear_error();  // 清除worker错误
       }
     }
 
@@ -11112,27 +11369,27 @@ int change_master(THD *thd, Master_info *mi, LEX_MASTER_INFO *lex_mi,
       running.
     */
     if (mi->rli->flush_info(Relay_log_info::RLI_FLUSH_IGNORE_SYNC_OPT |
-                            Relay_log_info::RLI_FLUSH_IGNORE_GTID_ONLY)) {
-      error = ER_RELAY_LOG_INIT;
+                            Relay_log_info::RLI_FLUSH_IGNORE_GTID_ONLY)) {  // 刷新从库信息到磁盘
+      error = ER_RELAY_LOG_INIT;  // 如果刷新失败，报错
       my_error(ER_RELAY_LOG_INIT, MYF(0), "Failed to flush relay info file.");
       goto err;
     }
 
   } /* end 'if (thread_mask & SLAVE_SQL == 0)' */
 
-  log_invalid_position_warning(thd, lex_mi, mi);
+  log_invalid_position_warning(thd, lex_mi, mi);  // 记录无效位置的警告
 
   if (mta_remove_worker_info)
-    if (Rpl_info_factory::reset_workers(mi->rli)) {
-      error = ER_MTS_RESET_WORKERS;
+    if (Rpl_info_factory::reset_workers(mi->rli)) {  // 如果需要删除worker信息，重置worker
+      error = ER_MTS_RESET_WORKERS;  // 如果重置失败，报错
       my_error(ER_MTS_RESET_WORKERS, MYF(0));
       goto err;
     }
 err:
 
-  unlock_slave_threads(mi);
-  mi->channel_unlock();
-  return error;
+  unlock_slave_threads(mi);  // 解锁从库线程
+  mi->channel_unlock();  // 解锁主信息对象
+  return error;  // 返回错误码
 }
 
 /**
@@ -11317,30 +11574,30 @@ static bool is_invalid_change_master_for_group_replication_applier(
 bool change_master_cmd(THD *thd) {
   DBUG_TRACE;
 
-  Master_info *mi = nullptr;
-  LEX *lex = thd->lex;
-  bool res = false;
+  Master_info *mi = nullptr;  // 主信息对象指针
+  LEX *lex = thd->lex;  // 获取当前线程的词法分析器
+  bool res = false;  // 结果标志，初始化为false
 
-  channel_map.wrlock();
+  channel_map.wrlock();  // 对通道映射加写锁
 
   /* The slave must have been initialized to allow CHANGE MASTER statements */
-  if (!is_slave_configured()) {
-    my_error(ER_SLAVE_CONFIGURATION, MYF(0));
-    res = true;
-    goto err;
+  if (!is_slave_configured()) {  // 检查从库是否已配置
+    my_error(ER_SLAVE_CONFIGURATION, MYF(0));  // 如果未配置，报错
+    res = true;  // 设置结果为失败
+    goto err;  // 跳转到错误处理
   }
 
-  if (channel_map.is_group_replication_channel_name(lex->mi.channel, true)) {
+  if (channel_map.is_group_replication_channel_name(lex->mi.channel, true)) {  // 检查是否为组复制通道
     /*
       If the chosen name is for group_replication_applier channel we allow the
       channel creation based on the check as to which field is being updated.
     */
-    LEX_MASTER_INFO *lex_mi = &thd->lex->mi;
-    if (is_invalid_change_master_for_group_replication_applier(lex_mi)) {
+    LEX_MASTER_INFO *lex_mi = &thd->lex->mi;  // 获取词法分析器中的主信息
+    if (is_invalid_change_master_for_group_replication_applier(lex_mi)) {  // 检查是否为无效的CHANGE MASTER操作
       my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0),
-               "CHANGE MASTER with the given parameters", lex->mi.channel);
-      res = true;
-      goto err;
+               "CHANGE MASTER with the given parameters", lex->mi.channel);  // 报错
+      res = true;  // 设置结果为失败
+      goto err;  // 跳转到错误处理
     }
 
     /*
@@ -11350,23 +11607,23 @@ bool change_master_cmd(THD *thd) {
       Thence for CHANGE MASTER execution pre-conditions we need to check if
       the full GR stack is stopped.
     */
-    if (is_group_replication_running()) {
-      my_error(ER_GRP_OPERATION_NOT_ALLOWED_GR_MUST_STOP, MYF(0));
-      res = true;
-      goto err;
+    if (is_group_replication_running()) {  // 检查组复制是否正在运行
+      my_error(ER_GRP_OPERATION_NOT_ALLOWED_GR_MUST_STOP, MYF(0));  // 如果正在运行，报错
+      res = true;  // 设置结果为失败
+      goto err;  // 跳转到错误处理
     }
   }
 
   // If the channel being used is group_replication_recovery we allow the
   // channel creation based on the check as to which field is being updated.
   if (channel_map.is_group_replication_channel_name(lex->mi.channel) &&
-      !channel_map.is_group_replication_channel_name(lex->mi.channel, true)) {
-    LEX_MASTER_INFO *lex_mi = &thd->lex->mi;
-    if (is_invalid_change_master_for_group_replication_recovery(lex_mi)) {
+      !channel_map.is_group_replication_channel_name(lex->mi.channel, true)) {  // 检查是否为组复制恢复通道
+    LEX_MASTER_INFO *lex_mi = &thd->lex->mi;  // 获取词法分析器中的主信息
+    if (is_invalid_change_master_for_group_replication_recovery(lex_mi)) {  // 检查是否为无效的CHANGE MASTER操作
       my_error(ER_SLAVE_CHANNEL_OPERATION_NOT_ALLOWED, MYF(0),
-               "CHANGE MASTER with the given parameters", lex->mi.channel);
-      res = true;
-      goto err;
+               "CHANGE MASTER with the given parameters", lex->mi.channel);  // 报错
+      res = true;  // 设置结果为失败
+      goto err;  // 跳转到错误处理
     }
   }
 
@@ -11374,42 +11631,42 @@ bool change_master_cmd(THD *thd) {
     Error out if number of replication channels are > 1 if FOR CHANNEL
     clause is not provided in the CHANGE MASTER command.
   */
-  if (!lex->mi.for_channel && channel_map.get_num_instances() > 1) {
-    my_error(ER_SLAVE_MULTIPLE_CHANNELS_CMD, MYF(0));
-    res = true;
-    goto err;
+  if (!lex->mi.for_channel && channel_map.get_num_instances() > 1) {  // 检查是否未指定通道且通道数量大于1
+    my_error(ER_SLAVE_MULTIPLE_CHANNELS_CMD, MYF(0));  // 报错
+    res = true;  // 设置结果为失败
+    goto err;  // 跳转到错误处理
   }
 
   /* Get the Master_info of the channel */
-  mi = channel_map.get_mi(lex->mi.channel);
+  mi = channel_map.get_mi(lex->mi.channel);  // 获取指定通道的主信息
 
   /* create a new channel if doesn't exist */
-  if (!mi && strcmp(lex->mi.channel, channel_map.get_default_channel())) {
+  if (!mi && strcmp(lex->mi.channel, channel_map.get_default_channel())) {  // 如果通道不存在且不是默认通道
     /* The mi will be returned holding mi->channel_lock for writing */
-    if (add_new_channel(&mi, lex->mi.channel)) goto err;
+    if (add_new_channel(&mi, lex->mi.channel)) goto err;  // 创建新通道
   }
 
-  if (mi) {
-    bool configure_filters = !Master_info::is_configured(mi);
+  if (mi) {  // 如果主信息存在
+    bool configure_filters = !Master_info::is_configured(mi);  // 检查是否需要配置过滤器
 
-    if (!(res = change_master(thd, mi, &thd->lex->mi))) {
+    if (!(res = change_master(thd, mi, &thd->lex->mi))) {  // 执行CHANGE MASTER操作
       /*
         If the channel was just created or not configured before this
         "CHANGE MASTER", we need to configure rpl_filter for it.
       */
-      if (configure_filters) {
+      if (configure_filters) {  // 如果需要配置过滤器
         if ((res = Rpl_info_factory::configure_channel_replication_filters(
-                 mi->rli, lex->mi.channel)))
-          goto err;
+                 mi->rli, lex->mi.channel)))  // 配置复制过滤器
+          goto err;  // 如果失败，跳转到错误处理
       }
 
       /*
         Issuing deprecation warnings after the change (we make
         sure that we don't issue warning if there is an error).
       */
-      issue_deprecation_warnings_for_channel(thd);
+      issue_deprecation_warnings_for_channel(thd);  // 发出弃用警告
 
-      my_ok(thd);
+      my_ok(thd);  // 发送OK响应
     }
   } else {
     /*
@@ -11417,13 +11674,13 @@ bool change_master_cmd(THD *thd) {
        backward compatible  error message (till 5.6).
        @TODO: This error message shall be improved.
     */
-    my_error(ER_SLAVE_CONFIGURATION, MYF(0));
+    my_error(ER_SLAVE_CONFIGURATION, MYF(0));  // 如果默认通道不存在，报错
   }
 
 err:
-  channel_map.unlock();
+  channel_map.unlock();  // 释放通道映射的锁
 
-  return res;
+  return res;  // 返回结果
 }
 
 /**

@@ -720,172 +720,220 @@ extern Gtid_mode global_gtid_mode;
   lock and then degrades it to a read lock again; there will be a
   short period when the lock is not held at all.
 */
+// 表示SID和SIDNO之间的双向映射。
+// SIDNO总是大于或等于1的数字。
+// 这个数据结构可选地知道一个读写锁，用于保护SIDNO的数量。锁由构造函数的调用者提供，通常由调用者负责获取读锁。如果锁不为NULL，访问方法会断言调用者已经持有读（或写）锁。如果锁不为NULL并且类的方法增加了SIDNO的数量，则该方法会暂时将锁升级为写锁，然后再降级为读锁；会有一小段时间锁没有被持有。
 class Sid_map {
- public:
-  /**
-    Create this Sid_map.
-
-    @param sid_lock Read-write lock that protects updates to the
-    number of SIDNOs.
-  */
-  Sid_map(Checkable_rwlock *sid_lock);
-  /// Destroy this Sid_map.
-  ~Sid_map();
-  /**
-    Clears this Sid_map (for RESET SLAVE)
-
-    @return RETURN_STATUS_OK or RETURN_STAUTS_REPORTED_ERROR
-  */
-  enum_return_status clear();
-  /**
-    Add the given SID to this map if it does not already exist.
-
-    The caller must hold the read lock or write lock on sid_lock
-    before invoking this function.  If the SID does not exist in this
-    map, it will release the read lock, take a write lock, update the
-    map, release the write lock, and take the read lock again.
-
-    @param sid The SID.
-    @retval SIDNO The SIDNO for the SID (a new SIDNO if the SID did
-    not exist, an existing if it did exist).
-    @retval negative Error. This function calls my_error.
-  */
-  rpl_sidno add_sid(const rpl_sid &sid);
-  /**
-    Get the SIDNO for a given SID
-
-    The caller must hold the read lock on sid_lock before invoking
-    this function.
-
-    @param sid The SID.
-    @retval SIDNO if the given SID exists in this map.
-    @retval 0 if the given SID does not exist in this map.
-  */
-  rpl_sidno sid_to_sidno(const rpl_sid &sid) const {
-    if (sid_lock != nullptr) sid_lock->assert_some_lock();
-    const auto it = _sid_to_sidno.find(sid);
-    if (it == _sid_to_sidno.end()) return 0;
-    return it->second->sidno;
-  }
-  /**
-    Get the SID for a given SIDNO.
-
-    Raises an assertion if the SIDNO is not valid.
-
-    If need_lock is true, acquires sid_lock->rdlock; otherwise asserts
-    that it is held already.
-
-    @param sidno The SIDNO.
-    @param need_lock If true, and sid_lock!=NULL, this function will
-    acquire sid_lock before looking up the sid, and then release
-    it. If false, and sid_lock!=NULL, this function will assert the
-    sid_lock is already held. If sid_lock==NULL, nothing is done
-    w.r.t. locking.
-    @retval NULL The SIDNO does not exist in this map.
-    @retval pointer Pointer to the SID.  The data is shared with this
-    Sid_map, so should not be modified.  It is safe to read the data
-    even after this Sid_map is modified, but not if this Sid_map is
-    destroyed.
-  */
-  const rpl_sid &sidno_to_sid(rpl_sidno sidno, bool need_lock = false) const {
-    if (sid_lock != nullptr) {
-      if (need_lock)
-        sid_lock->rdlock();
-      else
-        sid_lock->assert_some_lock();
-    }
-    assert(sidno >= 1 && sidno <= get_max_sidno());
-    const rpl_sid &ret = (_sidno_to_sid[sidno - 1])->sid;
-    if (sid_lock != nullptr && need_lock) sid_lock->unlock();
-    return ret;
-  }
-  /**
-    Return the n'th smallest sidno, in the order of the SID's UUID.
-
-    The caller must hold the read or write lock on sid_lock before
-    invoking this function.
-
-    @param n A number in the interval [0, get_max_sidno()-1], inclusively.
-  */
-  rpl_sidno get_sorted_sidno(rpl_sidno n) const {
-    if (sid_lock != nullptr) sid_lock->assert_some_lock();
-    return _sorted[n];
-  }
-  /**
-    Return the biggest sidno in this Sid_map.
-
-    The caller must hold the read or write lock on sid_lock before
-    invoking this function.
-  */
-  rpl_sidno get_max_sidno() const {
-    if (sid_lock != nullptr) sid_lock->assert_some_lock();
-    return static_cast<rpl_sidno>(_sidno_to_sid.size());
-  }
-
-  /// Return the sid_lock.
-  Checkable_rwlock *get_sid_lock() const { return sid_lock; }
-
-  /**
-    Deep copy this Sid_map to dest.
-
-    The caller must hold:
-     * the read lock on this sid_lock
-     * the write lock on the dest sid_lock
-    before invoking this function.
-
-    @param[out] dest The Sid_map to which the sids and sidnos will
-                     be copied.
-    @return RETURN_STATUS_OK or RETURN_STATUS_REPORTED_ERROR.
-  */
-  enum_return_status copy(Sid_map *dest);
-
- private:
-  /// Node pointed to by both the hash and the array.
-  struct Node {
-    rpl_sidno sidno;
-    rpl_sid sid;
-  };
-
-  static const uchar *sid_map_get_key(const uchar *ptr, size_t *length) {
-    const Node *node = pointer_cast<const Node *>(ptr);
-    *length = binary_log::Uuid::BYTE_LENGTH;
-    return node->sid.bytes;
-  }
-
-  /**
-    Create a Node from the given SIDNO and SID and add it to
-    _sidno_to_sid, _sid_to_sidno, and _sorted.
-
-    The caller must hold the write lock on sid_lock before invoking
-    this function.
-
-    @param sidno The SIDNO to add.
-    @param sid The SID to add.
-    @return RETURN_STATUS_OK or RETURN_STATUS_REPORTED_ERROR.
-  */
-  enum_return_status add_node(rpl_sidno sidno, const rpl_sid &sid);
-
-  /// Read-write lock that protects updates to the number of SIDNOs.
-  mutable Checkable_rwlock *sid_lock;
-
-  /**
-    Array that maps SIDNO to SID; the element at index N points to a
-    Node with SIDNO N-1.
-  */
-  Prealloced_array<Node *, 8> _sidno_to_sid;
-  /**
-    Hash that maps SID to SIDNO.
-  */
-  malloc_unordered_map<rpl_sid, unique_ptr_my_free<Node>, binary_log::Hash_Uuid>
-      _sid_to_sidno{key_memory_Sid_map_Node};
-  /**
-    Array that maps numbers in the interval [0, get_max_sidno()-1] to
-    SIDNOs, in order of increasing SID.
-
-    @see Sid_map::get_sorted_sidno.
-  */
-  Prealloced_array<rpl_sidno, 8> _sorted;
-};
+  public:
+   /**
+     Create this Sid_map.
+ 
+     @param sid_lock Read-write lock that protects updates to the
+     number of SIDNOs.
+   */
+   // 创建这个Sid_map。
+   // @param sid_lock 保护SIDNO数量更新的读写锁。
+   Sid_map(Checkable_rwlock *sid_lock);
+   /// Destroy this Sid_map.
+   // 销毁这个Sid_map。
+   ~Sid_map();
+   /**
+     Clears this Sid_map (for RESET SLAVE)
+ 
+     @return RETURN_STATUS_OK or RETURN_STAUTS_REPORTED_ERROR
+   */
+   // 清除这个Sid_map（用于RESET SLAVE）。
+   // @return RETURN_STATUS_OK 或 RETURN_STATUS_REPORTED_ERROR
+   enum_return_status clear();
+   /**
+     Add the given SID to this map if it does not already exist.
+ 
+     The caller must hold the read lock or write lock on sid_lock
+     before invoking this function.  If the SID does not exist in this
+     map, it will release the read lock, take a write lock, update the
+     map, release the write lock, and take the read lock again.
+ 
+     @param sid The SID.
+     @retval SIDNO The SIDNO for the SID (a new SIDNO if the SID did
+     not exist, an existing if it did exist).
+     @retval negative Error. This function calls my_error.
+   */
+   // 如果给定的SID不存在，则将其添加到这个映射中。
+   // 调用者在调用此函数之前必须持有sid_lock的读锁或写锁。如果SID不存在于这个映射中，它将释放读锁，获取写锁，更新映射，释放写锁，然后再次获取读锁。
+   // @param sid SID。
+   // @retval SIDNO SID的SIDNO（如果SID不存在，则为新的SIDNO；如果存在，则为现有的SIDNO）。
+   // @retval 负数 错误。此函数调用my_error。
+   rpl_sidno add_sid(const rpl_sid &sid);
+   /**
+     Get the SIDNO for a given SID
+ 
+     The caller must hold the read lock on sid_lock before invoking
+     this function.
+ 
+     @param sid The SID.
+     @retval SIDNO if the given SID exists in this map.
+     @retval 0 if the given SID does not exist in this map.
+   */
+   // 获取给定SID的SIDNO。
+   // 调用者在调用此函数之前必须持有sid_lock的读锁。
+   // @param sid SID。
+   // @retval SIDNO 如果给定的SID存在于这个映射中。
+   // @retval 0 如果给定的SID不存在于这个映射中。
+   rpl_sidno sid_to_sidno(const rpl_sid &sid) const {
+     if (sid_lock != nullptr) sid_lock->assert_some_lock();
+     const auto it = _sid_to_sidno.find(sid);
+     if (it == _sid_to_sidno.end()) return 0;
+     return it->second->sidno;
+   }
+   /**
+     Get the SID for a given SIDNO.
+ 
+     Raises an assertion if the SIDNO is not valid.
+ 
+     If need_lock is true, acquires sid_lock->rdlock; otherwise asserts
+     that it is held already.
+ 
+     @param sidno The SIDNO.
+     @param need_lock If true, and sid_lock!=NULL, this function will
+     acquire sid_lock before looking up the sid, and then release
+     it. If false, and sid_lock!=NULL, this function will assert the
+     sid_lock is already held. If sid_lock==NULL, nothing is done
+     w.r.t. locking.
+     @retval NULL The SIDNO does not exist in this map.
+     @retval pointer Pointer to the SID.  The data is shared with this
+     Sid_map, so should not be modified.  It is safe to read the data
+     even after this Sid_map is modified, but not if this Sid_map is
+     destroyed.
+   */
+   // 获取给定SIDNO的SID。
+   // 如果SIDNO无效，则引发断言。
+   // 如果need_lock为true，则获取sid_lock->rdlock；否则断言已经持有锁。
+   // @param sidno SIDNO。
+   // @param need_lock 如果为true，并且sid_lock!=NULL，此函数将在查找sid之前获取sid_lock，然后释放它。如果为false，并且sid_lock!=NULL，此函数将断言已经持有sid_lock。如果sid_lock==NULL，则不进行锁定操作。
+   // @retval NULL SIDNO不存在于这个映射中。
+   // @retval pointer 指向SID的指针。数据与此Sid_map共享，因此不应修改。即使在此Sid_map被修改后，读取数据也是安全的，但如果此Sid_map被销毁，则不安全。
+   const rpl_sid &sidno_to_sid(rpl_sidno sidno, bool need_lock = false) const {
+     if (sid_lock != nullptr) {
+       if (need_lock)
+         sid_lock->rdlock();
+       else
+         sid_lock->assert_some_lock();
+     }
+     assert(sidno >= 1 && sidno <= get_max_sidno());
+     const rpl_sid &ret = (_sidno_to_sid[sidno - 1])->sid;
+     if (sid_lock != nullptr && need_lock) sid_lock->unlock();
+     return ret;
+   }
+   /**
+     Return the n'th smallest sidno, in the order of the SID's UUID.
+ 
+     The caller must hold the read or write lock on sid_lock before
+     invoking this function.
+ 
+     @param n A number in the interval [0, get_max_sidno()-1], inclusively.
+   */
+   // 返回按SID的UUID顺序排列的第n个最小的sidno。
+   // 调用者在调用此函数之前必须持有sid_lock的读锁或写锁。
+   // @param n 区间[0, get_max_sidno()-1]内的数字，包括边界。
+   rpl_sidno get_sorted_sidno(rpl_sidno n) const {
+     if (sid_lock != nullptr) sid_lock->assert_some_lock();
+     return _sorted[n];
+   }
+   /**
+     Return the biggest sidno in this Sid_map.
+ 
+     The caller must hold the read or write lock on sid_lock before
+     invoking this function.
+   */
+   // 返回此Sid_map中最大的sidno。
+   // 调用者在调用此函数之前必须持有sid_lock的读锁或写锁。
+   rpl_sidno get_max_sidno() const {
+     if (sid_lock != nullptr) sid_lock->assert_some_lock();
+     return static_cast<rpl_sidno>(_sidno_to_sid.size());
+   }
+ 
+   /// Return the sid_lock.
+   // 返回sid_lock。
+   Checkable_rwlock *get_sid_lock() const { return sid_lock; }
+ 
+   /**
+     Deep copy this Sid_map to dest.
+ 
+     The caller must hold:
+      * the read lock on this sid_lock
+      * the write lock on the dest sid_lock
+     before invoking this function.
+ 
+     @param[out] dest The Sid_map to which the sids and sidnos will
+                      be copied.
+     @return RETURN_STATUS_OK or RETURN_STATUS_REPORTED_ERROR.
+   */
+   // 将此Sid_map深拷贝到dest。
+   // 调用者在调用此函数之前必须持有：
+   //  * 此sid_lock的读锁
+   //  * dest sid_lock的写锁
+   // @param[out] dest 将sids和sidnos复制到的Sid_map。
+   // @return RETURN_STATUS_OK 或 RETURN_STATUS_REPORTED_ERROR。
+   enum_return_status copy(Sid_map *dest);
+ 
+  private:
+   /// Node pointed to by both the hash and the array.
+   // 由哈希和数组指向的节点。
+   struct Node {
+     rpl_sidno sidno;
+     rpl_sid sid;
+   };
+ 
+   static const uchar *sid_map_get_key(const uchar *ptr, size_t *length) {
+     const Node *node = pointer_cast<const Node *>(ptr);
+     *length = binary_log::Uuid::BYTE_LENGTH;
+     return node->sid.bytes;
+   }
+ 
+   /**
+     Create a Node from the given SIDNO and SID and add it to
+     _sidno_to_sid, _sid_to_sidno, and _sorted.
+ 
+     The caller must hold the write lock on sid_lock before invoking
+     this function.
+ 
+     @param sidno The SIDNO to add.
+     @param sid The SID to add.
+     @return RETURN_STATUS_OK or RETURN_STATUS_REPORTED_ERROR.
+   */
+   // 从给定的SIDNO和SID创建一个Node，并将其添加到_sidno_to_sid、_sid_to_sidno和_sorted中。
+   // 调用者在调用此函数之前必须持有sid_lock的写锁。
+   // @param sidno 要添加的SIDNO。
+   // @param sid 要添加的SID。
+   // @return RETURN_STATUS_OK 或 RETURN_STATUS_REPORTED_ERROR。
+   enum_return_status add_node(rpl_sidno sidno, const rpl_sid &sid);
+ 
+   /// Read-write lock that protects updates to the number of SIDNOs.
+   // 保护SIDNO数量更新的读写锁。
+   mutable Checkable_rwlock *sid_lock;
+ 
+   /**
+     Array that maps SIDNO to SID; the element at index N points to a
+     Node with SIDNO N-1.
+   */
+   // 将SIDNO映射到SID的数组；索引N处的元素指向SIDNO为N-1的Node。
+   Prealloced_array<Node *, 8> _sidno_to_sid;
+   /**
+     Hash that maps SID to SIDNO.
+   */
+   // 将SID映射到SIDNO的哈希表。
+   malloc_unordered_map<rpl_sid, unique_ptr_my_free<Node>, binary_log::Hash_Uuid>
+       _sid_to_sidno{key_memory_Sid_map_Node};
+   /**
+     Array that maps numbers in the interval [0, get_max_sidno()-1] to
+     SIDNOs, in order of increasing SID.
+ 
+     @see Sid_map::get_sorted_sidno.
+   */
+   // 将区间[0, get_max_sidno()-1]内的数字映射到SIDNOs的数组，按SID的递增顺序排列。
+   // @see Sid_map::get_sorted_sidno。
+   Prealloced_array<rpl_sidno, 8> _sorted;
+ };
 
 extern Sid_map *global_sid_map;
 

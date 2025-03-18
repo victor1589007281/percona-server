@@ -181,9 +181,12 @@ bool Multisource_info::delete_mi(const char *channel_name) {
 
 bool Multisource_info::is_group_replication_channel_name(const char *channel,
                                                          bool is_applier) {
+  // 检查给定的通道名称是否是组复制通道名称
   if (is_applier)
+    // 如果是应用线程，检查是否与组复制的应用通道名称匹配
     return !strcmp(channel, group_replication_channel_names[0]);
   else
+    // 如果不是应用线程，检查是否与组复制的应用通道或恢复通道名称匹配
     return !strcmp(channel, group_replication_channel_names[0]) ||
            !strcmp(channel, group_replication_channel_names[1]);
 }

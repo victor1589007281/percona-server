@@ -782,13 +782,13 @@ bool Master_info::is_ignore_server_ids_configured() {
 }
 
 void Master_info::update_flushed_relay_log_info() {
-  MYSQL_BIN_LOG *relay_log = &rli->relay_log;
-  mysql_mutex_assert_owner(&data_lock);
-  if (rli->inited)
-    relay_log->get_current_log(&flushed_relay_log_info, false);
+  MYSQL_BIN_LOG *relay_log = &rli->relay_log;  // 获取 relay_log 对象
+  mysql_mutex_assert_owner(&data_lock);  // 断言持有 data_lock
+  if (rli->inited)  // 如果 Relay_log_info 已初始化
+    relay_log->get_current_log(&flushed_relay_log_info, false);  // 获取当前 relay log 的信息
   else {
-    flushed_relay_log_info.log_file_name[0] = 0;
-    flushed_relay_log_info.pos = 0;
+    flushed_relay_log_info.log_file_name[0] = 0;  // 如果未初始化，清空 log_file_name
+    flushed_relay_log_info.pos = 0;  // 如果未初始化，清空 pos
   }
 }
 

@@ -1065,7 +1065,16 @@ void Relay_log_info::close_temporary_tables() {
   @retval 0 successfully executed,
   @retval 1 otherwise error, where errmsg is set to point to the error message.
 */
+/**
+  清除中继日志。假设已经对 rli 加锁，并且没有从库线程在运行。
 
+  @param[in]   thd         连接对象，
+  @param[out]  errmsg      存储指向错误消息的指针。
+  @param[in]   delete_only 如果为 true，则不开始写入新的日志文件。
+
+  @retval 0 成功执行，
+  @retval 1 否则出错，errmsg 设置为指向错误消息。
+*/
 int Relay_log_info::purge_relay_logs(THD *thd, const char **errmsg,
                                      bool delete_only) {
   int error = 0;
@@ -1106,19 +1115,37 @@ int Relay_log_info::purge_relay_logs(THD *thd, const char **errmsg,
     SLAVE, he will see old, confusing master_log_*. In other words, we reinit
     master_log_* for SHOW SLAVE STATUS to display fine in any case.
   */
-  group_master_log_name[0] = 0;
-  group_master_log_pos = 0;
+  /*
+    即使 inited==0，我们仍然尝试清空 master_log_* 变量。实际上，
+    inited==0 并不意味着它们已经是空的。
+
+    可能是从库的信息初始化部分成功：例如，如果 relay-log.info 存在，
+    但所有中继日志已被手动删除，init_info 会读取旧的 relay-log.info
+    并填充 rli->master_log_*，然后 init_info 检查中继日志的存在，
+    这失败了，init_info 将 inited 保留为 0。
+    在这种极端情况下，master_log_pos* 将在下一次 START SLAVE 时
+    正确重新初始化（因为 RESET SLAVE 或 CHANGE MASTER，即调用
+    purge_relay_logs 的函数，将删除伪造的 *.info 文件或用正确的文件
+    替换它们），但是如果用户在 START SLAVE 之前执行 SHOW SLAVE STATUS，
+    他将看到旧的、令人困惑的 master_log_*。换句话说，我们重新初始化
+    master_log_*，以便 SHOW SLAVE STATUS 在任何情况下都能正确显示。
+  */
+  group_master_log_name[0] = 0;  // 清空主日志文件名
+  group_master_log_pos = 0;  // 清空主日志位置
 
   /*
     Following the the relay log purge, the master_log_pos will be in sync
     with relay_log_pos, so the flag should be cleared. Refer bug#11766010.
   */
+  /*
+    在中继日志清除后，master_log_pos 将与 relay_log_pos 同步，
+    因此应清除该标志。参考 bug#11766010。
+  */
+  is_group_master_log_pos_invalid = false;  // 清除主日志位置无效标志
 
-  is_group_master_log_pos_invalid = false;
-
-  if (!inited) {
-    DBUG_PRINT("info", ("inited == 0"));
-    if (error_on_rli_init_info ||
+  if (!inited) {  // 如果未初始化
+    DBUG_PRINT("info", ("inited == 0"));  // 打印调试信息，表示未初始化
+    if (error_on_rli_init_info ||  // 如果初始化信息出错
         /*
           mi->reset means that the channel was reset but still exists. Channel
           shall have the index and the first relay log file.
@@ -1126,77 +1153,83 @@ int Relay_log_info::purge_relay_logs(THD *thd, const char **errmsg,
           Those files shall be remove in a following RESET SLAVE ALL (even when
           channel was not inited again).
         */
-        (mi->reset && delete_only)) {
-      assert(relay_log.is_relay_log);
+        /*
+          mi->reset 表示通道已被重置但仍存在。通道应具有索引和第一个中继日志文件。
+
+          这些文件将在后续的 RESET SLAVE ALL 中被删除（即使通道未再次初始化）。
+        */
+        (mi->reset && delete_only)) {  // 如果通道已重置且 delete_only 为 true
+      assert(relay_log.is_relay_log);  // 断言 relay_log 是中继日志
       ln_without_channel_name =
-          relay_log.generate_name(opt_relay_logname, "-relay-bin", buffer);
+          relay_log.generate_name(opt_relay_logname, "-relay-bin", buffer);  // 生成不带通道名的日志文件名
 
       ln = add_channel_to_relay_log_name(relay_bin_channel, FN_REFLEN,
-                                         ln_without_channel_name);
-      if (opt_relaylog_index_name_supplied) {
+                                         ln_without_channel_name);  // 添加通道名到日志文件名
+      if (opt_relaylog_index_name_supplied) {  // 如果提供了中继日志索引文件名
         char index_file_withoutext[FN_REFLEN];
         relay_log.generate_name(opt_relaylog_index_name, "",
-                                index_file_withoutext);
+                                index_file_withoutext);  // 生成不带扩展名的索引文件名
 
         log_index_name = add_channel_to_relay_log_name(
-            relay_bin_index_channel, FN_REFLEN, index_file_withoutext);
+            relay_bin_index_channel, FN_REFLEN, index_file_withoutext);  // 添加通道名到索引文件名
       } else
-        log_index_name = nullptr;
+        log_index_name = nullptr;  // 否则索引文件名为空
 
-      if (relay_log.open_index_file(log_index_name, ln, true)) {
+      if (relay_log.open_index_file(log_index_name, ln, true)) {  // 打开索引文件
         LogErr(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_PURGE_FAILED,
-               "Failed to open relay log index file:",
+               "Failed to open relay log index file:",  // 记录错误信息，表示打开索引文件失败
                relay_log.get_index_fname());
-        return 1;
+        return 1;  // 返回错误码
       }
-      mysql_mutex_lock(&mi->data_lock);
-      mysql_mutex_lock(log_lock);
+      mysql_mutex_lock(&mi->data_lock);  // 加锁 mi->data_lock
+      mysql_mutex_lock(log_lock);  // 加锁 log_lock
       if (relay_log.open_binlog(
               ln, nullptr,
               (max_relay_log_size ? max_relay_log_size : max_binlog_size), true,
               true /*need_lock_index=true*/, true /*need_sid_lock=true*/,
-              mi->get_mi_description_event())) {
-        mysql_mutex_unlock(log_lock);
-        mysql_mutex_unlock(&mi->data_lock);
+              mi->get_mi_description_event())) {  // 打开中继日志文件
+        mysql_mutex_unlock(log_lock);  // 解锁 log_lock
+        mysql_mutex_unlock(&mi->data_lock);  // 解锁 mi->data_lock
         LogErr(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_PURGE_FAILED,
-               "Failed to open relay log file:", relay_log.get_log_fname());
-        return 1;
+               "Failed to open relay log file:",  // 记录错误信息，表示打开日志文件失败
+               relay_log.get_log_fname());
+        return 1;  // 返回错误码
       }
-      mysql_mutex_unlock(log_lock);
-      mysql_mutex_unlock(&mi->data_lock);
+      mysql_mutex_unlock(log_lock);  // 解锁 log_lock
+      mysql_mutex_unlock(&mi->data_lock);  // 解锁 mi->data_lock
     } else
-      return 0;
+      return 0;  // 否则返回成功
   } else {
-    assert(slave_running == 0);
-    assert(mi->slave_running == 0);
+    assert(slave_running == 0);  // 断言从库线程未运行
+    assert(mi->slave_running == 0);  // 断言主库线程未运行
   }
   /* Reset the transaction boundary parser and clear the last GTID queued */
-  mi->transaction_parser.reset();
+  mi->transaction_parser.reset();  // 重置事务边界解析器
   mysql_mutex_lock(&mi->data_lock);
-  mi->clear_gtid_monitoring_info();
+  mi->clear_gtid_monitoring_info();  // 清除 GTID 监控信息
   mysql_mutex_unlock(&mi->data_lock);
 
-  slave_skip_counter = 0;
+  slave_skip_counter = 0;  // 重置从库跳过计数器
   mysql_mutex_lock(&data_lock);
 
   /**
     Clear the retrieved gtid set for this channel.
   */
   get_sid_lock()->wrlock();
-  (const_cast<Gtid_set *>(get_gtid_set()))->clear_set_and_sid_map();
+  (const_cast<Gtid_set *>(get_gtid_set()))->clear_set_and_sid_map();  // 清除 GTID 集合
   get_sid_lock()->unlock();
 
   if (relay_log.reset_logs(thd, delete_only)) {
-    *errmsg = "Failed during log reset";
+    *errmsg = "Failed during log reset";  // 如果日志重置失败，设置错误消息
     error = 1;
     goto err;
   }
 
   /* Save name of used relay log file */
-  set_group_relay_log_name(relay_log.get_log_fname());
-  group_relay_log_pos = BIN_LOG_HEADER_SIZE;
+  set_group_relay_log_name(relay_log.get_log_fname());  // 保存使用的中继日志文件名
+  group_relay_log_pos = BIN_LOG_HEADER_SIZE;  // 设置中继日志位置为日志头大小
   if (!delete_only && count_relay_log_space()) {
-    *errmsg = "Error counting relay log space";
+    *errmsg = "Error counting relay log space";  // 如果计算中继日志空间失败，设置错误消息
     error = 1;
     goto err;
   }
@@ -1897,12 +1930,13 @@ void Relay_log_info::end_info() {
 }
 
 int Relay_log_info::flush_current_log() {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
   /* When we come to this place in code, relay log may or not be initialized; */
-  if (relay_log.flush()) return 2;
+  /* 当我们执行到这里时，relay log 可能已经初始化，也可能没有初始化； */
+  if (relay_log.flush()) return 2;  // 如果刷新 relay log 失败，返回 2
 
-  return 0;
+  return 0;  // 成功返回 0
 }
 
 void Relay_log_info::set_master_info(Master_info *info) { mi = info; }

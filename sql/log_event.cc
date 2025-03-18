@@ -14463,29 +14463,30 @@ std::pair<bool, binary_log::Log_event_basic_info> extract_log_event_basic_info(
 std::pair<bool, binary_log::Log_event_basic_info> extract_log_event_basic_info(
     const char *buf, size_t length,
     const binary_log::Format_description_event *fd_event) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  binary_log::Log_event_basic_info event_info;
-  event_info.query_length = 0;
+  binary_log::Log_event_basic_info event_info;  // 定义日志事件基本信息对象
+  event_info.query_length = 0;  // 初始化查询长度为0
 
-  uint header_size = fd_event->common_header_len;
-  const char *query = nullptr;
+  uint header_size = fd_event->common_header_len;  // 获取事件头部的长度
+  const char *query = nullptr;  // 初始化查询字符串指针为nullptr
 
   /* Error if the event content is smaller than header size for the format */
-  if (length < header_size) return std::make_pair(true, event_info);
+  /* 如果事件内容小于格式的头大小，则返回错误 */
+  if (length < header_size) return std::make_pair(true, event_info);  // 如果事件长度小于头部大小，返回错误
 
-  event_info.event_type = (Log_event_type)buf[EVENT_TYPE_OFFSET];
+  event_info.event_type = (Log_event_type)buf[EVENT_TYPE_OFFSET];  // 从缓冲区中提取事件类型
 
-  if (binary_log::QUERY_EVENT == event_info.event_type) {
+  if (binary_log::QUERY_EVENT == event_info.event_type) {  // 如果事件类型是QUERY_EVENT
     event_info.query_length =
-        Query_log_event::get_query(buf, length, fd_event, &query);
-    if (event_info.query_length == 0) {
-      assert(query == nullptr);                /* purecov: inspected */
-      return std::make_pair(true, event_info); /* purecov: inspected */
+        Query_log_event::get_query(buf, length, fd_event, &query);  // 获取查询长度
+    if (event_info.query_length == 0) {  // 如果查询长度为0
+      assert(query == nullptr);                /* purecov: inspected */  // 断言查询字符串指针为nullptr
+      return std::make_pair(true, event_info); /* purecov: inspected */  // 返回错误
     }
-    event_info.query = query;
+    event_info.query = query;  // 设置查询字符串
   }
   event_info.ignorable_event =
-      uint2korr(buf + FLAGS_OFFSET) & LOG_EVENT_IGNORABLE_F;
-  return std::make_pair(false, event_info);
+      uint2korr(buf + FLAGS_OFFSET) & LOG_EVENT_IGNORABLE_F;  // 检查事件是否可忽略
+  return std::make_pair(false, event_info);  // 返回成功和事件信息
 }
