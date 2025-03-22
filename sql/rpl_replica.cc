@@ -4444,24 +4444,43 @@ static ulong read_event(MYSQL *mysql, MYSQL_RPL *rpl, Master_info *mi,
   @retval 0 If the delay timed out and the event shall be executed.
 
   @retval nonzero If the delay was interrupted and the event shall be skipped.
+  
+  如果这是一个滞后的从库（通过 `CHANGE MASTER TO MASTER_DELAY = X` 指定），
+  则根据延迟时间进行延迟处理。同时解锁 `rli->data_lock`。
+
+  设计说明：解锁 `rli->data_lock` 的操作必须在此处完成。
+  在从 `rli` 读取延迟信息时必须持有锁，但在休眠时不应持有锁。
+
+  @param ev 即将执行的事件。
+
+  @param thd SQL 线程的 THD 对象。
+
+  @param rli SQL 线程的 Relay_log_info 结构。
+
+  @retval 0 如果延迟超时，事件应被执行。
+
+  @retval 非零 如果延迟被中断，事件应被跳过。
 */
 static int sql_delay_event(Log_event *ev, THD *thd, Relay_log_info *rli) {
-  time_t sql_delay = rli->get_sql_delay();
+  time_t sql_delay = rli->get_sql_delay(); // 获取 SQL 延迟时间
 
-  DBUG_TRACE;
-  mysql_mutex_assert_owner(&rli->data_lock);
-  assert(!rli->belongs_to_client());
+  DBUG_TRACE; // Debug trace
+  mysql_mutex_assert_owner(&rli->data_lock); // Ensure the current thread owns `rli->data_lock`
+  assert(!rli->belongs_to_client()); // Ensure the event does not belong to a client
 
-  if (sql_delay) {
-    int type = ev->get_type_code();
-    time_t sql_delay_end = 0;
+  if (sql_delay) { // If a delay is set
+    int type = ev->get_type_code(); // Get the event type code
+    time_t sql_delay_end = 0; // Initialize the delay end time
 
     if (DBUG_EVALUATE_IF("sql_delay_without_timestamps", 1, 0)) {
       rli->commit_timestamps_status = Relay_log_info::COMMIT_TS_NOT_FOUND;
     }
+
+    // If commit timestamps status is unknown and the event is GTID or anonymous GTID
     if (rli->commit_timestamps_status == Relay_log_info::COMMIT_TS_UNKNOWN &&
         (type == binary_log::GTID_LOG_EVENT ||
          type == binary_log::ANONYMOUS_GTID_LOG_EVENT)) {
+      // Check if the event has commit timestamps
       if (static_cast<Gtid_log_event *>(ev)->has_commit_timestamps) {
         rli->commit_timestamps_status = Relay_log_info::COMMIT_TS_FOUND;
       } else {
@@ -4469,6 +4488,7 @@ static int sql_delay_event(Log_event *ev, THD *thd, Relay_log_info *rli) {
       }
     }
 
+    // If commit timestamps are found
     if (rli->commit_timestamps_status == Relay_log_info::COMMIT_TS_FOUND) {
       if (type == binary_log::GTID_LOG_EVENT ||
           type == binary_log::ANONYMOUS_GTID_LOG_EVENT) {
@@ -4477,6 +4497,10 @@ static int sql_delay_event(Log_event *ev, THD *thd, Relay_log_info *rli) {
           The immediate master timestamp is expressed in microseconds.
           Delayed replication is defined in seconds.
           Hence convert immediate_commit_timestamp to seconds here.
+
+          计算事件的执行时间。
+          主库的时间戳以微秒表示，而延迟复制以秒为单位定义。
+          因此，需要将 `immediate_commit_timestamp` 转换为秒。
         */
         sql_delay_end = ceil((static_cast<Gtid_log_event *>(ev)
                                   ->immediate_commit_timestamp) /
@@ -4485,8 +4509,10 @@ static int sql_delay_event(Log_event *ev, THD *thd, Relay_log_info *rli) {
       }
     } else {
       /*
-        the immediate master does not support commit timestamps
-        in Gtid_log_events
+        The immediate master does not support commit timestamps
+        in Gtid_log_events.
+
+        如果主库不支持 GTID 日志事件中的提交时间戳
       */
       if (type != binary_log::ROTATE_EVENT &&
           type != binary_log::FORMAT_DESCRIPTION_EVENT &&
@@ -4567,30 +4593,45 @@ static int sql_delay_event(Log_event *ev, THD *thd, Relay_log_info *rli) {
 
   @note MTS can store NULL to @c ptr_ev location to indicate
         the event is taken over by a Worker.
+  它还执行以下维护任务：
+   - 初始化线程的 `server_id` 和时间，以及事件的线程。
+   - 如果 `!rli->belongs_to_client()`（即事件属于从库 SQL 线程，而不是用于执行 BINLOG 语句），
+     则执行以下操作：
+     1. 根据 `server_id` 或 `slave_skip_counter` 跳过事件；
+     2. 解锁 `rli->data_lock`；
+     3. 如果需要，根据 `CHANGE MASTER TO MASTER_DELAY=X` 休眠；
+     4. 维护 SQL 线程的运行状态（`rli->thread_state`）。
+   - 根据需要报告错误。
+
+  @param ptr_ev 指向要应用的事件的指针。
+  @param thd 执行事件的客户端线程（如果从库调用，则为从库 SQL 线程；如果执行 BINLOG 语句，则为客户端线程）。
+  @param rli 中继日志信息（如果从库调用，则为从库的 `rli`；如果执行 BINLOG 语句，则为客户端的 `thd->rli_fake`）。
+
+  @note MTS（多线程复制）可以将 NULL 存储到 `ptr_ev` 位置，以指示事件已被 Worker 接管。
+
 
   @retval SLAVE_APPLY_EVENT_AND_UPDATE_POS_OK
-          OK.
+          成功。
 
   @retval SLAVE_APPLY_EVENT_AND_UPDATE_POS_APPLY_ERROR
-          Error calling ev->apply_event().
+          调用 `ev->apply_event()` 时出错。
 
   @retval SLAVE_APPLY_EVENT_AND_UPDATE_POS_UPDATE_POS_ERROR
-          No error calling ev->apply_event(), but error calling
-          ev->update_pos().
+          调用 `ev->apply_event()` 没有错误，但调用 `ev->update_pos()` 时出错。
 
   @retval SLAVE_APPLY_EVENT_AND_UPDATE_POS_APPEND_JOB_ERROR
-          append_item_to_jobs() failed, thread was killed while waiting
-          for successful enqueue on worker.
+          `append_item_to_jobs()` 失败，线程在等待成功入队到 Worker 时被终止。
 */
 static enum enum_slave_apply_event_and_update_pos_retval
 apply_event_and_update_pos(Log_event **ptr_ev, THD *thd, Relay_log_info *rli) {
-  int exec_res = 0;
-  bool skip_event = false;
-  Log_event *ev = *ptr_ev;
-  Log_event::enum_skip_reason reason = Log_event::EVENT_SKIP_NOT;
+  int exec_res = 0; // 执行结果
+  bool skip_event = false; // 是否跳过事件
+  Log_event *ev = *ptr_ev; // 当前事件
+  Log_event::enum_skip_reason reason = Log_event::EVENT_SKIP_NOT; // 跳过原因
 
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪
 
+  // 打印事件信息和线程选项
   DBUG_PRINT("exec_event",
              ("%s(type_code: %d; server_id: %d)", ev->get_type_str(),
               ev->get_type_code(), ev->server_id));
@@ -4626,19 +4667,30 @@ apply_event_and_update_pos(Log_event **ptr_ev, THD *thd, Relay_log_info *rli) {
   /*
      Set the unmasked and actual server ids from the event
    */
-  thd->server_id = ev->server_id;  // use the original server id for logging
+  /*
+    执行事件以更改数据库并更新二进制日志坐标，但首先设置线程所需的一些数据。
+    事件将被执行，除非它应该被跳过。
+  */
+
+  // 设置线程的 server_id 和时间  
+  thd->server_id = ev->server_id; // use the original server id for logging 用于日志记录的原始 server_id
   thd->unmasked_server_id = ev->common_header->unmasked_server_id;
-  thd->set_time();  // time the query
+  thd->set_time(); // 设置查询时间
   thd->lex->set_current_query_block(nullptr);
+
+  // 如果事件时间戳为空，则设置当前时间
   if (!ev->common_header->when.tv_sec)
     my_micro_time_to_timeval(my_micro_time(), &ev->common_header->when);
-  ev->thd = thd;  // because up to this point, ev->thd == 0
+  ev->thd = thd; // because up to this point, ev->thd == 0 将事件的线程设置为当前线程
 
+  // 检查是否需要跳过事件
   if (!(rli->is_mts_recovery() &&
         bitmap_is_set(&rli->recovery_groups, rli->mts_recovery_index))) {
     reason = ev->shall_skip(rli);
   }
+
 #ifndef NDEBUG
+  // 如果是 MTS 恢复模式，打印调试信息
   if (rli->is_mts_recovery()) {
     DBUG_PRINT("mts",
                ("Mts is recovering %d, number of bits set %d, "
@@ -4648,15 +4700,21 @@ apply_event_and_update_pos(Log_event **ptr_ev, THD *thd, Relay_log_info *rli) {
                 rli->mts_recovery_index));
   }
 #endif
+
+  // 如果跳过计数器大于 0，则跳过事件
   if (reason == Log_event::EVENT_SKIP_COUNT) {
     --rli->slave_skip_counter;
     skip_event = true;
   }
+
+  // 设置执行时间戳
   set_timespec_nsec(&rli->ts_exec[0], 0);
   rli->stats_read_time += diff_timespec(&rli->ts_exec[0], &rli->ts_exec[1]);
 
+  // 如果事件不需要跳过，则执行事件
   if (reason == Log_event::EVENT_SKIP_NOT) {
-    // Sleeps if needed, and unlocks rli->data_lock.
+    // Sleeps if needed, and unlocks rli->data_lock
+    // 如果需要，休眠并解锁 rli->data_lock
     if (sql_delay_event(ev, thd, rli))
       return SLAVE_APPLY_EVENT_AND_UPDATE_POS_OK;
 
@@ -5029,9 +5087,34 @@ static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
 
    - An error occurred when updating the binlog position.
 
-  @retval 0 The event was applied.
+  @retval 0 The event was applied successfully.
+  @retval 1 The event was not applied due to an error.
+*/
 
-  @retval 1 The event was not applied.
+/**
+  执行中继日志中下一个事件的顶层函数。
+  该函数由 SQL 线程调用。
+
+  此函数从中继日志中读取事件，执行事件，并推进中继日志的位置。
+  它还处理错误等情况。
+
+  此函数可能因以下原因无法应用事件：
+
+   - 达到了 START SLAVE 命令中 UNTIL 条件指定的位置。
+
+   - 无法从日志中读取事件。
+
+   - 从属线程被终止。
+
+   - 应用事件时发生错误，并且事件已重试了 `slave_trans_retries` 次。
+     如果事件重试次数少于 `slave_trans_retries`，则返回 0。
+
+   - `init_info` 或 `init_relay_log_pos` 失败。（如果应用事件时发生故障，将调用这些函数。）
+
+   - 更新二进制日志位置时发生错误。
+
+  @retval 0 事件成功应用。
+  @retval 1 由于错误，事件未被应用。
 */
 static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
                                 Rpl_applier_reader *applier_reader,
@@ -5059,12 +5142,13 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
       To avoid assigned event groups exceeding rli->checkpoint_group, it
       need force to compute checkpoint.
     */
+    // 检查是否需要触发 MTA（多线程复制）检查点
     bool force = rli->rli_checkpoint_seqno >= rli->checkpoint_group;
     if (force || rli->is_time_for_mta_checkpoint()) {
       mysql_mutex_unlock(&rli->data_lock);
       if (mta_checkpoint_routine(rli, force)) {
         delete ev;
-        return 1;
+        return 1; // 检查点失败，返回错误
       }
       mysql_mutex_lock(&rli->data_lock);
     }
@@ -5074,20 +5158,21 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
     It should be checked after calling mta_checkpoint_routine(), because that
     function could be interrupted by kill while 'force' is true.
   */
+ // 检查 SQL 线程是否被终止
   if (sql_slave_killed(thd, rli)) {
     mysql_mutex_unlock(&rli->data_lock);
     delete ev;
 
     LogErr(INFORMATION_LEVEL, ER_RPL_SLAVE_ERROR_READING_RELAY_LOG_EVENTS,
            rli->get_for_channel_str(), "slave SQL thread was killed");
-    return 1;
+    return 1; // SQL 线程被终止，返回错误
   }
 
   if (ev) {
     enum enum_slave_apply_event_and_update_pos_retval exec_res;
 
     ptr_ev = &ev;
-    /*
+/*
       Even if we don't execute this event, we keep the master timestamp,
       so that seconds behind master shows correct delta (there are events
       that are not replayed, so we keep falling behind).
@@ -5101,7 +5186,31 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
       indicates that GAQ is empty, all slave workers are waiting for events from
       the Coordinator), we need to initialize it with a timestamp from the first
       event to be executed in parallel.
+   */
+    // 更新主库的时间戳，用于计算 "Seconds Behind Master"
+    /*
+    !rli->is_parallel_exec():
+        检查当前是否为并行复制模式。如果不是并行复制模式，则需要更新时间戳。
+    rli->last_master_timestamp == 0:
+        如果 last_master_timestamp 尚未初始化（值为 0），也需要更新时间戳。
+    确保当前事件不是以下类型：
+        ev->is_artificial_event():
+           检查事件是否是人工生成的（非主库生成的事件）。
+        ev->is_relay_log_event():
+           检查事件是否是中继日志相关的事件。
+        ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT:
+           检查事件是否是格式描述事件（FORMAT_DESCRIPTION_EVENT），这种事件不需要更新时间戳。
+        ev->server_id == 0:
+           检查事件的 server_id 是否为 0。如果为 0，表示事件无效，不需要更新时间戳。
     */
+   /*
+   ev->common_header->when.tv_sec:
+      获取事件的时间戳（以秒为单位）。
+   ev->exec_time:
+      获取事件的执行时间（以秒为单位）。
+   rli->last_master_timestamp:
+      将事件的时间戳和执行时间相加，更新 last_master_timestamp。
+   */  
     if ((!rli->is_parallel_exec() || rli->last_master_timestamp == 0) &&
         !(ev->is_artificial_event() || ev->is_relay_log_event() ||
           ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT ||
@@ -5111,6 +5220,7 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
       assert(rli->last_master_timestamp >= 0);
     }
 
+    // 检查是否满足用户指定的 UNTIL 条件
     if (rli->is_until_satisfied_before_dispatching_event(ev)) {
       /*
         Setting abort_slave flag because we do not want additional message about
@@ -5219,7 +5329,7 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
     */
     if (exec_res >= SLAVE_APPLY_EVENT_AND_UPDATE_POS_UPDATE_POS_ERROR) {
       delete ev;
-      return 1;
+      return 1; // 返回错误
     }
 
     if (slave_trans_retries) {
@@ -5267,26 +5377,26 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
           if (load_mi_and_rli_from_repositories(rli->mi, false, SLAVE_SQL,
                                                 false, true))
             LogErr(ERROR_LEVEL,
-                   ER_RPL_SLAVE_FAILED_TO_INIT_MASTER_INFO_STRUCTURE,
-                   rli->get_for_channel_str());
+                            ER_RPL_SLAVE_FAILED_TO_INIT_MASTER_INFO_STRUCTURE,
+                            rli->get_for_channel_str());
           else if (applier_reader->open(&errmsg))
-            LogErr(ERROR_LEVEL, ER_RPL_SLAVE_CANT_INIT_RELAY_LOG_POSITION,
-                   rli->get_for_channel_str(), errmsg);
+                     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_CANT_INIT_RELAY_LOG_POSITION,
+                            rli->get_for_channel_str(), errmsg);
           else {
             exec_res = SLAVE_APPLY_EVENT_RETRY;
             /* chance for concurrent connection to get more locks */
             slave_sleep(thd,
-                        min<ulong>(rli->trans_retries, MAX_SLAVE_RETRY_PAUSE),
-                        sql_slave_killed, rli);
+                                 min<ulong>(rli->trans_retries, MAX_SLAVE_RETRY_PAUSE),
+                                 sql_slave_killed, rli);
             mysql_mutex_lock(&rli->data_lock);  // because of SHOW STATUS
             if (!silent) {
               rli->trans_retries++;
               if (rli->is_processing_trx()) {
                 rli->retried_processing(temp_trans_errno,
-                                        ER_THD_NONCONST(thd, temp_trans_errno),
-                                        rli->trans_retries);
-              }
-            }
+                                                     ER_THD_NONCONST(thd, temp_trans_errno),
+                                                     rli->trans_retries);
+                         }
+                     }
             rli->retried_trans++;
             mysql_mutex_unlock(&rli->data_lock);
 #ifndef NDEBUG
@@ -5299,15 +5409,15 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
             DBUG_PRINT("info", ("Slave retries transaction "
                                 "rli->trans_retries: %lu",
                                 rli->trans_retries));
-          }
-        } else {
+                 }
+             } else {
           thd->fatal_error();
           rli->report(ERROR_LEVEL, thd->get_stmt_da()->mysql_errno(),
-                      "Slave SQL thread retried transaction %lu time(s) "
-                      "in vain, giving up. Consider raising the value of "
-                      "the replica_transaction_retries variable.",
-                      rli->trans_retries);
-        }
+                             "Slave SQL thread retried transaction %lu time(s) "
+                             "in vain, giving up. Consider raising the value of "
+                             "the replica_transaction_retries variable.",
+                             rli->trans_retries);
+             }
       } else if ((exec_res && !temp_err) ||
                  (opt_using_transactions &&
                   rli->get_group_relay_log_pos() ==
@@ -5321,7 +5431,7 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
         rli->trans_retries = 0;  // restart from fresh
         DBUG_PRINT("info", ("Resetting retry counter, rli->trans_retries: %lu",
                             rli->trans_retries));
-      }
+     }
     }
     if (exec_res) {
       delete ev;
@@ -5341,6 +5451,7 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
     read event error happens. So MTS group status is set to MTS_KILLED_GROUP to
     force stop.
   */
+ // 如果无法读取下一个事件，设置 MTS 状态并返回错误
   if (rli->mts_group_status == Relay_log_info::MTS_IN_GROUP)
     rli->mts_group_status = Relay_log_info::MTS_KILLED_GROUP;
 
@@ -7123,13 +7234,24 @@ static int report_apply_event_error(THD *thd, Relay_log_info *rli) {
 }
 
 /**
-  Slave SQL thread entry point.
-
-  @param arg Pointer to Relay_log_info object that holds information
-  for the SQL thread.
-
-  @return Always 0.
-*/
+ * @brief Slave SQL thread entry point.
+ *        从库 SQL 线程的入口点。
+ *
+ * This function is the main entry point for the SQL thread in MySQL replication.
+ * It is responsible for reading events from the relay log and applying them to
+ * the replica database. The function runs in a loop until the thread is stopped
+ * or an error occurs.
+ * 
+ * 该函数是 MySQL 复制中 SQL 线程的主要入口点，负责从中继日志读取事件并将其应用到从库数据库。
+ * 函数在循环中运行，直到线程被停止或发生错误。
+ *
+ * @param arg Pointer to Relay_log_info object that holds information
+ *            for the SQL thread.
+ *            指向包含 SQL 线程信息的 Relay_log_info 对象的指针。
+ *
+ * @return Always 0.
+ *         始终返回 0。
+ */
 extern "C" void *handle_slave_sql(void *arg) {
   THD *thd; /* needs to be first for thread_stack */
   bool thd_added = false;
@@ -7141,46 +7263,60 @@ extern "C" void *handle_slave_sql(void *arg) {
   my_off_t saved_master_log_pos = 0;
   my_off_t saved_skip = 0;
 
-  Relay_log_info *rli = ((Master_info *)arg)->rli;
+  Relay_log_info *rli = ((Master_info *)arg)->rli;  // 获取中继日志信息。
   const char *errmsg;
   longlong slave_errno = 0;
   bool mts_inited = false;
+  // 获取全局线程管理器实例，用于管理所有线程。
   Global_THD_manager *thd_manager = Global_THD_manager::get_instance();
+  
+  // 初始化提交顺序管理器指针，用于确保事务按正确顺序提交。
+  // 如果启用了 `opt_replica_preserve_commit_order` 并且并行工作线程数大于 1，则会实例化该对象。
   Commit_order_manager *commit_order_mngr = nullptr;
+  
+  // 初始化中继日志读取器，用于从中继日志中读取事件。
+  // 该对象封装了中继日志的读取逻辑。
   Rpl_applier_reader applier_reader(rli);
+  
+  // 定义权限检查状态变量，初始化为 SUCCESS。
+  // 该变量用于跟踪权限检查的结果。
   Relay_log_info::enum_priv_checks_status priv_check_status =
       Relay_log_info::enum_priv_checks_status::SUCCESS;
 
+  // 初始化线程，避免调试工具（如 DBUG）崩溃。    
   // needs to call my_thread_init(), otherwise we get a coredump in DBUG_ stuff
   my_thread_init();
   {
     DBUG_TRACE;
 
-    assert(rli->inited);
+    assert(rli->inited);  // 确保中继日志信息已初始化。
     mysql_mutex_lock(&rli->run_lock);
-    assert(!rli->slave_running);
+    assert(!rli->slave_running);  // 确保线程未运行。
     errmsg = nullptr;
 #ifndef NDEBUG
     rli->events_until_exit = abort_slave_event_count;
 #endif
 
-    thd = new THD;  // note that constructor of THD uses DBUG_ !
-    thd->thread_stack = (char *)&thd;  // remember where our stack is
+    thd = new THD;  // note that constructor of THD uses DBUG_ ! 创建线程对象。
+    thd->thread_stack = (char *)&thd;  // remember where our stack is 记录线程栈位置。
     mysql_mutex_lock(&rli->info_thd_lock);
     rli->info_thd = thd;
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
     // save the instrumentation for SQL thread in rli->info_thd
+    // 保存线程的性能监控信息。
     struct PSI_thread *psi = PSI_THREAD_CALL(get_thread)();
     thd_set_psi(rli->info_thd, psi);
 #endif
     mysql_thread_set_psi_THD(thd);
 
+    // 根据并行模式选择子模式。
     if (rli->channel_mts_submode != MTS_PARALLEL_TYPE_DB_NAME)
       rli->current_mts_submode = new Mts_submode_logical_clock();
     else
       rli->current_mts_submode = new Mts_submode_database();
 
+    // 如果启用了提交顺序保护，则初始化提交顺序管理器。
     // Only use replica preserve commit order if more than 1 worker exists
     if (opt_replica_preserve_commit_order && !rli->is_parallel_exec() &&
         rli->opt_replica_parallel_workers > 1)
@@ -7189,26 +7325,32 @@ extern "C" void *handle_slave_sql(void *arg) {
 
     rli->set_commit_order_manager(commit_order_mngr);
 
+    // 检查当前通道是否为组复制通道。
     if (channel_map.is_group_replication_channel_name(rli->get_channel())) {
-      if (channel_map.is_group_replication_channel_name(rli->get_channel(),
-                                                        true)) {
+      // 如果是组复制通道，并且是应用器通道（Applier Channel）。
+      if (channel_map.is_group_replication_channel_name(rli->get_channel(), true)) {
+        // 设置线程的复制通道类型为组复制应用器通道：类似于 SQL 线程。
         thd->rpl_thd_ctx.set_rpl_channel_type(GR_APPLIER_CHANNEL);
       } else {
+        // 否则，设置为组复制恢复通道：当一个组成员从故障中恢复或重新加入组时，从其他成员获取缺失的数据
         thd->rpl_thd_ctx.set_rpl_channel_type(GR_RECOVERY_CHANNEL);
       }
     } else {
+      // 如果不是组复制通道，则设置为标准复制通道。
       thd->rpl_thd_ctx.set_rpl_channel_type(RPL_STANDARD_CHANNEL);
     }
 
     mysql_mutex_unlock(&rli->info_thd_lock);
 
     /* Inform waiting threads that slave has started */
+    /* 通知等待线程，SQL 线程已启动 */
     rli->slave_run_id++;
     rli->slave_running = 1;
     rli->reported_unsafe_warning = false;
     rli->sql_thread_kill_accepted = false;
     rli->last_event_start_time = 0;
 
+    // 初始化复制线程。
     if (init_replica_thread(thd, SLAVE_THD_SQL)) {
       /*
         TODO: this is currently broken - slave start and change master
@@ -7221,13 +7363,17 @@ extern "C" void *handle_slave_sql(void *arg) {
                   "Failed during slave thread initialization");
       goto err;
     }
+    // 初始化线程的查询内存分配器。
     thd->init_query_mem_roots();
 
+    // 如果启用了复制过滤器，则初始化延迟事件。
+    // 延迟事件（Deferred Events） 是一种机制，用于在某些特定情况下暂时延迟处理复制事件，而不是立即应用它们
     if ((rli->deferred_events_collecting = rli->rpl_filter->is_on()))
       rli->deferred_events = new Deferred_log_events();
     thd->rli_slave = rli;
     assert(thd->rli_slave->info_thd == thd);
 
+    // 恢复临时表:临时表的DDL操作会记录到Binlog
     thd->temporary_tables = rli->save_temporary_tables;  // restore temp tables
     set_thd_in_use_temporary_tables(
         rli);  // (re)set sql_thd in use for saved temp tables
@@ -7235,11 +7381,13 @@ extern "C" void *handle_slave_sql(void *arg) {
     set_thd_tx_priority(thd, rli->get_thd_tx_priority());
 
     /* Set write set related options */
+    // 设置写集相关选项。
     set_thd_write_set_options(thd, rli->get_ignore_write_set_memory_limit(),
                               rli->get_allow_drop_write_set());
 
     thd->variables.require_row_format = rli->is_row_format_required();
 
+    // 设置主键检查选项。
     if (Relay_log_info::PK_CHECK_STREAM !=
         rli->get_require_table_primary_key_check())
       thd->variables.sql_require_primary_key =
@@ -7264,6 +7412,7 @@ extern "C" void *handle_slave_sql(void *arg) {
     set_timespec_nsec(&rli->ts_exec[1], 0);
     set_timespec_nsec(&rli->stats_begin, 0);
 
+    // 执行复制钩子。
     if (RUN_HOOK(binlog_relay_io, applier_start, (thd, rli->mi))) {
       mysql_cond_broadcast(&rli->start_cond);
       mysql_mutex_unlock(&rli->run_lock);
@@ -7274,6 +7423,7 @@ extern "C" void *handle_slave_sql(void *arg) {
     }
 
     /* MTS: starting the worker pool */
+    /* 启动并行工作线程池 */
     if (slave_start_workers(rli, rli->opt_replica_parallel_workers,
                             &mts_inited) != 0) {
       mysql_cond_broadcast(&rli->start_cond);
@@ -7303,6 +7453,11 @@ extern "C" void *handle_slave_sql(void *arg) {
       now.
       But the master timestamp is reset by RESET SLAVE & CHANGE MASTER.
     */
+       /*
+      清除错误状态，为线程的干净启动做准备。
+      如果主库空闲，SQL 线程可能不会执行任何 Query_log_event，
+      因此错误状态可能会保留，即使没有问题。
+    */
     rli->clear_error();
     if (rli->workers_array_initialized) {
       for (size_t i = 0; i < rli->get_worker_count(); i++) {
@@ -7310,6 +7465,8 @@ extern "C" void *handle_slave_sql(void *arg) {
       }
     }
 
+    // 检查relay log info 是否保存在事务表中
+    // 若不是，也就是保存在文件中，crash发生的之后，不保证一致性
     if (rli->update_is_transactional() ||
         DBUG_EVALUATE_IF("simulate_update_is_transactional_error", true,
                          false)) {
@@ -7335,12 +7492,15 @@ extern "C" void *handle_slave_sql(void *arg) {
 
     // tell the I/O thread to take relay_log_space_limit into account from now
     // on
+    // 通知 I/O 线程从现在开始考虑 relay_log_space_limit。
+    // 当中继日志的总大小超过该限制时，从库会暂停 I/O 线程，直到 SQL 线程处理完部分中继日志并释放空间。
     mysql_mutex_lock(&rli->log_space_lock);
     rli->ignore_log_space_limit = false;
     mysql_mutex_unlock(&rli->log_space_lock);
     rli->trans_retries = 0;  // start from "no error"
     DBUG_PRINT("info", ("rli->trans_retries: %lu", rli->trans_retries));
 
+    // 打开relay log 
     if (applier_reader.open(&errmsg)) {
       rli->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR, "%s", errmsg);
       goto err;
@@ -7352,6 +7512,15 @@ extern "C" void *handle_slave_sql(void *arg) {
     DBUG_PRINT("master_info", ("log_file_name: %s  position: %s",
                                rli->get_group_master_log_name(),
                                llstr(rli->get_group_master_log_pos(), llbuff)));
+    // 检查临时目录是否可用。
+    /*
+    在主从复制中，LOAD DATA INFILE 的处理方式如下：
+    主库：
+         主库执行 LOAD DATA INFILE 时，会将语句记录到 binlog 中。
+    从库：
+         从库在应用 binlog 中的 LOAD DATA INFILE 语句时，需要访问主库的临时目录以获取数据文件。
+         主库会将数据文件发送给从库，从库会将其存储到自己的临时目录中（由 --slave-load-tmpdir 参数指定）。
+    */
 
     if (check_temp_dir(rli->slave_patternload_file, rli->get_channel())) {
       rli->report(ERROR_LEVEL, thd->get_stmt_da()->mysql_errno(),
@@ -7360,6 +7529,7 @@ extern "C" void *handle_slave_sql(void *arg) {
       goto err;
     }
 
+    // 检查权限用户。
     priv_check_status = rli->check_privilege_checks_user();
     if (!!priv_check_status) {
       rli->report_privilege_check_error(ERROR_LEVEL, priv_check_status,
@@ -7427,10 +7597,16 @@ extern "C" void *handle_slave_sql(void *arg) {
 
     /* Read queries from the IO/THREAD until this thread is killed */
 
+    /* 主循环：读取并应用中继日志中的事件，直到线程被停止或发生错误 */
     while (!main_loop_error && !sql_slave_killed(thd, rli)) {
       Log_event *ev = nullptr;
       THD_STAGE_INFO(thd, stage_reading_event_from_the_relay_log);
       assert(rli->info_thd == thd);
+      /*
+      THD_CHECK_SENTRY(thd) 是一个调试和安全检查宏，用于验证线程对象的完整性。
+      它在 MySQL 的复制过程中起到保护作用，确保线程对象在运行时没有被意外销毁或损坏。
+      这种检查通常用于调试模式下，以捕获潜在的线程管理问题。
+      */
       THD_CHECK_SENTRY(thd);
       if (saved_skip && rli->slave_skip_counter == 0) {
         LogErr(INFORMATION_LEVEL, ER_RPL_SLAVE_SKIP_COUNTER_EXECUTED,
@@ -7444,40 +7620,55 @@ extern "C" void *handle_slave_sql(void *arg) {
       }
 
       // read next event
+      // 从中继日志读取下一个事件。
       mysql_mutex_lock(&rli->data_lock);
       ev = applier_reader.read_next_event();
       mysql_mutex_unlock(&rli->data_lock);
 
       // set additional context as needed by the scheduler before execution
       // takes place
+      // 如果事件不为空，则尝试执行。
       if (ev != nullptr && rli->is_parallel_exec() &&
           rli->current_mts_submode != nullptr)
         rli->current_mts_submode->set_multi_threaded_applier_context(*rli, *ev);
 
       // try to execute the event
+      // 执行事件并处理结果。
       switch (exec_relay_log_event(thd, rli, &applier_reader, ev)) {
         case SLAVE_APPLY_EVENT_AND_UPDATE_POS_OK:
           /** success, we read the next event. */
           /** fall through */
+          // 事件成功应用，并且中继日志位置已更新。
         case SLAVE_APPLY_EVENT_UNTIL_REACHED:
           /** this will make the main loop abort in the next iteration */
           /** fall through */
+          // 达到了用户指定的停止条件（如 `UNTIL` 选项）。
+          // 复制线程将停止进一步处理。  
         case SLAVE_APPLY_EVENT_RETRY:
           /** single threaded applier has to retry.
               Next iteration reads the same event. */
+          // 事件应用失败，但可以重试。
+          // 通常用于临时错误，例如锁冲突或资源不足。              
           break;
-
+      
         case SLAVE_APPLY_EVENT_AND_UPDATE_POS_APPLY_ERROR:
+          // 应用事件时发生错误，无法继续。
+          // 例如，SQL 语法错误或数据完整性问题。        
           /** fall through */
         case SLAVE_APPLY_EVENT_AND_UPDATE_POS_UPDATE_POS_ERROR:
+          // 更新中继日志位置时发生错误。
+          // 可能是由于磁盘写入失败或中继日志损坏。        
           /** fall through */
         case SLAVE_APPLY_EVENT_AND_UPDATE_POS_APPEND_JOB_ERROR:
-          main_loop_error = true;
+          // 将任务追加到工作队列时发生错误。
+          // 可能是由于多线程复制中的任务调度问题。
+          main_loop_error = true; // 设置主循环错误标志，停止复制线程。
           break;
-
+      
         default:
           /* This shall never happen. */
           assert(0); /* purecov: inspected */
+          // 使用断言捕获此问题，通常只在调试模式下生效。
           break;
       }
     }

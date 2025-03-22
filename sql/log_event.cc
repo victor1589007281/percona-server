@@ -3078,26 +3078,37 @@ int Log_event::apply_gtid_event(Relay_log_info *rli) {
          deferred events.
 
    @return 0 as success, otherwise a failure.
+   
+   调度事件以并行执行或直接执行。
+   在 MTS（多线程复制）情况下，事件会与协调器（Coordinator）或工作线程（Worker）关联。
+   如果无法确定工作线程，则会特殊处理为 NULL。
+   在单线程顺序模式下，事件映射到 SQL 线程的 `rli`。
+
+   @note 如果 MTS 失败，协调器会销毁所有已收集的延迟事件。
+
+   @return 0 表示成功，否则表示失败。
 */
 int Log_event::apply_event(Relay_log_info *rli) {
-  DBUG_TRACE;
-  DBUG_PRINT("info", ("event_type=%s", get_type_str()));
-  bool parallel = false;
-  enum enum_mts_event_exec_mode actual_exec_mode = EVENT_EXEC_PARALLEL;
-  THD *rli_thd = rli->info_thd;
+  DBUG_TRACE; // 调试跟踪
+  DBUG_PRINT("info", ("event_type=%s", get_type_str())); // 打印事件类型信息
+  bool parallel = false; // 是否并行执行
+  enum enum_mts_event_exec_mode actual_exec_mode = EVENT_EXEC_PARALLEL; // 实际执行模式
+  THD *rli_thd = rli->info_thd; // 获取 SQL 线程的 THD 对象
 
-  worker = rli;
+  worker = rli; // 默认将工作线程设置为 rli
 
+  // 如果处于 MTS 恢复模式
   if (rli->is_mts_recovery()) {
     bool skip = bitmap_is_set(&rli->recovery_groups, rli->mts_recovery_index) &&
                 (get_mts_execution_mode(rli->mts_group_status ==
                                         Relay_log_info::MTS_IN_GROUP) ==
                  EVENT_EXEC_PARALLEL);
     if (skip) {
-      return 0;
+      return 0; // 跳过事件
     } else {
-      int error = do_apply_event(rli);
+      int error = do_apply_event(rli); // 执行事件
       if (rli->is_processing_trx()) {
+        // 如果是事务处理，检查是否是 DDL（数据定义语言）事件
         // needed to identify DDL's; uses the same logic as in
         // get_slave_worker()
         if (starts_group() && get_type_code() == binary_log::QUERY_EVENT) {
@@ -3106,19 +3117,25 @@ int Log_event::apply_event(Relay_log_info *rli) {
         if (error == 0 &&
             (ends_group() || (get_type_code() == binary_log::QUERY_EVENT &&
                               !rli->curr_group_seen_begin))) {
-          rli->finished_processing();
+          rli->finished_processing(); // 完成事务处理
           rli->curr_group_seen_begin = false;
         }
       }
-      return error;
+      return error; // 返回执行结果
     }
   }
 
+  // 检查是否启用了并行执行模式
   if (!(parallel = rli->is_parallel_exec()) ||
       ((actual_exec_mode = get_mts_execution_mode(
             rli->mts_group_status == Relay_log_info::MTS_IN_GROUP)) !=
        EVENT_EXEC_PARALLEL)) {
     if (parallel) {
+      /*
+         有两类事件由协调器自己执行：
+         1. 主库的 Rotate 事件需要所有工作线程完成任务；
+         2. 从库的 Rotate 事件不需要同步，因为工作线程可能正在等待终止事件完成。
+      */
       /*
          There are two classes of events that Coordinator executes
          itself. One e.g the master Rotate requires all Workers to finish up
@@ -3129,6 +3146,10 @@ int Log_event::apply_event(Relay_log_info *rli) {
 
       if (actual_exec_mode != EVENT_EXEC_ASYNC) {
         /*
+          该事件不会分割当前组，但确实是两个主库 binlog 之间的分隔符，
+          因此需要工作线程同步。
+        */
+        /*
           this  event does not split the current group but is indeed
           a separator between two masters' binlogs therefore requiring
           Workers to sync.
@@ -3136,6 +3157,11 @@ int Log_event::apply_event(Relay_log_info *rli) {
         if (rli->curr_group_da.size() > 0 && is_mts_db_partitioned(rli) &&
             get_type_code() != binary_log::INCIDENT_EVENT) {
           char llbuff[22];
+          /*
+             可能的原因是旧版本 binlog 中的顺序事件被 BEGIN/COMMIT 包裹，
+             或者前面有 User|Int|Random 变量。
+             MTS 必须停止并建议以永久顺序模式重新启动。
+          */
           /*
              Possible reason is a old version binlog sequential event
              wrappped with BEGIN/COMMIT or preceded by User|Int|Random- var.
@@ -3147,8 +3173,9 @@ int Log_event::apply_event(Relay_log_info *rli) {
                    rli->get_event_relay_log_name(), llbuff,
                    "possible malformed group of events from an old master");
 
+          /* 协调器无法继续，标记 MTS 组状态 */
           /* Coordinator can't continue, it marks MTS group status accordingly
-           */
+*/
           rli->mts_group_status = Relay_log_info::MTS_KILLED_GROUP;
 
           goto err;
@@ -3170,14 +3197,21 @@ int Log_event::apply_event(Relay_log_info *rli) {
             the incident's GTID before waiting for workers to finish.
             So that it can exit from mta_checkpoint_routine.
           */
+          /*
+            在 MTS 逻辑时钟模式下，当协调器应用一个事件时，
+            必须在等待工作线程完成之前撤回分配的任务。
+          */
           ((Mts_submode_logical_clock *)rli->current_mts_submode)
               ->withdraw_delegated_job();
         }
         /*
           Marking sure the event will be executed in sequential mode.
         */
+        /*
+          确保事件将在顺序模式下执行。
+        */       
         if (rli->current_mts_submode->wait_for_workers_to_finish(rli) == -1) {
-          // handle synchronization error
+          // handle synchronization error  处理同步错误
           rli->report(WARNING_LEVEL, 0,
                       "Slave worker thread has failed to apply an event. As a "
                       "consequence, the coordinator thread is stopping "
@@ -3187,6 +3221,9 @@ int Log_event::apply_event(Relay_log_info *rli) {
         /*
           Given not in-group mark the event handler can invoke checkpoint
           update routine in the following course.
+        */
+         /*
+          如果不在组中，标记事件处理程序可以调用检查点更新例程。
         */
         assert(rli->mts_group_status == Relay_log_info::MTS_NOT_IN_GROUP ||
                !is_mts_db_partitioned(rli));
@@ -3199,12 +3236,16 @@ int Log_event::apply_event(Relay_log_info *rli) {
             coordinator. So the coordinator applies its GTID right before
             applying the incident event..
           */
+           /*
+            当启用 MTS 时，协调器必须在应用事件之前应用其 GTID。
+          */
           int error = apply_gtid_event(rli);
           if (error) return -1;
         }
 
 #ifndef NDEBUG
         /* all Workers are idle as done through wait_for_workers_to_finish */
+         /* 所有工作线程都处于空闲状态 */
         for (uint k = 0; k < rli->curr_group_da.size(); k++) {
           assert(!(rli->workers[k]->usage_partition));
           assert(!(rli->workers[k]->jobs.get_length()));
@@ -3215,9 +3256,10 @@ int Log_event::apply_event(Relay_log_info *rli) {
       }
     }
 
-    int error = do_apply_event(rli);
+    int error = do_apply_event(rli); // 执行事件
     if (rli->is_processing_trx()) {
       // needed to identify DDL's; uses the same logic as in get_slave_worker()
+      // 检查是否是事务的开始或结束
       if (starts_group() && get_type_code() == binary_log::QUERY_EVENT) {
         rli->curr_group_seen_begin = true;
       }
@@ -3242,7 +3284,7 @@ int Log_event::apply_event(Relay_log_info *rli) {
         };);
       }
     }
-    return error;
+    return error; // 返回执行结果
   }
 
   assert(actual_exec_mode == EVENT_EXEC_PARALLEL);
@@ -3272,7 +3314,7 @@ int Log_event::apply_event(Relay_log_info *rli) {
   rli->mts_group_status = Relay_log_info::MTS_IN_GROUP;
 
   worker =
-      (Relay_log_info *)(rli->last_assigned_worker = get_slave_worker(rli));
+      (Relay_log_info *)(rli->last_assigned_worker = get_slave_worker(rli)); // 获取工作线程
 
 #ifndef NDEBUG
   if (rli->last_assigned_worker)
@@ -3288,6 +3330,10 @@ err:
       Destroy all deferred buffered events but the current prior to exit.
       The current one will be deleted as an event never destined/assigned
       to any Worker in Coordinator's regular execution path.
+    */
+    /*
+      销毁所有延迟缓冲的事件，但保留当前事件。
+      当前事件不会分配给任何工作线程。
     */
     for (uint k = 0; k < rli->curr_group_da.size(); k++) {
       Log_event *ev_buf = rli->curr_group_da[k].data;
