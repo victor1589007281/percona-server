@@ -251,45 +251,63 @@ bool net_realloc(NET *net, size_t length) {
 }
 
 /**
+  清除（重新初始化）NET 结构以用于新命令。
   Clear (reinitialize) the NET structure for a new command.
 
-  @remark Performs debug checking of the socket buffer to
+  @remark 执行调试检查以确保协议序列正确。
+          Performs debug checking of the socket buffer to
           ensure that the protocol sequence is correct.
 
-  @param net          NET handler
-  @param check_buffer  Whether to check the socket buffer.
+  @param net          网络处理器（NET 结构体）。
+                      The NET handler.
+  @param check_buffer 是否检查套接字缓冲区。
+                      Whether to check the socket buffer.
 */
 
 void net_clear(NET *net, bool check_buffer [[maybe_unused]]) {
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪点，用于记录函数调用
 
+  // 模拟错误场景：设置错误的字段长度并返回
   DBUG_EXECUTE_IF("simulate_bad_field_length_1", {
-    net->pkt_nr = net->compress_pkt_nr = 0;
-    net->write_pos = net->buff;
+    net->pkt_nr = net->compress_pkt_nr = 0; // 重置数据包编号
+    net->write_pos = net->buff;            // 重置写指针到缓冲区起始位置
     return;
   });
   DBUG_EXECUTE_IF("simulate_bad_field_length_2", {
-    net->pkt_nr = net->compress_pkt_nr = 0;
-    net->write_pos = net->buff;
+    net->pkt_nr = net->compress_pkt_nr = 0; // 重置数据包编号
+    net->write_pos = net->buff;            // 重置写指针到缓冲区起始位置
     return;
   });
 
+  // 准备处理新命令：重置数据包编号和写指针
   /* Ready for new command */
-  net->pkt_nr = net->compress_pkt_nr = 0;
-  net->write_pos = net->buff;
+  net->pkt_nr = net->compress_pkt_nr = 0; // 重置数据包编号
+  net->write_pos = net->buff;            // 重置写指针到缓冲区起始位置
 }
 
-/** Flush write_buffer if not empty. */
+/**
+  如果写缓冲区不为空，则刷新缓冲区。
+  Flush the write buffer if it is not empty.
 
+  @param net  网络处理器（NET 结构体）。
+              The NET handler.
+
+  @return 如果发生错误，返回 true；否则返回 false。
+          Returns true on error, false otherwise.
+*/
 bool net_flush(NET *net) {
-  bool error = false;
-  DBUG_TRACE;
+  bool error = false; // 初始化错误标志为 false
+  DBUG_TRACE; // 调试跟踪点，用于记录函数调用
+
+  // 如果写缓冲区中有数据（即写指针与缓冲区起始位置不同）
   if (net->buff != net->write_pos) {
-    error =
-        net_write_packet(net, net->buff, (size_t)(net->write_pos - net->buff));
+    // 调用 net_write_packet 将缓冲区中的数据写入网络
+    error = net_write_packet(net, net->buff, (size_t)(net->write_pos - net->buff));
+    // 重置写指针，将其指向缓冲区的起始位置
     net->write_pos = net->buff;
   }
   /* Sync packet number if using compression */
+  // 如果启用了压缩，则同步数据包编号
   if (net->compress) net->pkt_nr = net->compress_pkt_nr;
   return error;
 }
@@ -424,54 +442,69 @@ static bool net_should_retry(NET *net, uint *retry_count [[maybe_unused]]) {
 *****************************************************************************/
 
 /**
+  写入一个逻辑数据包，并附加数据包头部。
   Write a logical packet with packet header.
 
-  Format: Packet length (3 bytes), packet number (1 byte)
-  When compression is used, a 3 byte compression length is added.
+  格式：数据包长度（3 字节），数据包编号（1 字节）。
+  Format: Packet length (3 bytes), packet number (1 byte).
+  如果启用了压缩，则会添加 3 字节的压缩长度。
+  When compression is used, a 3-byte compression length is added.
 
-  @note If compression is used, the original packet is modified!
+  @note 如果使用了压缩，原始数据包会被修改。
+  If compression is used, the original packet is modified.
 */
 
 bool my_net_write(NET *net, const uchar *packet, size_t len) {
-  uchar buff[NET_HEADER_SIZE];
+  uchar buff[NET_HEADER_SIZE]; // 用于存储数据包头部的缓冲区
 
-  DBUG_DUMP("net write", packet, len);
+  DBUG_DUMP("net write", packet, len); // 调试信息：转储要写入的数据包
 
+  // 如果网络连接无效，直接返回 false
   if (unlikely(!net->vio)) /* nowhere to write */
     return false;
 
+  // 模拟网络写入失败的调试点
   DBUG_EXECUTE_IF("simulate_net_write_failure", {
     my_error(ER_NET_ERROR_ON_WRITE, MYF(0));
     return 1;
   };);
 
   /* turn off non blocking operations */
+  // 禁用非阻塞操作
   if (!vio_is_blocking(net->vio)) vio_set_blocking_flag(net->vio, true);
+
   /*
-    Big packets are handled by splitting them in packets of MAX_PACKET_LENGTH
-    length. The last packet is always a packet that is < MAX_PACKET_LENGTH.
+    处理大数据包：将其拆分为多个长度为 MAX_PACKET_LENGTH 的小数据包。
+    最后一个数据包的长度总是小于 MAX_PACKET_LENGTH（可能为 0）。
+    Big packets are handled by splitting them into packets of MAX_PACKET_LENGTH.
+    The last packet is always a packet that is < MAX_PACKET_LENGTH.
     (The last packet may even have a length of 0)
   */
   while (len >= MAX_PACKET_LENGTH) {
-    const ulong z_size = MAX_PACKET_LENGTH;
-    int3store(buff, z_size);
-    buff[3] = (uchar)net->pkt_nr++;
+    const ulong z_size = MAX_PACKET_LENGTH; // 当前数据包的大小
+    int3store(buff, z_size); // 将数据包长度存储到头部缓冲区
+    buff[3] = (uchar)net->pkt_nr++; // 设置数据包编号
+    // 写入数据包头部和数据
     if (net_write_buff(net, buff, NET_HEADER_SIZE) ||
         net_write_buff(net, packet, z_size)) {
-      return true;
+      return true; // 如果写入失败，返回 true
     }
-    packet += z_size;
-    len -= z_size;
+    packet += z_size; // 移动到下一个数据包
+    len -= z_size;    // 减少剩余数据长度
   }
-  /* Write last packet */
-  int3store(buff, static_cast<uint>(len));
-  buff[3] = (uchar)net->pkt_nr++;
+/* Write last packet */
+  // 写入最后一个数据包
+  int3store(buff, static_cast<uint>(len)); // 设置数据包长度
+  buff[3] = (uchar)net->pkt_nr++;          // 设置数据包编号
   if (net_write_buff(net, buff, NET_HEADER_SIZE)) {
-    return true;
+    return true; // 如果写入头部失败，返回 true
   }
+
 #ifdef DEBUG_DATA_PACKETS
-  DBUG_DUMP("packet_header", buff, NET_HEADER_SIZE);
+  DBUG_DUMP("packet_header", buff, NET_HEADER_SIZE); // 调试信息：转储数据包头部
 #endif
+
+  // 写入数据包的剩余部分
   return net_write_buff(net, packet, len);
 }
 
@@ -909,57 +942,76 @@ bool net_write_command(NET *net, uchar command, const uchar *header,
 }
 
 /**
+  将数据缓存到本地缓冲区，然后再发送。
   Caching the data in a local buffer before sending it.
 
-   Fill up net->buffer and send it to the client when full.
+  填充 `net->buffer`，当缓冲区满时将其发送到客户端。
+  如果待发送的数据包大于缓冲区，则直接以大块形式发送（避免复制到内部缓冲区）。
+  如果不是，则将剩余数据复制到缓冲区并返回，而不发送数据。
+  Fill up net->buffer and send it to the client when full.
+  If the rest of the to-be-sent-packet is bigger than buffer,
+  send it in one big block (to avoid copying to internal buffer).
+  If not, copy the rest of the data to the buffer and return without
+  sending data.
 
-    If the rest of the to-be-sent-packet is bigger than buffer,
-    send it in one big block (to avoid copying to internal buffer).
-    If not, copy the rest of the data to the buffer and return without
-    sending data.
-
-  @param net		Network handler
-  @param packet	Packet to send
-  @param len		Length of packet
+  @param net    网络处理器（NET 结构体）。
+                Network handler.
+  @param packet 要发送的数据包。
+                Packet to send.
+  @param len    数据包的长度。
+                Length of packet.
 
   @note
+    缓存的缓冲区可以通过 `net_flush()` 直接发送。
+    必须注意，如果使用压缩协议，不能发送长度超过 `MAX_PACKET_LENGTH` 的数据包，
+    因为压缩数据包的长度存储在 3 个字节中。
     The cached buffer can be sent as it is with 'net_flush()'.
     In this code we have to be careful to not send a packet longer than
     MAX_PACKET_LENGTH to net_write_packet() if we are using the compressed
     protocol as we store the length of the compressed packet in 3 bytes.
 
-  @retval
-    0	ok
-  @retval
-    1
+  @retval 0 成功。
+          0 ok.
+  @retval 1 失败。
+          1 error.
 */
 
 static bool net_write_buff(NET *net, const uchar *packet, size_t len) {
-  DBUG_TRACE;
-  ulong left_length;
+  DBUG_TRACE; // 调试跟踪点，用于记录函数调用。
+
+  ulong left_length; // 缓冲区中剩余的可用空间。
+
+  // 如果启用了压缩协议，并且最大数据包长度超过 `MAX_PACKET_LENGTH`，
+  // 则计算剩余空间为 `MAX_PACKET_LENGTH` 减去当前写指针的位置。
   if (net->compress && net->max_packet > MAX_PACKET_LENGTH)
     left_length = (ulong)(MAX_PACKET_LENGTH - (net->write_pos - net->buff));
   else
     left_length = (ulong)(net->buff_end - net->write_pos);
 
 #ifdef DEBUG_DATA_PACKETS
-  DBUG_DUMP("data", packet, len);
+  DBUG_DUMP("data", packet, len); // 调试信息：转储要写入的数据包。
 #endif
+
+  // 如果数据包长度大于缓冲区剩余空间。
   if (len > left_length) {
+    // 如果缓冲区中已有部分数据，则填充缓冲区并写入。
     if (net->write_pos != net->buff) {
       /* Fill up already used packet and write it */
       memcpy(net->write_pos, packet, left_length);
       if (net_write_packet(net, net->buff,
                            (size_t)(net->write_pos - net->buff) + left_length))
-        return true;
-      net->write_pos = net->buff;
-      packet += left_length;
-      len -= left_length;
+        return true; // 如果写入失败，返回 true。
+      net->write_pos = net->buff; // 重置写指针到缓冲区起始位置。
+      packet += left_length;     // 移动到剩余数据的位置。
+      len -= left_length;        // 减少剩余数据长度。
     }
+
+    // 如果启用了压缩协议。
     if (net->compress) {
       /*
+        压缩协议下，数据包不能超过 16M，因为未压缩长度存储在 3 个字节中。
         We can't have bigger packets than 16M with compression
-        Because the uncompressed length is stored in 3 bytes
+        Because the uncompressed length is stored in 3 bytes.
       */
       left_length = MAX_PACKET_LENGTH;
       while (len > left_length) {
@@ -968,67 +1020,79 @@ static bool net_write_buff(NET *net, const uchar *packet, size_t len) {
         len -= left_length;
       }
     }
+
+    // 如果剩余数据长度大于最大数据包长度，直接写入。
     if (len > net->max_packet) return net_write_packet(net, packet, len);
     /* Send out rest of the blocks as full sized blocks */
+        /* 发送剩余数据块作为完整大小的块 */
   }
+
+  // 如果还有剩余数据，将其复制到缓冲区。
   if (len > 0) memcpy(net->write_pos, packet, len);
-  net->write_pos += len;
-  return false;
+  net->write_pos += len; // 更新写指针。
+  return false; // 返回 false 表示成功。
 }
 
 /**
   Write a determined number of bytes to a network handler.
 
-  @param  net     NET handler.
-  @param  buf     Buffer containing the data to be written.
-  @param  count   The length, in bytes, of the buffer.
+  将指定数量的字节写入网络处理器。
 
-  @return true on error, false on success.
+  @param  net     网络处理器（NET 结构体）。
+                  NET handler.
+  @param  buf     包含要写入数据的缓冲区。
+                  Buffer containing the data to be written.
+  @param  count   缓冲区的长度（以字节为单位）。
+                  The length, in bytes, of the buffer.
+
+  @return 如果发生错误，返回 true；否则返回 false。
+          Returns true on error, false on success.
 */
 
 static bool net_write_raw_loop(NET *net, const uchar *buf, size_t count) {
-  unsigned int retry_count = 0;
+  unsigned int retry_count = 0; // 重试计数器
 
+  // 当还有数据需要写入时，循环执行写操作
   while (count) {
-    size_t sentcnt = vio_write(net->vio, buf, count);
+    size_t sentcnt = vio_write(net->vio, buf, count); // 调用底层 vio_write 写入数据
 
-    /* VIO_SOCKET_ERROR (-1) indicates an error. */
+    /* VIO_SOCKET_ERROR (-1) 表示发生错误 */
     if (sentcnt == VIO_SOCKET_ERROR) {
-      /* A recoverable I/O error occurred? */
-      if (net_should_retry(net, &retry_count))
-        continue;
+      /* 是否发生了可恢复的 I/O 错误？ */
+      if (net_should_retry(net, &retry_count)) // 检查是否需要重试
+        continue; // 如果需要重试，则继续循环
       else
-        break;
+        break; // 否则退出循环
     }
 
-    count -= sentcnt;
-    buf += sentcnt;
+    count -= sentcnt; // 减少剩余需要写入的字节数
+    buf += sentcnt;   // 移动缓冲区指针
 #ifdef MYSQL_SERVER
-    thd_increment_bytes_sent(sentcnt);
+    thd_increment_bytes_sent(sentcnt); // 在服务器端，增加已发送字节计数
 #endif
   }
 
-  /* On failure, propagate the error code. */
+  /* 如果写入失败，传播错误代码 */
   if (count) {
 #ifdef MYSQL_SERVER
-    /* Socket should be closed. */
+    /* 如果是服务器端，标记套接字为不可用 */
     net->error = NET_ERROR_SOCKET_UNUSABLE;
 #else
-    /* Socket has failed for writing but it might still work for reading. */
+    /* 如果是客户端，标记套接字为不可写，但可能仍然可读 */
     net->error = NET_ERROR_SOCKET_NOT_WRITABLE;
 #endif
-    /* Interrupted by a timeout? */
+    /* 检查是否因超时中断 */
     if (vio_was_timeout(net->vio))
-      net->last_errno = ER_NET_WRITE_INTERRUPTED;
+      net->last_errno = ER_NET_WRITE_INTERRUPTED; // 设置超时错误码
     else
-      net->last_errno = ER_NET_ERROR_ON_WRITE;
+      net->last_errno = ER_NET_ERROR_ON_WRITE; // 设置写入错误码
 
 #ifdef MYSQL_SERVER
-    my_error(net->last_errno, MYF(0));
+    my_error(net->last_errno, MYF(0)); // 在服务器端记录错误
 #endif
   }
 
-  return count != 0;
+  return count != 0; // 如果 count 不为 0，表示发生错误
 }
 
 /* clang-format off */
@@ -1274,56 +1338,66 @@ static uchar *compress_packet(NET *net, const uchar *packet, size_t *length) {
 }
 
 /**
+  写入一个 MySQL 协议数据包到网络处理器。
   Write a MySQL protocol packet to the network handler.
 
-  @param  net     NET handler.
-  @param  packet  The packet to write.
-  @param  length  Length of the packet.
+  @param  net     网络处理器（NET 结构体）。
+                  NET handler.
+  @param  packet  要写入的数据包。
+                  The packet to write.
+  @param  length  数据包的长度。
+                  Length of the packet.
 
-  @remark The packet might be encapsulated into a compressed packet.
+  @remark 数据包可能会被封装到一个压缩数据包中。
+          The packet might be encapsulated into a compressed packet.
 
-  @return true on error, false on success.
+  @return 如果发生错误，返回 true；否则返回 false。
+          Returns true on error, false on success.
 */
 
 bool net_write_packet(NET *net, const uchar *packet, size_t length) {
   bool res;
-  DBUG_TRACE;
+  DBUG_TRACE; // 调试跟踪点，用于记录函数调用。
 
+  // 如果套接字不可用或不可写，直接返回错误。
   /* Socket can't be used */
   if (net->error == NET_ERROR_SOCKET_UNUSABLE ||
       net->error == NET_ERROR_SOCKET_NOT_WRITABLE)
     return true;
 
-  net->reading_or_writing = 2;
+  net->reading_or_writing = 2; // 标记当前正在进行写操作。
 
-  const bool do_compress = net->compress;
+  const bool do_compress = net->compress; // 检查是否启用了压缩。
   if (do_compress) {
+    // 如果启用了压缩，将数据包压缩并更新长度。
     if ((packet = compress_packet(net, packet, &length)) == nullptr) {
-      net->error = NET_ERROR_SOCKET_UNUSABLE;
-      net->last_errno = ER_OUT_OF_RESOURCES;
-      /* In the server, allocation failure raises a error. */
-      net->reading_or_writing = 0;
+      net->error = NET_ERROR_SOCKET_UNUSABLE; // 设置错误状态。
+      net->last_errno = ER_OUT_OF_RESOURCES;  // 设置错误码。
+      net->reading_or_writing = 0; // 重置读写状态。
       return true;
     }
   }
 
 #ifdef DEBUG_DATA_PACKETS
-  DBUG_DUMP("data", packet, length);
+  DBUG_DUMP("data", packet, length); // 调试信息：转储要写入的数据包。
 #endif
 
+  // 调用底层函数将数据包写入网络。
   res = net_write_raw_loop(net, packet, length);
 
+  // 如果启用了压缩，释放压缩后的数据包内存。
   if (do_compress) my_free(const_cast<uchar *>(packet));
 
-  net->reading_or_writing = 0;
+  net->reading_or_writing = 0; // 重置读写状态。
 
+  // 如果套接字不可读，标记为不可用。
   /* Socket can't be used any more */
   if (net->error == NET_ERROR_SOCKET_NOT_READABLE) {
     net->error = NET_ERROR_SOCKET_UNUSABLE;
     return true;
   }
 
-  return res;
+  return res; // 返回写入结果。
 }
 
 /*****************************************************************************

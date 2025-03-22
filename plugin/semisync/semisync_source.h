@@ -45,13 +45,25 @@ extern PSI_stage_info stage_reading_semi_sync_ack;
 
 extern unsigned int rpl_semi_sync_source_wait_for_replica_count;
 
+/**
+ * @struct TranxNode
+ * 
+ * Represents a node in the active transaction list for semi-synchronous replication.
+ * 用于表示半同步复制中活跃事务列表的节点。
+ */
 struct TranxNode {
-  char log_name_[FN_REFLEN];
-  my_off_t log_pos_;
-  mysql_cond_t cond;
-  int n_waiters;
-  struct TranxNode *next_;      /* the next node in the sorted list */
-  struct TranxNode *hash_next_; /* the next node during hash collision */
+  char log_name_[FN_REFLEN];  // The binlog file name associated with the transaction.
+                              // 与事务关联的 binlog 文件名。
+  my_off_t log_pos_;          // The binlog file position associated with the transaction.
+                              // 与事务关联的 binlog 文件位置。
+  mysql_cond_t cond;          // Condition variable used for threads waiting on this transaction.
+                              // 用于线程等待该事务的条件变量。
+  int n_waiters;              // Number of threads currently waiting on this transaction.
+                              // 当前等待该事务的线程数。
+  struct TranxNode *next_;    // Pointer to the next node in the sorted transaction list.
+                              // 指向排序事务列表中下一个节点的指针。
+  struct TranxNode *hash_next_; // Pointer to the next node in case of hash collision.
+                                // 在哈希冲突情况下指向下一个节点的指针。
 };
 
 /**
@@ -301,89 +313,141 @@ class TranxNodeAllocator {
 };
 
 /**
-   This class manages memory for active transaction list.
-
-   We record each active transaction with a TranxNode, each session
-   can have only one open transaction. Because of EVENT, the total
-   active transaction nodes can exceed the maximum allowed
-   connections.
-*/
+ * @class ActiveTranx
+ * 
+ * This class manages memory for the active transaction list.
+ * 用于管理半同步复制中活跃事务列表的类。
+ * 
+ * Each active transaction is recorded with a `TranxNode`. Each session
+ * can have only one open transaction. However, due to events like
+ * replication, the total number of active transaction nodes can exceed
+ * the maximum allowed connections.
+ * 每个活跃事务通过一个 `TranxNode` 记录。每个会话只能有一个打开的事务。
+ * 但由于事件（如复制）的存在，活跃事务节点的总数可能超过允许的最大连接数。
+ */
 class ActiveTranx : public Trace {
- private:
-  TranxNodeAllocator allocator_;
-  /* These two record the active transaction list in sort order. */
-  TranxNode *trx_front_, *trx_rear_;
-
-  TranxNode **trx_htb_; /* A hash table on active transactions. */
-
-  int num_entries_;     /* maximum hash table entries */
-  mysql_mutex_t *lock_; /* mutex lock */
-
-  inline void assert_lock_owner();
-
-  inline unsigned int calc_hash(const unsigned char *key, unsigned int length);
-  unsigned int get_hash_value(const char *log_file_name, my_off_t log_file_pos);
-
-  int compare(const char *log_file_name1, my_off_t log_file_pos1,
-              const TranxNode *node2) {
-    return compare(log_file_name1, log_file_pos1, node2->log_name_,
-                   node2->log_pos_);
-  }
-  int compare(const TranxNode *node1, const char *log_file_name2,
-              my_off_t log_file_pos2) {
-    return compare(node1->log_name_, node1->log_pos_, log_file_name2,
-                   log_file_pos2);
-  }
-  int compare(const TranxNode *node1, const TranxNode *node2) {
-    return compare(node1->log_name_, node1->log_pos_, node2->log_name_,
-                   node2->log_pos_);
-  }
-
- public:
-  int signal_waiting_sessions_all();
-  int signal_waiting_sessions_up_to(const char *log_file_name,
-                                    my_off_t log_file_pos);
-  TranxNode *find_active_tranx_node(const char *log_file_name,
-                                    my_off_t log_file_pos);
-  ActiveTranx(mysql_mutex_t *lock, unsigned long trace_level);
-  ~ActiveTranx();
-
-  /* Insert an active transaction node with the specified position.
-   *
-   * Return:
-   *  0: success;  non-zero: error
-   */
-  int insert_tranx_node(const char *log_file_name, my_off_t log_file_pos);
-
-  /* Clear the active transaction nodes until(inclusive) the specified
-   * position.
-   * If log_file_name is NULL, everything will be cleared: the sorted
-   * list and the hash table will be reset to empty.
-   *
-   * Return:
-   *  0: success;  non-zero: error
-   */
-  int clear_active_tranx_nodes(const char *log_file_name,
-                               my_off_t log_file_pos);
-
-  /* Given a position, check to see whether the position is an active
-   * transaction's ending position by probing the hash table.
-   */
-  bool is_tranx_end_pos(const char *log_file_name, my_off_t log_file_pos);
-
-  /* Given two binlog positions, compare which one is bigger based on
-   * (file_name, file_position).
-   */
-  static int compare(const char *log_file_name1, my_off_t log_file_pos1,
-                     const char *log_file_name2, my_off_t log_file_pos2);
-
-  /* Find out if active tranx node list is empty or not
-   *
-   * Return:
-   *   True :  If there are no nodes
-   *   False:  otherwise
-   */
-  bool is_empty() { return (trx_front_ == nullptr); }
+  private:
+   TranxNodeAllocator allocator_;  // Allocator for managing memory of TranxNodes.
+                                   // 用于管理 TranxNode 内存的分配器。
+ 
+   /* These two record the active transaction list in sort order. */
+   TranxNode *trx_front_;  // Pointer to the front of the sorted transaction list.
+                           // 指向排序事务列表头部的指针。
+   TranxNode *trx_rear_;   // Pointer to the rear of the sorted transaction list.
+                           // 指向排序事务列表尾部的指针。
+ 
+   TranxNode **trx_htb_;   // A hash table for active transactions.
+                           // 活跃事务的哈希表。
+ 
+   int num_entries_;       // Maximum number of hash table entries.
+                           // 哈希表的最大条目数。
+   mysql_mutex_t *lock_;   // Mutex lock for thread safety.
+                           // 用于线程安全的互斥锁。
+ 
+   inline void assert_lock_owner();  // Ensures the current thread owns the lock.
+                                     // 确保当前线程拥有锁。
+ 
+   inline unsigned int calc_hash(const unsigned char *key, unsigned int length);
+   // Calculates a hash value for a given key.
+   // 为给定的键计算哈希值。
+ 
+   unsigned int get_hash_value(const char *log_file_name, my_off_t log_file_pos);
+   // Generates a hash value based on the binlog file name and position.
+   // 根据 binlog 文件名和位置生成哈希值。
+ 
+   /* Compare functions for sorting and searching transactions. */
+   int compare(const char *log_file_name1, my_off_t log_file_pos1,
+               const TranxNode *node2) {
+     return compare(log_file_name1, log_file_pos1, node2->log_name_,
+                    node2->log_pos_);
+   }
+   int compare(const TranxNode *node1, const char *log_file_name2,
+               my_off_t log_file_pos2) {
+     return compare(node1->log_name_, node1->log_pos_, log_file_name2,
+                    log_file_pos2);
+   }
+   int compare(const TranxNode *node1, const TranxNode *node2) {
+     return compare(node1->log_name_, node1->log_pos_, node2->log_name_,
+                    node2->log_pos_);
+   }
+ 
+  public:
+   /**
+    * Signals all waiting sessions to wake up.
+    * 唤醒所有等待的会话。
+    */
+   int signal_waiting_sessions_all();
+ 
+   /**
+    * Signals waiting sessions up to a specific binlog position.
+    * 唤醒等待到指定 binlog 位置的会话。
+    */
+   int signal_waiting_sessions_up_to(const char *log_file_name,
+                                     my_off_t log_file_pos);
+ 
+   /**
+    * Finds an active transaction node based on the binlog file name and position.
+    * 根据 binlog 文件名和位置查找活跃事务节点。
+    */
+   TranxNode *find_active_tranx_node(const char *log_file_name,
+                                     my_off_t log_file_pos);
+ 
+   /**
+    * Constructor for initializing the ActiveTranx object.
+    * 初始化 ActiveTranx 对象的构造函数。
+    */
+   ActiveTranx(mysql_mutex_t *lock, unsigned long trace_level);
+ 
+   /**
+    * Destructor for cleaning up resources.
+    * 清理资源的析构函数。
+    */
+   ~ActiveTranx();
+ 
+   /**
+    * Inserts an active transaction node with the specified binlog position.
+    * 插入一个具有指定 binlog 位置的活跃事务节点。
+    * 
+    * @return 0 on success, non-zero on error.
+    *         成功返回 0，错误返回非零值。
+    */
+   int insert_tranx_node(const char *log_file_name, my_off_t log_file_pos);
+ 
+   /**
+    * Clears active transaction nodes up to (and including) the specified position.
+    * 清理直到（包括）指定位置的活跃事务节点。
+    * 
+    * If `log_file_name` is NULL, all nodes are cleared, and the list and hash table
+    * are reset to empty.
+    * 如果 `log_file_name` 为 NULL，则清理所有节点，并将列表和哈希表重置为空。
+    * 
+    * @return 0 on success, non-zero on error.
+    *         成功返回 0，错误返回非零值。
+    */
+   int clear_active_tranx_nodes(const char *log_file_name,
+                                my_off_t log_file_pos);
+ 
+   /**
+    * Checks if a given binlog position is the ending position of an active transaction.
+    * 检查给定的 binlog 位置是否为活跃事务的结束位置。
+    */
+   bool is_tranx_end_pos(const char *log_file_name, my_off_t log_file_pos);
+ 
+   /**
+    * Compares two binlog positions to determine which one is larger.
+    * 比较两个 binlog 位置以确定哪个更大。
+    */
+   static int compare(const char *log_file_name1, my_off_t log_file_pos1,
+                      const char *log_file_name2, my_off_t log_file_pos2);
+ 
+   /**
+    * Checks if the active transaction node list is empty.
+    * 检查活跃事务节点列表是否为空。
+    * 
+    * @return True if the list is empty, False otherwise.
+    *         如果列表为空返回 True，否则返回 False。
+    */
+   bool is_empty() { return (trx_front_ == nullptr); }
 };
 
 /**
@@ -562,67 +626,129 @@ class AckContainer : public Trace {
 
 /**
    The extension class for the master of semi-synchronous replication
+   半同步复制主库的扩展类
 */
 class ReplSemiSyncMaster : public ReplSemiSyncBase {
- private:
-  ActiveTranx *active_tranxs_ = nullptr;
-  /* active transaction list: the list will
-     be cleared when semi-sync switches off. */
-
-  /* True when initObject has been called */
-  bool init_done_ = false;
-
-  /* Mutex that protects the following state variables and the active
-   * transaction list.
-   * Under no circumstances we can acquire mysql_bin_log.LOCK_log if we are
-   * already holding LOCK_binlog_ because it can cause deadlocks.
+  private:
+   ActiveTranx *active_tranxs_ = nullptr;
+   /* 
+      active transaction list: the list will
+      be cleared when semi-sync switches off.
+      活跃事务列表：当半同步复制关闭时，该列表将被清空。
    */
-  mysql_mutex_t LOCK_binlog_;
-
-  /* This is set to true when reply_file_name_ contains meaningful data. */
-  bool reply_file_name_inited_ = false;
-
-  /* The binlog name up to which we have received replies from any slaves. */
-  char reply_file_name_[FN_REFLEN];
-
-  /* The position in that file up to which we have the reply from any slaves. */
-  my_off_t reply_file_pos_ = 0;
-
-  /* This is set to true when we know the 'smallest' wait position. */
-  bool wait_file_name_inited_ = false;
-
-  /* NULL, or the 'smallest' filename that a transaction is waiting for
-   * slave replies.
+ 
+   /* 
+      True when initObject has been called 
+      当 `initObject` 被调用时设置为 true。
    */
-  char wait_file_name_[FN_REFLEN];
+   bool init_done_ = false;
+ 
+   /* 
+      Mutex that protects the following state variables and the active
+      transaction list.
+      Under no circumstances we can acquire mysql_bin_log.LOCK_log if we are
+      already holding LOCK_binlog_ because it can cause deadlocks.
+      用于保护以下状态变量和活跃事务列表的互斥锁。
+      在任何情况下，如果已经持有 `LOCK_binlog_`，都不能获取 `mysql_bin_log.LOCK_log`，
+      否则可能导致死锁。
+   */
+   mysql_mutex_t LOCK_binlog_;
+ 
+   /* 
+      This is set to true when reply_file_name_ contains meaningful data.
+      当 `reply_file_name_` 包含有效数据时设置为 true。
+   */
+   bool reply_file_name_inited_ = false;
+ 
+   /* 
+      The binlog name up to which we have received replies from any slaves.
+      我们从任意从库接收到确认的 binlog 文件名。
+   */
+   char reply_file_name_[FN_REFLEN];
+ 
+   /* 
+      The position in that file up to which we have the reply from any slaves.
+      我们从任意从库接收到确认的 binlog 文件中的位置。
+   */
+   my_off_t reply_file_pos_ = 0;
+ 
+   /* 
+      This is set to true when we know the 'smallest' wait position.
+      当我们知道最小的等待位置时设置为 true。
+   */
+   bool wait_file_name_inited_ = false;
+ 
+   /* 
+      NULL, or the 'smallest' filename that a transaction is waiting for
+      slave replies.
+      NULL 或事务等待从库确认的最小文件名。
+   */
+   char wait_file_name_[FN_REFLEN];
 
-  /* The smallest position in that file that a trx is waiting for: the trx
+  /* 
+   * The smallest position in that file that a trx is waiting for: the trx
    * can proceed and send an 'ok' to the client when the master has got the
    * reply from the slave indicating that it already got the binlog events.
+   * 
+   * 表示当前事务等待从库确认的最小 binlog 位置。当主库收到从库的确认（从库已接收到 binlog 事件）后，
+   * 事务可以继续执行并向客户端发送 'ok'。
    */
   my_off_t wait_file_pos_ = 0;
-
-  /* This is set to true when we know the 'largest' transaction commit
+  
+  /* 
+   * This is set to true when we know the 'largest' transaction commit
    * position in the binlog file.
    * We always maintain the position no matter whether semi-sync is switched
-   * on switched off.  When a transaction wait timeout occurs, semi-sync will
-   * switch off.  Binlog-dump thread can use the three fields to detect when
+   * on or switched off. When a transaction wait timeout occurs, semi-sync will
+   * switch off. Binlog-dump thread can use the three fields to detect when
    * slaves catch up on replication so that semi-sync can switch on again.
+   * 
+   * 标记是否已初始化最大事务提交位置。即使半同步复制被关闭，也会维护这些位置。
+   * 当事务等待超时时，半同步复制会关闭。Binlog-dump 线程可以使用这些字段检测从库何时追上主库，
+   * 从而重新启用半同步复制。
    */
   bool commit_file_name_inited_ = false;
-
-  /* The 'largest' binlog filename that a commit transaction is seeing.       */
+  
+  /* 
+   * The 'largest' binlog filename that a commit transaction is seeing.
+   * 
+   * 当前事务看到的 binlog 文件中最大的提交位置的文件名。
+   */
   char commit_file_name_[FN_REFLEN];
-
-  /* The 'largest' position in that file that a commit transaction is seeing. */
+  
+  /* 
+   * The 'largest' position in that file that a commit transaction is seeing.
+   * 
+   * 当前事务看到的 binlog 文件中最大的提交位置的偏移量。
+   */
   my_off_t commit_file_pos_ = 0;
-
-  /* All global variables which can be set by parameters. */
-  volatile bool master_enabled_ =
-      false;                       /* semi-sync is enabled on the master */
-  unsigned long wait_timeout_ = 0; /* timeout period(ms) during tranx wait */
-
-  bool state_ = false; /* whether semi-sync is switched */
+  
+  /* 
+   * All global variables which can be set by parameters.
+   * 
+   * 所有可以通过参数设置的全局变量。
+   */
+  
+  /* 
+   * semi-sync is enabled on the master.
+   * 
+   * 表示主库是否启用了半同步复制。使用 `volatile` 确保多线程环境下的可见性。
+   */
+  volatile bool master_enabled_ = false;
+  
+  /* 
+   * timeout period(ms) during tranx wait.
+   * 
+   * 事务等待从库确认的超时时间（以毫秒为单位）。如果超时，事务将不再等待。
+   */
+  unsigned long wait_timeout_ = 0;
+  
+  /* 
+   * whether semi-sync is switched.
+   * 
+   * 当前半同步复制的状态。`true` 表示半同步复制已开启，`false` 表示已关闭。
+   */
+  bool state_ = false;
 
   AckContainer ack_container_;
 
@@ -805,29 +931,44 @@ class ReplSemiSyncMaster : public ReplSemiSyncBase {
   int setWaitSlaveCount(unsigned int new_value);
 
   /*
-    Update ack_array after receiving an ack from a dump connection. If any
-    binlog pos is already replied by rpl_semi_sync_source_wait_for_replica_count
-    slaves, it will call reportReplyBinlog to increase received binlog
-    position and wake up waiting transactions. It acquires LOCK_binlog_
-    to protect the operation.
-
-    @param[in] server_id  slave server_id of the ack
-    @param[in] log_file_name  binlog file name of the ack
-    @param[in] log_file_pos   binlog file position of the ack
+      Update ack_array after receiving an ack from a dump connection. If any
+      binlog pos is already replied by rpl_semi_sync_source_wait_for_replica_count
+      slaves, it will call reportReplyBinlog to increase received binlog
+      position and wake up waiting transactions. It acquires LOCK_binlog_
+      to protect the operation.
+  
+      在接收到来自 dump 连接的确认（ack）后更新 ack_array。如果某个 binlog 位置
+      已经被 rpl_semi_sync_source_wait_for_replica_count 个从库确认，
+      则调用 reportReplyBinlog 来更新接收到的 binlog 位置，并唤醒等待的事务。
+      该操作会获取 LOCK_binlog_ 以保护操作的线程安全。
+  
+      @param[in] server_id  slave server_id of the ack
+                            确认的从库 server_id。
+      @param[in] log_file_name  binlog file name of the ack
+                                确认的 binlog 文件名。
+      @param[in] log_file_pos   binlog file position of the ack
+                                确认的 binlog 文件位置。
   */
   void handleAck(int server_id, const char *log_file_name,
                  my_off_t log_file_pos) {
-    lock();
+    lock();  // 获取互斥锁，确保线程安全。
+  
+    // 如果只需要一个从库的确认即可满足条件，直接调用 reportReplyBinlog。
     if (rpl_semi_sync_source_wait_for_replica_count == 1)
       reportReplyBinlog(log_file_name, log_file_pos);
     else {
       const AckInfo *ackinfo = nullptr;
-
+  
+      // 将确认信息插入到 ack_container_ 中。
       ackinfo = ack_container_.insert(server_id, log_file_name, log_file_pos);
+  
+      // 如果 ackinfo 不为空，说明某个 binlog 位置已经被足够数量的从库确认，
+      // 调用 reportReplyBinlog 更新接收到的 binlog 位置并唤醒等待的事务。
       if (ackinfo != nullptr)
         reportReplyBinlog(ackinfo->binlog_name, ackinfo->binlog_pos);
     }
-    unlock();
+  
+    unlock();  // 释放互斥锁。
   }
 };
 

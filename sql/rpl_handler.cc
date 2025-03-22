@@ -105,39 +105,46 @@ Delegate::~Delegate() {
   mysql_rwlock_destroy(&lock);
 }
 
+// 添加一个观察者到观察者列表中
+// Add an observer to the observer list
 int Delegate::add_observer(void *observer, st_plugin_int *plugin) {
-  int ret = false;
-  if (!inited) return true;
-  write_lock();
-  Observer_info_iterator iter(observer_info_list);
-  Observer_info *info = iter++;
+  int ret = false; // 初始化返回值为 false，表示成功
+  if (!inited) return true; // 如果未初始化，直接返回 true 表示失败
+  write_lock(); // 获取写锁，确保线程安全
+  Observer_info_iterator iter(observer_info_list); // 创建观察者信息迭代器
+  Observer_info *info = iter++; // 获取第一个观察者信息
+  // 遍历观察者列表，检查是否已存在相同的观察者
   while (info && info->observer != observer) info = iter++;
-  if (!info) {
-    info = new Observer_info(observer, plugin);
+  if (!info) { // 如果观察者不存在
+    info = new Observer_info(observer, plugin); // 创建新的观察者信息对象
+    // 如果创建失败或将观察者信息添加到列表失败
     if (!info || observer_info_list.push_back(info, &memroot))
-      ret = true;
-    else if (this->use_spin_lock_type())
-      acquire_plugin_ref_count(info);
+      ret = true; // 设置返回值为 true，表示失败
+    else if (this->use_spin_lock_type()) // 如果使用自旋锁
+      acquire_plugin_ref_count(info); // 增加插件引用计数
   } else
-    ret = true;
-  unlock();
-  return ret;
+    ret = true; // 如果观察者已存在，设置返回值为 true，表示失败
+  unlock(); // 释放写锁
+  return ret; // 返回结果
 }
 
+// 从观察者列表中移除一个观察者
+// Remove an observer from the observer list
 int Delegate::remove_observer(void *observer) {
-  int ret = false;
-  if (!inited) return true;
-  write_lock();
-  Observer_info_iterator iter(observer_info_list);
-  Observer_info *info = iter++;
+  int ret = false; // 初始化返回值为 false，表示成功
+  if (!inited) return true; // 如果未初始化，直接返回 true 表示失败
+  write_lock(); // 获取写锁，确保线程安全
+  Observer_info_iterator iter(observer_info_list); // 创建观察者信息迭代器
+  Observer_info *info = iter++; // 获取第一个观察者信息
+  // 遍历观察者列表，找到与指定观察者匹配的条目
   while (info && info->observer != observer) info = iter++;
-  if (info) {
-    iter.remove();
-    delete info;
+  if (info) { // 如果找到匹配的观察者
+    iter.remove(); // 从观察者列表中移除该观察者
+    delete info; // 删除观察者信息对象，释放内存
   } else
-    ret = true;
-  unlock();
-  return ret;
+    ret = true; // 如果未找到匹配的观察者，设置返回值为 true，表示失败
+  unlock(); // 释放写锁
+  return ret; // 返回结果
 }
 
 Delegate::Observer_info_iterator Delegate::observer_info_iter() {
@@ -446,53 +453,58 @@ void delegates_update_lock_type() {
 }
 
 /*
-  This macro is used by almost all the Delegate methods to iterate
-  over all the observers running given callback function of the
-  delegate .
+  该宏被几乎所有的 Delegate 方法使用，用于迭代所有观察者并运行指定的回调函数。
 
-  Add observer plugins to the thd->lex list, after each statement, all
-  plugins add to thd->lex will be automatically unlocked.
- */
+  This macro is used by almost all the Delegate methods to iterate
+  over all the observers running the given callback function of the
+  delegate.
+
+  将观察者插件添加到 `thd->lex` 列表中，在每个语句之后，所有添加到 `thd->lex` 的插件都会自动解锁。
+  Add observer plugins to the `thd->lex` list. After each statement, all
+  plugins added to `thd->lex` will be automatically unlocked.
+*/
 #define FOREACH_OBSERVER(r, f, args)                                   \
   r = 0;                                                               \
-  Prealloced_array<plugin_ref, 8> plugins(PSI_NOT_INSTRUMENTED);       \
-  read_lock();                                                         \
-  Observer_info_iterator iter = observer_info_iter();                  \
-  Observer_info *info = iter++;                                        \
+  Prealloced_array<plugin_ref, 8> plugins(PSI_NOT_INSTRUMENTED);       /* 用于存储插件引用的数组 */ \
+  read_lock();                                                         /* 获取读锁，确保线程安全 */ \
+  Observer_info_iterator iter = observer_info_iter();                  /* 获取观察者信息的迭代器 */ \
+  Observer_info *info = iter++;                                        /* 获取第一个观察者信息 */ \
   bool replication_optimize_for_static_plugin_config =                 \
-      this->use_spin_lock_type();                                      \
-  for (; info; info = iter++) {                                        \
+      this->use_spin_lock_type();                                      /* 判断是否使用自旋锁 */ \
+  for (; info; info = iter++) {                                        /* 遍历所有观察者 */ \
     plugin_ref plugin = (replication_optimize_for_static_plugin_config \
                              ? info->plugin                            \
-                             : my_plugin_lock(0, &info->plugin));      \
+                             : my_plugin_lock(0, &info->plugin));      /* 获取插件引用 */ \
     if (!plugin) {                                                     \
-      /* plugin is not initialized or deleted, this is not an error */ \
+      /* 插件未初始化或已删除，这不是错误 */                          \
+      /* Plugin is not initialized or deleted, this is not an error */ \
       continue;                                                        \
     }                                                                  \
     if (!replication_optimize_for_static_plugin_config)                \
-      plugins.push_back(plugin);                                       \
+      plugins.push_back(plugin);                                       /* 将插件引用添加到数组中 */ \
     if (((Observer *)info->observer)->f &&                             \
-        ((Observer *)info->observer)->f args) {                        \
-      r = 1;                                                           \
+        ((Observer *)info->observer)->f args) {                        /* 调用观察者的回调函数 */ \
+      r = 1;                                                           /* 如果回调失败，设置返回值为 1 */ \
       LogEvent()                                                       \
           .prio(ERROR_LEVEL)                                           \
           .errcode(ER_RPL_PLUGIN_FUNCTION_FAILED)                      \
           .subsys(LOG_SUBSYSTEM_TAG)                                   \
           .function(#f)                                                \
           .message("Run function '" #f "' in plugin '%s' failed",      \
-                   info->plugin_int->name.str);                        \
+                   info->plugin_int->name.str);                        /* 记录错误日志 */ \
       break;                                                           \
     }                                                                  \
   }                                                                    \
-  unlock();                                                            \
+  unlock();                                                            /* 释放读锁 */ \
   /*                                                                   \
+     在释放 Delegate 锁之后解锁插件，以避免可能的死锁。                \
      Unlock plugins should be done after we released the Delegate lock \
      to avoid possible deadlock when this is the last user of the      \
      plugin, and when we unlock the plugin, it will try to             \
      deinitialize the plugin, which will try to lock the Delegate in   \
      order to remove the observers.                                    \
   */                                                                   \
-  if (!plugins.empty()) plugin_unlock_list(0, &plugins[0], plugins.size());
+  if (!plugins.empty()) plugin_unlock_list(0, &plugins[0], plugins.size()); /* 解锁插件列表 */
 
 #define FOREACH_OBSERVER_ERROR_OUT(r, f, args, out)                    \
   r = 0;                                                               \
@@ -1242,18 +1254,38 @@ int Binlog_relay_IO_delegate::after_read_event(THD *thd, Master_info *mi,
   return ret;
 }
 
+/**
+  Binlog_relay_IO_delegate 的 after_queue_event 方法。
+
+  该方法在二进制日志事件被排队后调用，触发所有注册的观察者的 `after_queue_event` 回调。
+
+  @param thd       当前线程的上下文。
+                   The current thread context.
+  @param mi        主库信息（Master_info）。
+                   Master information.
+  @param event_buf 二进制日志事件的缓冲区。
+                   The buffer containing the binary log event.
+  @param event_len 二进制日志事件的长度。
+                   The length of the binary log event.
+  @param synced    指示事件是否已同步到磁盘。
+                   Indicates whether the event has been synced to disk.
+
+  @return 如果所有观察者成功执行，则返回 0；否则返回非零值。
+          Returns 0 if all observers execute successfully, otherwise non-zero.
+*/
 int Binlog_relay_IO_delegate::after_queue_event(THD *thd, Master_info *mi,
                                                 const char *event_buf,
                                                 ulong event_len, bool synced) {
   Binlog_relay_IO_param param;
-  init_param(&param, mi);
+  init_param(&param, mi); // 初始化 Binlog_relay_IO_param 结构体
   param.server_id = thd->server_id;
   param.thread_id = thd->thread_id();
 
   uint32 flags = 0;
-  if (synced) flags |= BINLOG_STORAGE_IS_SYNCED;
+  if (synced) flags |= BINLOG_STORAGE_IS_SYNCED; // 如果事件已同步到磁盘，设置标志位
 
   int ret = 0;
+  // 遍历所有注册的观察者，并调用其 after_queue_event 回调
   FOREACH_OBSERVER(ret, after_queue_event,
                    (&param, event_buf, event_len, flags));
   return ret;
@@ -1337,14 +1369,22 @@ int unregister_binlog_transmit_observer(Binlog_transmit_observer *observer,
   return binlog_transmit_delegate->remove_observer(observer);
 }
 
+// 注册一个 Binlog Relay I/O 观察者
+// Register a Binlog Relay I/O observer
 int register_binlog_relay_io_observer(Binlog_relay_IO_observer *observer,
                                       void *p) {
+  // 调用 binlog_relay_io_delegate 的 add_observer 方法，将观察者添加到观察者列表中
+  // Call the add_observer method of binlog_relay_io_delegate to add the observer to the observer list
   return binlog_relay_io_delegate->add_observer(observer, (st_plugin_int *)p);
 }
 
-int unregister_binlog_relay_io_observer(Binlog_relay_IO_observer *observer,
-                                        void *) {
-  return binlog_relay_io_delegate->remove_observer(observer);
+// 注册一个 Binlog Relay I/O 观察者
+// Register a Binlog Relay I/O observer
+int register_binlog_relay_io_observer(Binlog_relay_IO_observer *observer,
+                                      void *p) {
+  // 调用 binlog_relay_io_delegate 的 add_observer 方法，将观察者添加到观察者列表中
+  // Call the add_observer method of binlog_relay_io_delegate to add the observer to the observer list
+  return binlog_relay_io_delegate->add_observer(observer, (st_plugin_int *)p);
 }
 
 static bool is_show_status(enum_sql_command sql_command) {

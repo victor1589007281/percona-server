@@ -82,93 +82,150 @@ Ack_receiver::~Ack_receiver() {
   function_exit(kWho);
 }
 
+/**
+ * @brief Starts the ACK receive thread.
+ *        启动 ACK 接收线程。
+ *
+ * This function initializes and starts the thread responsible for receiving
+ * acknowledgments (ACKs) from slaves. If the thread creation fails, it logs
+ * an error and returns a failure status.
+ * 
+ * 该函数初始化并启动负责接收从库确认（ACK）的线程。如果线程创建失败，
+ * 则记录错误日志并返回失败状态。
+ *
+ * @return `false` on success, `true` on failure.
+ *         成功时返回 `false`，失败时返回 `true`。
+ */
 bool Ack_receiver::start() {
-  const char *kWho = "Ack_receiver::start";
-  function_enter(kWho);
+  const char *kWho = "Ack_receiver::start";  // 函数标识符，用于日志记录。
+  function_enter(kWho);  // 记录函数进入日志。
 
-  if (m_status == ST_DOWN) {
+  if (m_status == ST_DOWN) {  // 如果当前状态为 ST_DOWN，则启动线程。
     my_thread_attr_t attr;
 
-    m_status = ST_UP;
+    m_status = ST_UP;  // 将状态设置为 ST_UP。
 
+    // 初始化线程属性并创建线程。
     if (DBUG_EVALUATE_IF("rpl_semisync_simulate_create_thread_failure", 1, 0) ||
-        my_thread_attr_init(&attr) != 0 ||
-        my_thread_attr_setdetachstate(&attr, MY_THREAD_CREATE_JOINABLE) != 0 ||
+        my_thread_attr_init(&attr) != 0 ||  // 初始化线程属性。
+        my_thread_attr_setdetachstate(&attr, MY_THREAD_CREATE_JOINABLE) != 0 ||  // 设置线程为可连接状态。
 #ifndef _WIN32
-        pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM) != 0 ||
+        pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM) != 0 ||  // 设置线程范围（非 Windows 系统）。
 #endif
         mysql_thread_create(key_ss_thread_Ack_receiver_thread, &m_pid, &attr,
-                            ack_receive_handler, this)) {
+                            ack_receive_handler, this)) {  // 创建线程。
+      // 如果线程创建失败，记录错误日志并将状态重置为 ST_DOWN。
       LogErr(ERROR_LEVEL, ER_SEMISYNC_FAILED_TO_START_ACK_RECEIVER_THD, errno);
 
       m_status = ST_DOWN;
-      return function_exit(kWho, true);
+      return function_exit(kWho, true);  // 返回失败状态。
     }
-    (void)my_thread_attr_destroy(&attr);
+    (void)my_thread_attr_destroy(&attr);  // 销毁线程属性。
   }
-  return function_exit(kWho, false);
+  return function_exit(kWho, false);  // 返回成功状态。
 }
 
+/**
+ * @brief Stops the ACK receive thread.
+ *        停止 ACK 接收线程。
+ *
+ * This function stops the thread responsible for receiving acknowledgments
+ * from slaves. It ensures that the thread is properly joined and cleaned up.
+ * 
+ * 该函数停止负责接收从库确认的线程。确保线程被正确地连接和清理。
+ */
 void Ack_receiver::stop() {
-  const char *kWho = "Ack_receiver::stop";
-  function_enter(kWho);
+  const char *kWho = "Ack_receiver::stop";  // 函数标识符，用于日志记录。
+  function_enter(kWho);  // 记录函数进入日志。
   int ret;
 
-  if (m_status == ST_UP) {
-    mysql_mutex_lock(&m_mutex);
-    m_status = ST_STOPPING;
-    mysql_cond_broadcast(&m_cond);
+  if (m_status == ST_UP) {  // 如果当前状态为 ST_UP，则停止线程。
+    mysql_mutex_lock(&m_mutex);  // 加锁以保护状态变量。
+    m_status = ST_STOPPING;  // 将状态设置为 ST_STOPPING。
+    mysql_cond_broadcast(&m_cond);  // 广播信号，通知线程停止。
 
+    // 等待线程状态变为 ST_DOWN。
     while (m_status == ST_STOPPING) mysql_cond_wait(&m_cond, &m_mutex);
-    mysql_mutex_unlock(&m_mutex);
+    mysql_mutex_unlock(&m_mutex);  // 解锁。
 
     /*
       When arriving here, the ack thread already exists. Join failure has no
-      side effect aganst semisync. So we don't return an error.
+      side effect against semisync. So we don't return an error.
+      到达此处时，ACK 线程已经存在。线程连接失败不会对半同步复制产生影响，
+      因此不会返回错误。
     */
-    ret = my_thread_join(&m_pid, nullptr);
+    ret = my_thread_join(&m_pid, nullptr);  // 回收ACK线程的资源
     if (DBUG_EVALUATE_IF("rpl_semisync_simulate_thread_join_failure", -1, ret))
-      LogErr(ERROR_LEVEL, ER_SEMISYNC_FAILED_TO_STOP_ACK_RECEIVER_THD, errno);
+      LogErr(ERROR_LEVEL, ER_SEMISYNC_FAILED_TO_STOP_ACK_RECEIVER_THD, errno);  // 如果连接失败，记录错误日志。
   }
-  function_exit(kWho);
+  function_exit(kWho);  // 记录函数退出日志。
 }
 
+/**
+ * @brief Adds a new slave to the list of semi-synchronous replication slaves.
+ *        将一个新的从库添加到半同步复制从库列表中。
+ *
+ * This function initializes a `Slave` object with the provided thread's
+ * information (e.g., thread ID, server ID, compression settings, and VIO).
+ * It then adds the `Slave` object to the internal list of slaves (`m_slaves`).
+ * 
+ * 该函数使用提供的线程信息（如线程 ID、服务器 ID、压缩设置和 VIO）
+ * 初始化一个 `Slave` 对象，并将其添加到内部从库列表（`m_slaves`）中。
+ *
+ * @param thd The thread object representing the slave connection.
+ *            表示从库连接的线程对象。
+ *
+ * @return `false` on success, `true` on failure.
+ *         成功时返回 `false`，失败时返回 `true`。
+ */
 bool Ack_receiver::add_slave(THD *thd) {
-  Slave slave;
-  const char *kWho = "Ack_receiver::add_slave";
-  function_enter(kWho);
+  Slave slave;  // 定义一个从库对象。
+  const char *kWho = "Ack_receiver::add_slave";  // 函数标识符，用于日志记录。
+  function_enter(kWho);  // 记录函数进入日志。
 
-  slave.thread_id = thd->thread_id();
-  slave.server_id = thd->server_id;
-  slave.compress_ctx.algorithm = enum_compression_algorithm::MYSQL_UNCOMPRESSED;
+  // 初始化从库对象的基本信息。
+  slave.thread_id = thd->thread_id();  // 设置线程 ID。
+  slave.server_id = thd->server_id;    // 设置服务器 ID。
+  slave.compress_ctx.algorithm = enum_compression_algorithm::MYSQL_UNCOMPRESSED;  // 默认不启用压缩。
+
+  // 获取从库的压缩算法名称。
   char *cmp_algorithm_name = thd->get_protocol()->get_compression_algorithm();
   if (cmp_algorithm_name != nullptr) {
+    // 根据压缩算法名称获取对应的枚举值。
     enum enum_compression_algorithm algorithm =
         get_compression_algorithm(cmp_algorithm_name);
     if (algorithm != enum_compression_algorithm::MYSQL_UNCOMPRESSED &&
-        algorithm != enum_compression_algorithm::MYSQL_INVALID)
+        algorithm != enum_compression_algorithm::MYSQL_INVALID) {
+      // 如果压缩算法有效，则初始化压缩上下文。
       mysql_compress_context_init(
           &slave.compress_ctx, algorithm,
           thd->get_protocol_classic()->get_compression_level());
+    }
   }
+
+  // 设置从库的 VIO（虚拟 I/O）对象。
   slave.vio = thd->get_protocol_classic()->get_vio();
-  slave.vio->mysql_socket.m_psi = nullptr;
+  slave.vio->mysql_socket.m_psi = nullptr;  // 清除 PSI（性能架构接口）信息。
 
-  /* push_back() may throw an exception */
+  // 将从库对象添加到从库列表中。
+  /* push_back() may throw an exception */  
   try {
-    mysql_mutex_lock(&m_mutex);
+    mysql_mutex_lock(&m_mutex);  // 加锁以确保线程安全。
 
+    // 调试点：模拟添加从库失败的场景。
     DBUG_EXECUTE_IF("rpl_semisync_simulate_add_replica_failure", throw 1;);
 
-    m_slaves.push_back(slave);
-    m_slaves_changed = true;
-    mysql_cond_broadcast(&m_cond);
-    mysql_mutex_unlock(&m_mutex);
+    m_slaves.push_back(slave);  // 将从库对象添加到从库列表。
+    m_slaves_changed = true;    // 标记从库列表已更改。
+    mysql_cond_broadcast(&m_cond);  // 广播信号，通知其他线程从库列表已更新。
+    mysql_mutex_unlock(&m_mutex);  // 解锁。
   } catch (...) {
+    // 如果发生异常，解锁并返回失败。
     mysql_mutex_unlock(&m_mutex);
-    return function_exit(kWho, true);
+    return function_exit(kWho, true);  // 记录函数退出日志并返回失败。
   }
-  return function_exit(kWho, false);
+
+  return function_exit(kWho, false);  // 记录函数退出日志并返回成功。
 }
 
 void Ack_receiver::remove_slave(THD *thd) {

@@ -7813,37 +7813,44 @@ void mysql_detach_stmt_list(LIST **stmt_list [[maybe_unused]],
 #endif /* !MYSQL_SERVER */
 }
 
+/**
+  关闭 MySQL 连接。
+  Close the MySQL connection.
+*/
 void STDCALL mysql_close(MYSQL *mysql) {
-  DBUG_TRACE;
-  if (mysql) /* Some simple safety */
+  DBUG_TRACE; // 调试跟踪
+  if (mysql) /* 一些简单的安全检查 */
   {
-    /* If connection is still up, send a QUIT message */
+    /* 如果连接仍然有效，发送一个 QUIT 消息 */
+    // If the connection is still up, send a QUIT message
     if (mysql->net.vio != nullptr &&
         mysql->net.last_errno != NET_ERROR_SOCKET_UNUSABLE &&
         mysql->net.last_errno != NET_ERROR_SOCKET_NOT_WRITABLE) {
-      free_old_query(mysql);
-      mysql->status = MYSQL_STATUS_READY; /* Force command */
-      bool old_reconnect = mysql->reconnect;
-      mysql->reconnect = false;  // avoid recursion
+      free_old_query(mysql); // 释放旧的查询资源
+      mysql->status = MYSQL_STATUS_READY; /* 强制设置状态为 READY */
+      bool old_reconnect = mysql->reconnect; // 保存当前的重连状态
+      mysql->reconnect = false;  // 避免递归调用
       if (vio_is_blocking(mysql->net.vio)) {
+        // 如果连接是阻塞的，发送同步的 QUIT 命令
         simple_command(mysql, COM_QUIT, (uchar *)nullptr, 0, 1);
       } else {
         /*
+          尽最大努力发送命令，但无法等待响应。
           Best effort; try to toss a command on the wire, but we can't wait
           to hear back.
         */
-        bool err; /* unused */
+        bool err; /* 未使用 */
         simple_command_nonblocking(mysql, COM_QUIT, (uchar *)nullptr, 0, 1,
                                    &err);
       }
-      mysql->reconnect = old_reconnect;
-      end_server(mysql); /* Sets mysql->net.vio= 0 */
+      mysql->reconnect = old_reconnect; // 恢复原来的重连状态
+      end_server(mysql); /* 设置 mysql->net.vio = 0 */
     }
-    mysql_close_free(mysql);
-    mysql_close_free_options(mysql);
-    mysql_detach_stmt_list(&mysql->stmts, "mysql_close");
+    mysql_close_free(mysql); // 释放与连接相关的资源
+    mysql_close_free_options(mysql); // 释放连接选项
+    mysql_detach_stmt_list(&mysql->stmts, "mysql_close"); // 解除与语句的关联
     if (mysql->free_me) {
-      my_free(mysql);
+      my_free(mysql); // 如果需要，释放 MYSQL 对象本身
     }
   }
 }

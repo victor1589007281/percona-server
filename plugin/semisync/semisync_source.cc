@@ -214,13 +214,31 @@ bool ActiveTranx::is_tranx_end_pos(const char *log_file_name,
   return (entry != nullptr);
 }
 
+/**
+ * @brief Signals all waiting sessions to wake up.
+ *        唤醒所有等待的会话。
+ *
+ * This function iterates through all active transaction nodes in the list
+ * and broadcasts a signal to all threads waiting on the condition variable
+ * associated with each transaction node. This ensures that all threads
+ * waiting for semi-synchronous replication acknowledgments are notified
+ * to proceed.
+ * 
+ * 该函数遍历所有活跃事务节点，并向每个事务节点的条件变量广播信号，
+ * 唤醒所有等待半同步复制确认的线程。
+ *
+ * @return 0 on success.
+ *         成功时返回 0。
+ */
 int ActiveTranx::signal_waiting_sessions_all() {
-  const char *kWho = "ActiveTranx::signal_waiting_sessions_all";
-  function_enter(kWho);
-  for (TranxNode *entry = trx_front_; entry; entry = entry->next_)
-    mysql_cond_broadcast(&entry->cond);
+  const char *kWho = "ActiveTranx::signal_waiting_sessions_all";  // 函数标识符，用于日志记录。
+  function_enter(kWho);  // 记录函数进入日志。
 
-  return function_exit(kWho, 0);
+  // 遍历活跃事务列表中的每个节点，并广播信号唤醒等待的线程。
+  for (TranxNode *entry = trx_front_; entry; entry = entry->next_)
+    mysql_cond_broadcast(&entry->cond);  // 广播信号到条件变量。
+
+  return function_exit(kWho, 0);  // 记录函数退出日志并返回成功。
 }
 
 int ActiveTranx::signal_waiting_sessions_up_to(const char *log_file_name,
@@ -554,21 +572,45 @@ bool ReplSemiSyncMaster::is_semi_sync_slave() {
   return val;
 }
 
+/**
+ * @brief Updates the binlog position after receiving a reply from a slave.
+ *        在接收到从库的确认后更新 binlog 位置。
+ *
+ * This function is called when the master receives an acknowledgment (ACK)
+ * from a slave. It updates the `reply_file_name_` and `reply_file_pos_` to
+ * reflect the latest binlog position that has been acknowledged by the slave.
+ * If there are threads waiting for this position, it signals them to proceed.
+ * 
+ * 当主库接收到从库的确认（ACK）时调用此函数。它更新 `reply_file_name_` 和
+ * `reply_file_pos_`，以反映从库确认的最新 binlog 位置。如果有线程在等待此位置，
+ * 则通知它们继续执行。
+ *
+ * @param log_file_name The name of the binlog file.
+ *                      binlog 文件名。
+ * @param log_file_pos  The position in the binlog file.
+ *                      binlog 文件位置。
+ */
 void ReplSemiSyncMaster::reportReplyBinlog(const char *log_file_name,
                                            my_off_t log_file_pos) {
-  const char *kWho = "ReplSemiSyncMaster::reportReplyBinlog";
+  const char *kWho = "ReplSemiSyncMaster::reportReplyBinlog";  // 函数标识符，用于日志记录。
   int cmp;
-  bool can_release_threads = false;
-  bool need_copy_send_pos = true;
+  bool can_release_threads = false;  // 是否可以释放等待的线程。
+  bool need_copy_send_pos = true;    // 是否需要更新发送位置。
 
-  function_enter(kWho);
-  mysql_mutex_assert_owner(&LOCK_binlog_);
+  function_enter(kWho);  // 记录函数进入日志。
+  mysql_mutex_assert_owner(&LOCK_binlog_);  // 确保当前线程持有互斥锁。
 
+  // 如果主库未启用半同步复制，直接跳转到结束逻辑。
   if (!getMasterEnabled()) goto l_end;
 
-  if (!is_on()) /* We check to see whether we can switch semi-sync ON. */
-    try_switch_on(log_file_name, log_file_pos);
+  // 如果半同步复制未开启，尝试开启。
+  if (!is_on()) try_switch_on(log_file_name, log_file_pos);
 
+  /**
+   * 如果只有一个线程向从库发送 binlog，则位置应该单调递增。
+   * 但为了提高事务的可用性，允许多个半同步从库。
+   * 如果其中一个从库接收到事务，主库的事务会话可以继续前进。
+   */
   /* The position should increase monotonically, if there is only one
    * thread sending the binlog to the slave.
    * In reality, to improve the transaction availability, we allow multiple
@@ -579,6 +621,11 @@ void ReplSemiSyncMaster::reportReplyBinlog(const char *log_file_name,
     cmp = ActiveTranx::compare(log_file_name, log_file_pos, reply_file_name_,
                                reply_file_pos_);
 
+    /**
+     * 如果请求的位置落后于当前发送的 binlog 位置，则不调整发送位置。
+     * 假设至少有一个半同步从库是最新的。如果所有半同步从库都落后，
+     * 主库会在等待超时后发现这种情况。
+     */                               
     /* If the requested position is behind the sending binlog position,
      * would not adjust sending binlog position.
      * We based on the assumption that there are multiple semi-sync slave,
@@ -593,17 +640,20 @@ void ReplSemiSyncMaster::reportReplyBinlog(const char *log_file_name,
     }
   }
 
+  // 如果需要更新发送位置，则更新 `reply_file_name_` 和 `reply_file_pos_`。
   if (need_copy_send_pos) {
     strncpy(reply_file_name_, log_file_name, sizeof(reply_file_name_) - 1);
     reply_file_name_[sizeof(reply_file_name_) - 1] = '\0';
     reply_file_pos_ = log_file_pos;
     reply_file_name_inited_ = true;
 
+    // 如果启用了详细跟踪，则记录日志。
     if (trace_level_ & kTraceDetail)
       LogErr(INFORMATION_LEVEL, ER_SEMISYNC_MASTER_GOT_REPLY_AT_POS, kWho,
              log_file_name, (unsigned long)log_file_pos);
   }
 
+  // 如果有线程在等待 binlog 位置，则检查是否可以释放它们。
   if (rpl_semi_sync_source_wait_sessions > 0) {
     /* Let us check if some of the waiting threads doing a trx
      * commit can now proceed.
@@ -621,6 +671,7 @@ void ReplSemiSyncMaster::reportReplyBinlog(const char *log_file_name,
 
 l_end:
 
+  // 如果可以释放线程，则广播信号通知等待的线程继续执行。
   if (can_release_threads) {
     if (trace_level_ & kTraceDetail)
       LogErr(INFORMATION_LEVEL, ER_SEMISYNC_MASTER_SIGNAL_ALL_WAITING_THREADS,
@@ -629,52 +680,82 @@ l_end:
                                                   reply_file_pos_);
   }
 
-  function_exit(kWho, 0);
+  function_exit(kWho, 0);  // 记录函数退出日志并返回成功。
 }
 
+/**
+  Commit a transaction and wait for semi-synchronous replication acknowledgment.
+
+  提交事务并等待半同步复制的确认。
+
+  @param trx_wait_binlog_name The binlog file name to wait for.
+                              等待的 binlog 文件名。
+  @param trx_wait_binlog_pos  The binlog file position to wait for.
+                              等待的 binlog 文件位置。
+
+  @return 0 on success.
+          成功时返回 0。
+*/
 int ReplSemiSyncMaster::commitTrx(const char *trx_wait_binlog_name,
                                   my_off_t trx_wait_binlog_pos) {
-  const char *kWho = "ReplSemiSyncMaster::commitTrx";
+  const char *kWho = "ReplSemiSyncMaster::commitTrx";  // Function identifier for logging.
 
-  function_enter(kWho);
+  function_enter(kWho);  // Log function entry.
   PSI_stage_info old_stage;
 
 #if defined(ENABLED_DEBUG_SYNC)
-  /* debug sync may not be initialized for a master */
+  /* Debug sync may not be initialized for a master.
+     调试同步可能未为主库初始化。 */
   if (current_thd->debug_sync_control)
     DEBUG_SYNC(current_thd, "rpl_semisync_source_commit_trx_before_lock");
 #endif
-  /* Acquire the mutex. */
+
+  /* Acquire the mutex to ensure thread safety.
+     获取互斥锁以确保线程安全。 */
   lock();
 
-  TranxNode *entry = nullptr;
-  mysql_cond_t *thd_cond = nullptr;
-  bool is_semi_sync_trans = true;
+  TranxNode *entry = nullptr;  // Pointer to the active transaction node.
+  mysql_cond_t *thd_cond = nullptr;  // Condition variable for waiting.
+  bool is_semi_sync_trans = true;  // Flag to indicate if this is a semi-sync transaction.
+
+  /* Find the active transaction node corresponding to the binlog name and position.
+     根据 binlog 名称和位置查找对应的活跃事务节点。 */
   if (active_tranxs_ != nullptr && trx_wait_binlog_name) {
     entry = active_tranxs_->find_active_tranx_node(trx_wait_binlog_name,
                                                    trx_wait_binlog_pos);
-    if (entry) thd_cond = &entry->cond;
+    if (entry) thd_cond = &entry->cond;  // Get the condition variable if the entry exists.
   }
-  /* This must be called after acquired the lock */
+
+  /* Set the thread's waiting condition.
+     设置线程的等待条件。 */
+    /* This must be called after acquired the lock */   
   THD_ENTER_COND(nullptr, thd_cond, &LOCK_binlog_,
                  &stage_waiting_for_semi_sync_ack_from_replica, &old_stage);
 
+  /* Check if semi-sync is enabled and the binlog name is valid.
+     检查是否启用了半同步复制以及 binlog 名称是否有效。 */
   if (getMasterEnabled() && trx_wait_binlog_name) {
-    struct timespec start_ts;
-    struct timespec abstime;
+    struct timespec start_ts;  // Start time for waiting.
+    struct timespec abstime;  // Absolute timeout time.
     int wait_result;
 
-    set_timespec(&start_ts, 0);
-    /* This is the real check inside the mutex. */
+    set_timespec(&start_ts, 0);  // Initialize the start time.
+
+    /* Re-check if semi-sync is enabled inside the mutex.
+       在互斥锁内再次检查是否启用了半同步复制。 */
     if (!getMasterEnabled() || !is_on()) goto l_end;
 
+    /* Log the transaction waiting position if detailed tracing is enabled.
+       如果启用了详细跟踪，则记录事务等待位置。 */
     if (trace_level_ & kTraceDetail) {
       LogErr(INFORMATION_LEVEL, ER_SEMISYNC_MASTER_TRX_WAIT_POS, kWho,
              trx_wait_binlog_name, (unsigned long)trx_wait_binlog_pos,
              (int)is_on());
     }
 
-    /* Calculate the waiting period. */
+    /* Calculate the absolute timeout time.
+       计算绝对超时时间。 */
+    /* Calculate the waiting period. */       
     abstime.tv_sec = start_ts.tv_sec + wait_timeout_ / TIME_THOUSAND;
     abstime.tv_nsec =
         start_ts.tv_nsec + (wait_timeout_ % TIME_THOUSAND) * TIME_MILLION;
@@ -683,15 +764,18 @@ int ReplSemiSyncMaster::commitTrx(const char *trx_wait_binlog_name,
       abstime.tv_nsec -= TIME_BILLION;
     }
 
+    /* Loop to wait for acknowledgment from the replica.
+       循环等待从库的确认。 */
     while (is_on()) {
+      /* Check if the replica's reply position is initialized.
+         检查从库的回复位置是否已初始化。 */
       if (reply_file_name_inited_) {
         int cmp =
             ActiveTranx::compare(reply_file_name_, reply_file_pos_,
                                  trx_wait_binlog_name, trx_wait_binlog_pos);
         if (cmp >= 0) {
-          /* We have already sent the relevant binlog to the slave: no need to
-           * wait here.
-           */
+          /* If the replica's reply position is ahead, no need to wait.
+             如果从库的回复位置已覆盖当前事务的位置，则无需等待。 */
           if (trace_level_ & kTraceDetail)
             LogErr(INFORMATION_LEVEL, ER_SEMISYNC_BINLOG_REPLY_IS_AHEAD, kWho,
                    reply_file_name_, (unsigned long)reply_file_pos_);
@@ -718,7 +802,7 @@ int ReplSemiSyncMaster::commitTrx(const char *trx_wait_binlog_name,
       }
 
       /* Let us update the info about the minimum binlog position of waiting
-       * threads.
+       * threads.更新等待线程的最小 binlog 位置。
        */
       if (wait_file_name_inited_) {
         int cmp =
@@ -777,6 +861,7 @@ int ReplSemiSyncMaster::commitTrx(const char *trx_wait_binlog_name,
       wait_result = mysql_cond_timedwait(&entry->cond, &LOCK_binlog_, &abstime);
       entry->n_waiters--;
       /*
+        处理超时或成功确认的情况
         After we release LOCK_binlog_ above while waiting for the condition,
         it can happen that some other parallel client session executed
         RESET MASTER. That can set rpl_semi_sync_source_wait_sessions to zero.
@@ -786,49 +871,57 @@ int ReplSemiSyncMaster::commitTrx(const char *trx_wait_binlog_name,
       if (rpl_semi_sync_source_wait_sessions > 0)
         rpl_semi_sync_source_wait_sessions--;
 
-      if (wait_result != 0) {
-        /* This is a real wait timeout. */
-        LogErr(WARNING_LEVEL, ER_SEMISYNC_WAIT_FOR_BINLOG_TIMEDOUT,
-               trx_wait_binlog_name, (unsigned long)trx_wait_binlog_pos,
-               reply_file_name_, (unsigned long)reply_file_pos_);
-        rpl_semi_sync_source_wait_timeouts++;
-
-        /* switch semi-sync off */
-        switch_off();
-      } else {
+         if (wait_result != 0) {
+          /* This is a real wait timeout. */
+          // 如果等待结果非零，表示超时或发生错误。
+          LogErr(WARNING_LEVEL, ER_SEMISYNC_WAIT_FOR_BINLOG_TIMEDOUT,
+                 trx_wait_binlog_name, (unsigned long)trx_wait_binlog_pos,
+                 reply_file_name_, (unsigned long)reply_file_pos_);
+          
+          // 增加超时计数器，记录超时事件的发生次数。
+          rpl_semi_sync_source_wait_timeouts++;
+          
+          /* switch semi-sync off */
+          // 关闭半同步复制，因为超时可能导致主从同步状态不一致。
+          switch_off();
+        } else {
         int wait_time;
 
         wait_time = getWaitTime(start_ts);
-        if (wait_time < 0) {
-          if (trace_level_ & kTraceGeneral) {
-            LogErr(INFORMATION_LEVEL,
-                   ER_SEMISYNC_WAIT_TIME_ASSESSMENT_FOR_COMMIT_TRX_FAILED,
-                   trx_wait_binlog_name, (unsigned long)trx_wait_binlog_pos);
+          if (wait_time < 0) {
+            // 如果计算等待时间失败，记录日志并增加失败计数器。
+            if (trace_level_ & kTraceGeneral) {
+              LogErr(INFORMATION_LEVEL,
+                     ER_SEMISYNC_WAIT_TIME_ASSESSMENT_FOR_COMMIT_TRX_FAILED,
+                     trx_wait_binlog_name, (unsigned long)trx_wait_binlog_pos);
+            }
+            rpl_semi_sync_source_timefunc_fails++;
+          } else {
+            // 如果等待时间计算成功，更新统计信息。
+            rpl_semi_sync_source_trx_wait_num++;  // 增加成功等待的事务数量。
+            rpl_semi_sync_source_trx_wait_time += wait_time;  // 累加总等待时间。
           }
-          rpl_semi_sync_source_timefunc_fails++;
-        } else {
-          rpl_semi_sync_source_trx_wait_num++;
-          rpl_semi_sync_source_trx_wait_time += wait_time;
         }
-      }
     }
 
   l_end:
-    /* Update the status counter. */
+    /* Update the status counter.
+       更新状态计数器。 */
     if (is_on() && is_semi_sync_trans)
       rpl_semi_sync_source_yes_transactions++;
     else
       rpl_semi_sync_source_no_transactions++;
   }
 
-  /* Last waiter removes the TranxNode */
+  /* Remove the transaction node if it is the last waiter.
+     如果当前事务是最后一个等待者，则清理事务节点。 */
   if (trx_wait_binlog_name && active_tranxs_ && entry && entry->n_waiters == 0)
     active_tranxs_->clear_active_tranx_nodes(trx_wait_binlog_name,
                                              trx_wait_binlog_pos);
 
-  unlock();
-  THD_EXIT_COND(nullptr, &old_stage);
-  return function_exit(kWho, 0);
+  unlock();  // Release the mutex. 解锁。
+  THD_EXIT_COND(nullptr, &old_stage);  // Exit the thread condition. 退出线程条件。
+  return function_exit(kWho, 0);  // Log function exit and return success. 记录函数退出并返回成功。
 }
 void ReplSemiSyncMaster::set_wait_no_replica(const void *val) {
   lock();
@@ -845,14 +938,24 @@ void ReplSemiSyncMaster::force_switch_on() { state_ = true; }
 
 /* Indicate that semi-sync replication is OFF now.
  *
+ * 表示半同步复制现在已关闭。
+ *
  * What should we do when it is disabled?  The problem is that we want
  * the semi-sync replication enabled again when the slave catches up
  * later.  But, it is not that easy to detect that the slave has caught
  * up.  This is caused by the fact that MySQL's replication protocol is
  * asynchronous, meaning that if the master does not use the semi-sync
  * protocol, the slave would not send anything to the master.
+ *
+ * 当半同步复制被禁用时，我们希望在从库追上主库后重新启用半同步复制。
+ * 但检测从库是否已追上主库并不容易。这是因为 MySQL 的复制协议是异步的，
+ * 如果主库不使用半同步协议，从库不会向主库发送任何信息。
+ *
  * Still, if the master is sending (N+1)-th event, we assume that it is
  * an indicator that the slave has received N-th event and earlier ones.
+ *
+ * 然而，如果主库正在发送第 (N+1) 个事件，我们假设这是一个指示，
+ * 表明从库已经接收到第 N 个事件及更早的事件。
  *
  * If semi-sync is disabled, all transactions still update the wait
  * position with the last position in binlog.  But no transactions will
@@ -860,22 +963,28 @@ void ReplSemiSyncMaster::force_switch_on() { state_ = true; }
  * updateSyncHeader() checks whether the current sending event catches
  * up with last wait position.  If it does match, semi-sync will be
  * switched on again.
+ *
+ * 如果半同步复制被禁用，所有事务仍然会将等待位置更新为 binlog 中的最后位置。
+ * 但没有事务会等待确认。在 binlog dump 线程中，
+ * `updateSyncHeader()` 会检查当前发送的事件是否追上了最后的等待位置。
+ * 如果匹配，半同步复制将重新开启。
  */
 int ReplSemiSyncMaster::switch_off() {
-  const char *kWho = "ReplSemiSyncMaster::switch_off";
+  const char *kWho = "ReplSemiSyncMaster::switch_off";  // 函数标识符，用于日志记录。
 
-  function_enter(kWho);
-  state_ = false;
+  function_enter(kWho);  // 记录函数进入日志。
+  state_ = false;  // 将半同步复制的状态设置为关闭。
 
-  rpl_semi_sync_source_off_times++;
-  wait_file_name_inited_ = false;
-  reply_file_name_inited_ = false;
-  LogErr(INFORMATION_LEVEL, ER_SEMISYNC_RPL_SWITCHED_OFF);
+  rpl_semi_sync_source_off_times++;  // 增加关闭半同步复制的计数器。
+  wait_file_name_inited_ = false;  // 重置等待文件名的初始化状态。
+  reply_file_name_inited_ = false;  // 重置回复文件名的初始化状态。
+  LogErr(INFORMATION_LEVEL, ER_SEMISYNC_RPL_SWITCHED_OFF);  // 记录半同步复制关闭的日志。
 
-  /* signal waiting sessions */
+  /* Signal waiting sessions */
+  // 唤醒所有正在等待的会话。
   active_tranxs_->signal_waiting_sessions_all();
 
-  return function_exit(kWho, 0);
+  return function_exit(kWho, 0);  // 记录函数退出日志并返回成功。
 }
 
 int ReplSemiSyncMaster::try_switch_on(const char *log_file_name,
@@ -910,45 +1019,91 @@ int ReplSemiSyncMaster::try_switch_on(const char *log_file_name,
   return function_exit(kWho, 0);
 }
 
+/**
+ * @brief Reserves space in the packet header for semi-synchronous replication.
+ *        为半同步复制在数据包头中保留空间。
+ *
+ * This function checks if there is enough space in the packet header to include
+ * the semi-synchronous replication header (`kSyncHeader`). If there is not enough
+ * space, it disables the semi-synchronous replication on the master.
+ * 
+ * 该函数检查数据包头中是否有足够的空间容纳半同步复制头部（`kSyncHeader`）。
+ * 如果空间不足，则禁用主库上的半同步复制。
+ *
+ * @param header Pointer to the packet header.
+ *               指向数据包头的指针。
+ * @param size   The size of the packet header.
+ *               数据包头的大小。
+ *
+ * @return The length of the reserved header on success, or 0 if there is not enough space.
+ *         成功时返回保留的头部长度，如果空间不足则返回 0。
+ */
 int ReplSemiSyncMaster::reserveSyncHeader(unsigned char *header,
                                           unsigned long size) {
-  const char *kWho = "ReplSemiSyncMaster::reserveSyncHeader";
-  function_enter(kWho);
+  const char *kWho = "ReplSemiSyncMaster::reserveSyncHeader";  // 函数标识符，用于日志记录。
+  function_enter(kWho);  // 记录函数进入日志。
 
-  int hlen = 0;
+  int hlen = 0;  // 初始化头部长度为 0。
+
   {
-    /* No enough space for the extra header, disable semi-sync master */
+    /* Check if there is enough space for the semi-sync header.
+       检查是否有足够的空间容纳半同步头部。 */
     if (sizeof(kSyncHeader) > size) {
+      // 如果空间不足，记录警告日志并禁用主库上的半同步复制。
       LogErr(WARNING_LEVEL, ER_SEMISYNC_NO_SPACE_IN_THE_PKT);
       disableMaster();
-      return 0;
+      return 0;  // 返回 0 表示失败。
     }
 
     /* Set the magic number and the sync status.  By default, no sync
      * is required.
      */
     memcpy(header, kSyncHeader, sizeof(kSyncHeader));
-    hlen = sizeof(kSyncHeader);
+    hlen = sizeof(kSyncHeader);  // 设置头部长度为 `kSyncHeader` 的大小。
   }
-  return function_exit(kWho, hlen);
+
+  return function_exit(kWho, hlen);  // 记录函数退出日志并返回头部长度。
 }
 
+/**
+ * @brief Updates the semi-synchronous replication header in the packet.
+ *        更新数据包中的半同步复制头部。
+ *
+ * This function determines whether the current event requires a semi-synchronous
+ * replication acknowledgment from the slave. If so, it updates the packet header
+ * to indicate that a reply is required.
+ * 
+ * 该函数判断当前事件是否需要从库的半同步复制确认。如果需要，则更新数据包头部，
+ * 指示需要从库的回复。
+ *
+ * @param packet        The packet to be updated.
+ *                      需要更新的数据包。
+ * @param log_file_name The name of the binlog file.
+ *                      binlog 文件名。
+ * @param log_file_pos  The position in the binlog file.
+ *                      binlog 文件位置。
+ * @param server_id     The server ID of the slave.
+ *                      从库的服务器 ID。
+ *
+ * @return 0 on success.
+ *         成功时返回 0。
+ */
 int ReplSemiSyncMaster::updateSyncHeader(unsigned char *packet,
                                          const char *log_file_name,
                                          my_off_t log_file_pos,
                                          uint32 server_id) {
-  const char *kWho = "ReplSemiSyncMaster::updateSyncHeader";
+  const char *kWho = "ReplSemiSyncMaster::updateSyncHeader";  // 函数标识符，用于日志记录。
   int cmp = 0;
-  bool sync = false;
+  bool sync = false;  // 是否需要同步。
 
   /* If the semi-sync master is not enabled, do not request replies from the
      slave.
    */
   if (!getMasterEnabled()) return 0;
 
-  function_enter(kWho);
+  function_enter(kWho);  // 记录函数进入日志。
 
-  lock();
+  lock();  // 获取互斥锁，确保线程安全。
 
   /* This is the real check inside the mutex. */
   if (!getMasterEnabled()) goto l_end;  // sync= false at this point in time
@@ -958,6 +1113,7 @@ int ReplSemiSyncMaster::updateSyncHeader(unsigned char *packet,
     /* sync= false; No sync unless a transaction is involved. */
 
     if (reply_file_name_inited_) {
+      // 比较当前事件的位置与已确认的 binlog 位置。
       cmp = ActiveTranx::compare(log_file_name, log_file_pos, reply_file_name_,
                                  reply_file_pos_);
       if (cmp <= 0) {
@@ -969,10 +1125,11 @@ int ReplSemiSyncMaster::updateSyncHeader(unsigned char *packet,
     }
 
     if (wait_file_name_inited_) {
+      // 比较当前事件的位置与等待的 binlog 位置。
       cmp = ActiveTranx::compare(log_file_name, log_file_pos, wait_file_name_,
                                  wait_file_pos_);
     } else {
-      cmp = 1;
+      cmp = 1;  // 如果未初始化等待位置，则默认需要同步。
     }
 
     /* If we are already waiting for some transaction replies which
@@ -980,51 +1137,69 @@ int ReplSemiSyncMaster::updateSyncHeader(unsigned char *packet,
      */
     if (cmp >= 0) {
       /*
+       * 如果当前事件的位置不早于等待的 binlog 位置。
        * We only wait if the event is a transaction's ending event.
        */
       assert(active_tranxs_ != nullptr);
       sync = active_tranxs_->is_tranx_end_pos(log_file_name, log_file_pos);
     }
   } else {
+    // 如果半同步复制未开启。
+    // 比较当前事件的位置与提交的 binlog 位置。
     if (commit_file_name_inited_) {
       int cmp = ActiveTranx::compare(log_file_name, log_file_pos,
-                                     commit_file_name_, commit_file_pos_);
+                                 commit_file_name_, commit_file_pos_);
       sync = (cmp >= 0);
     } else {
-      sync = true;
+      sync = true;  // 如果未初始化提交位置，则默认需要同步。
     }
   }
 
+  // 如果启用了详细跟踪，则记录日志。
   if (trace_level_ & kTraceDetail)
     LogErr(INFORMATION_LEVEL, ER_SEMISYNC_SYNC_HEADER_UPDATE_INFO, kWho,
            server_id, log_file_name, (unsigned long)log_file_pos, sync,
            (int)is_on());
 
 l_end:
-  unlock();
+  unlock();  // 释放互斥锁。
 
   /* We do not need to clear sync flag because we set it to 0 when we
    * reserve the packet header.
    */
+  // 如果需要同步，则更新数据包头部。
   if (sync) {
     (packet)[2] = kPacketFlagSync;
   }
 
-  return function_exit(kWho, 0);
+  return function_exit(kWho, 0);  // 记录函数退出日志并返回成功。
 }
 
+/**
+  将事务写入 binlog 的函数。
+
+  @param log_file_name binlog 文件名。
+  @param log_file_pos binlog 文件位置。
+
+  @return 0 表示成功，非 0 表示失败。
+*/
 int ReplSemiSyncMaster::writeTranxInBinlog(const char *log_file_name,
                                            my_off_t log_file_pos) {
-  const char *kWho = "ReplSemiSyncMaster::writeTranxInBinlog";
-  int result = 0;
+  const char *kWho = "ReplSemiSyncMaster::writeTranxInBinlog";  // 函数标识符，用于日志记录。
+  int result = 0;  // 函数返回值，初始化为 0 表示成功。
 
-  function_enter(kWho);
+  function_enter(kWho);  // 记录函数进入日志。
 
-  lock();
+  lock();  // 加锁，确保线程安全。
 
-  /* This is the real check inside the mutex. */
+  /* 检查是否启用了半同步复制。如果未启用，直接跳转到结束逻辑。 */
   if (!getMasterEnabled()) goto l_end;
 
+  /**
+   * 更新当前事务的最大提交位置，即 `commit_file_name_` 和 `commit_file_pos_`。
+   * 即使半同步复制被关闭，也会更新这些值。
+   * 这样做是为了让 `updateSyncHeader()` 函数能够根据这些值决定是否重新启用半同步复制。
+   */  
   /* Update the 'largest' transaction commit position seen so far even
    * though semi-sync is switched off.
    * It is much better that we update commit_file_* here, instead of
@@ -1036,35 +1211,42 @@ int ReplSemiSyncMaster::writeTranxInBinlog(const char *log_file_name,
     int cmp = ActiveTranx::compare(log_file_name, log_file_pos,
                                    commit_file_name_, commit_file_pos_);
     if (cmp > 0) {
+      // 如果当前事务的位置比之前记录的最大位置更大，则更新最大位置。
       /* This is a larger position, let's update the maximum info. */
       strncpy(commit_file_name_, log_file_name, FN_REFLEN - 1);
-      commit_file_name_[FN_REFLEN - 1] = 0; /* make sure it ends properly */
+      commit_file_name_[FN_REFLEN - 1] = 0;  // 确保字符串以 '\0' 结尾。
       commit_file_pos_ = log_file_pos;
     }
   } else {
+    // 如果 `commit_file_name_` 尚未初始化，则直接赋值。
     strncpy(commit_file_name_, log_file_name, FN_REFLEN - 1);
-    commit_file_name_[FN_REFLEN - 1] = 0; /* make sure it ends properly */
+    commit_file_name_[FN_REFLEN - 1] = 0;  // 确保字符串以 '\0' 结尾。
     commit_file_pos_ = log_file_pos;
-    commit_file_name_inited_ = true;
+    commit_file_name_inited_ = true;  // 标记为已初始化。
   }
 
+  /**
+   * 如果半同步复制处于开启状态，则将当前事务插入到活动事务列表中。
+   * 如果插入失败，则记录警告日志并关闭半同步复制。
+   */
   if (is_on()) {
-    assert(active_tranxs_ != nullptr);
+    assert(active_tranxs_ != nullptr);  // 确保活动事务列表对象已初始化。
     if (active_tranxs_->insert_tranx_node(log_file_name, log_file_pos)) {
       /*
         if insert tranx_node failed, print a warning message
         and turn off semi-sync
       */
+     // 如果插入事务节点失败，记录警告日志并关闭半同步复制。
       LogErr(WARNING_LEVEL, ER_SEMISYNC_FAILED_TO_INSERT_TRX_NODE,
              log_file_name, (ulong)log_file_pos);
-      switch_off();
+      switch_off();  // 关闭半同步复制。
     }
   }
 
 l_end:
-  unlock();
+  unlock();  // 解锁。
 
-  return function_exit(kWho, result);
+  return function_exit(kWho, result);  // 记录函数退出日志并返回结果。
 }
 
 int ReplSemiSyncMaster::skipSlaveReply(const char *event_buf, uint32 server_id,
@@ -1121,20 +1303,35 @@ l_end:
   return function_exit(kWho, result);
 }
 
+/**
+ * @brief Resets the semi-synchronous replication state on the master.
+ *        重置主库上的半同步复制状态。
+ *
+ * This function clears all internal states and counters related to semi-synchronous
+ * replication. It is typically called when the master is reset or reconfigured.
+ * 
+ * 该函数清除与半同步复制相关的所有内部状态和计数器。通常在主库重置或重新配置时调用。
+ *
+ * @return 0 on success.
+ *         成功时返回 0。
+ */
 int ReplSemiSyncMaster::resetMaster() {
-  const char *kWho = "ReplSemiSyncMaster::resetMaster";
-  int result = 0;
+  const char *kWho = "ReplSemiSyncMaster::resetMaster";  // 函数标识符，用于日志记录。
+  int result = 0;  // 初始化返回值为 0，表示成功。
 
-  function_enter(kWho);
+  function_enter(kWho);  // 记录函数进入日志。
 
-  lock();
+  lock();  // 获取互斥锁，确保线程安全。
 
+  // 清空从库确认信息的容器。
   ack_container_.clear();
 
+  // 重置 binlog 文件名和位置的初始化状态。
   wait_file_name_inited_ = false;
   reply_file_name_inited_ = false;
   commit_file_name_inited_ = false;
 
+  // 重置所有与半同步复制相关的统计计数器。
   rpl_semi_sync_source_yes_transactions = 0;
   rpl_semi_sync_source_no_transactions = 0;
   rpl_semi_sync_source_off_times = 0;
@@ -1146,9 +1343,9 @@ int ReplSemiSyncMaster::resetMaster() {
   rpl_semi_sync_source_net_wait_num = 0;
   rpl_semi_sync_source_net_wait_time = 0;
 
-  unlock();
+  unlock();  // 释放互斥锁。
 
-  return function_exit(kWho, result);
+  return function_exit(kWho, result);  // 记录函数退出日志并返回结果。
 }
 
 void ReplSemiSyncMaster::setExportStats() {

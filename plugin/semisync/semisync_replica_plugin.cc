@@ -113,54 +113,114 @@ static int has_source_semisync(MYSQL *mysql, std::string name) {
   return 1;
 }
 
-static int repl_semi_slave_request_dump(Binlog_relay_IO_param *param, uint32) {
-  MYSQL *mysql = param->mysql;
+/**
+  请求主库发送二进制日志。
+  Request the master to send binary logs.
 
+  @param param 包含主库连接信息的参数。
+               Parameters containing the source connection information.
+  @param uint32 未使用的参数。
+                Unused parameter.
+
+  @retval 0 成功。
+          Success.
+  @retval 1 失败。
+          Failure.
+*/
+static int repl_semi_slave_request_dump(Binlog_relay_IO_param *param, uint32) {
+  MYSQL *mysql = param->mysql;  // 获取主库的 MySQL 连接
+
+  // 如果从库未启用半同步复制，则直接返回
   if (!repl_semisync->getSlaveEnabled()) return 0;
 
+  // 检查主库是否支持半同步复制
   int source_state = has_source_semisync(mysql, "source");
   if (source_state == 0) {
     source_state = has_source_semisync(mysql, "master");
     if (source_state == 0) {
+      /* 主库不支持半同步复制 */
       /* Source does not support semi-sync */
       LogPluginErr(WARNING_LEVEL, ER_SEMISYNC_NOT_SUPPORTED_BY_MASTER);
-      rpl_semi_sync_replica_status = 0;
+      rpl_semi_sync_replica_status = 0;  // 更新状态变量
       return 0;
     }
   }
-  if (source_state == -1) return 1;
+  if (source_state == -1) return 1;  // 检查过程中发生错误
 
   /*
-    Tell master dump thread that we want to do semi-sync
-    replication
+    通知主库的 dump 线程，我们希望进行半同步复制。
+    Tell master dump thread that we want to do semi-sync replication.
   */
   const char *query =
       "SET @rpl_semi_sync_replica = 1, @rpl_semi_sync_slave = 1";
   if (mysql_real_query(mysql, query, static_cast<ulong>(strlen(query)))) {
-    LogPluginErr(ERROR_LEVEL, ER_SEMISYNC_SLAVE_SET_FAILED);
-    return 1;
+    LogPluginErr(ERROR_LEVEL, ER_SEMISYNC_SLAVE_SET_FAILED);  // 记录错误日志
+    return 1;  // 返回失败
   }
+
+  // 释放查询结果，重置连接状态
   mysql_free_result(mysql_store_result(mysql));
-  rpl_semi_sync_replica_status = 1;
-  return 0;
+  rpl_semi_sync_replica_status = 1;  // 更新状态变量，表示半同步复制已启用
+  return 0;  // 返回成功
 }
 
+/**
+  读取二进制日志事件。
+
+  @param param      包含主库连接信息的参数（未使用）。
+                    Parameters containing the source connection information (unused).
+  @param packet     包含二进制日志事件的原始数据包。
+                    The raw packet containing the binary log event.
+  @param len        数据包的长度。
+                    The length of the packet.
+  @param event_buf  指向事件缓冲区的指针，用于存储解析后的事件。
+                    Pointer to the event buffer to store the parsed event.
+  @param event_len  指向事件长度的指针，用于存储解析后的事件长度。
+                    Pointer to the event length to store the parsed event length.
+
+  @retval 0 成功。
+          Success.
+  @retval 非零值 表示错误。
+          Non-zero value indicates an error.
+*/
 static int repl_semi_slave_read_event(Binlog_relay_IO_param *,
                                       const char *packet, unsigned long len,
                                       const char **event_buf,
                                       unsigned long *event_len) {
+  // 如果半同步复制已启用，则调用 slaveReadSyncHeader 处理事件头
   if (rpl_semi_sync_replica_status)
     return repl_semisync->slaveReadSyncHeader(
         packet, len, &semi_sync_need_reply, event_buf, event_len);
+
+  // 如果未启用半同步复制，则直接返回原始事件数据
   *event_buf = packet;
   *event_len = len;
   return 0;
 }
 
+/**
+  处理从库队列事件。
+  Process the slave queue event.
+
+  @param param 包含主库连接信息的参数。
+               Parameters containing the source connection information.
+  @param char* 未使用的参数。
+               Unused parameter.
+  @param unsigned long 未使用的参数。
+                       Unused parameter.
+  @param uint32 未使用的参数。
+                Unused parameter.
+
+  @return 始终返回 0。
+          Always returns 0.
+*/
 static int repl_semi_slave_queue_event(Binlog_relay_IO_param *param,
                                        const char *, unsigned long, uint32) {
+  // 检查是否启用了半同步复制，并且是否需要发送回复
   if (rpl_semi_sync_replica_status && semi_sync_need_reply) {
     /*
+      我们故意忽略 slaveReply 中的错误。
+      这样的错误不应导致从库 IO 线程停止，并且错误消息已经被记录。
       We deliberately ignore the error in slaveReply, such error
       should not cause the slave IO thread to stop, and the error
       messages are already reported.
@@ -168,7 +228,7 @@ static int repl_semi_slave_queue_event(Binlog_relay_IO_param *param,
     (void)repl_semisync->slaveReply(param->mysql, param->master_log_name,
                                     param->master_log_pos);
   }
-  return 0;
+  return 0; // 始终返回 0
 }
 
 static int repl_semi_slave_io_start(Binlog_relay_IO_param *param) {
@@ -224,18 +284,35 @@ static SHOW_VAR semi_sync_slave_status_vars[] = {
     {nullptr, nullptr, SHOW_BOOL, SHOW_SCOPE_GLOBAL},
 };
 
-Binlog_relay_IO_observer relay_io_observer = {
-    sizeof(Binlog_relay_IO_observer),  // len
+/**
+  定义一个二进制日志中继 I/O 观察者。
+  Define a binlog relay I/O observer.
 
-    repl_semi_slave_io_start,      // start
-    repl_semi_slave_io_end,        // stop
-    repl_semi_slave_sql_start,     // start sql thread
-    repl_semi_slave_sql_stop,      // stop sql thread
-    repl_semi_slave_request_dump,  // request_transmit
-    repl_semi_slave_read_event,    // after_read_event
-    repl_semi_slave_queue_event,   // after_queue_event
-    repl_semi_reset_slave,         // reset
-    repl_semi_apply_slave          // apply
+  该结构体用于处理半同步复制相关的 I/O 事件。
+  This structure is used to handle I/O events related to semi-synchronous replication.
+*/
+Binlog_relay_IO_observer relay_io_observer = {
+  sizeof(Binlog_relay_IO_observer),  // len
+  // 以下是与半同步复制相关的回调函数：
+
+  repl_semi_slave_io_start,      // 在 I/O 线程启动时调用
+                                 // Called when the I/O thread starts.
+  repl_semi_slave_io_end,        // 在 I/O 线程结束时调用
+                                 // Called when the I/O thread stops.
+  repl_semi_slave_sql_start,     // 在 SQL 线程启动时调用
+                                 // Called when the SQL thread starts.
+  repl_semi_slave_sql_stop,      // 在 SQL 线程结束时调用
+                                 // Called when the SQL thread stops.
+  repl_semi_slave_request_dump,  // 请求主库发送二进制日志
+                                 // Request the master to send binary logs.
+  repl_semi_slave_read_event,    // 在读取事件后调用
+                                 // Called after reading an event.
+  repl_semi_slave_queue_event,   // 在事件排队后调用
+                                 // Called after queuing an event.
+  repl_semi_reset_slave,         // 重置从库状态
+                                 // Reset the slave state.
+  repl_semi_apply_slave          // 应用事件到从库
+                                 // Apply events to the slave.
 };
 
 /**
@@ -254,6 +331,7 @@ static bool is_other_semi_sync_replica_plugin_installed() {
 
 static int semi_sync_slave_plugin_init(void *p) {
   // Initialize error logging service.
+  // 初始化错误日志服务
   if (init_logging_service_for_plugin(&reg_srv, &log_bi, &log_bs)) return 1;
   bool success = false;
   raii::Sentry<> logging_service_guard{[&]() {
@@ -261,6 +339,7 @@ static int semi_sync_slave_plugin_init(void *p) {
   }};
 
   // Check for duplicate libraries.
+  // 检查是否有重复的库
   bool is_client =
       current_thd && current_thd->lex->sql_command == SQLCOM_INSTALL_PLUGIN;
   if (is_other_semi_sync_replica_plugin_installed()) {
@@ -269,6 +348,8 @@ static int semi_sync_slave_plugin_init(void *p) {
       If user installs both the old-named library and the new-named
       library, we generate an error, since they would interfere with
       each other.
+      不幸的是，两个半同步库并不能组成一个同步库。:-)
+      如果用户同时安装了旧名称的库和新名称的库，我们会生成一个错误，因为它们会相互干扰。
     */
     if (is_client)
       my_error(ER_INSTALL_PLUGIN_CONFLICT_CLIENT, MYF(0), SEMI_SYNC_PLUGIN_NAME,
@@ -291,6 +372,13 @@ static int semi_sync_slave_plugin_init(void *p) {
     In both cases, write a warning to the log, because the
     administrator needs to know that we are using an old library and
     make the new library available if it is not.
+    此函数可以在两种上下文中调用：要么是由客户端执行的 SQL 语句 INSTALL PLUGIN，
+    要么是在服务器启动期间，例如在使用 --plugin-load 的情况下。
+
+    对于 INSTALL PLUGIN，向客户端返回一个警告，以便发出 INSTALL PLUGIN 的人得到通知。
+
+    在这两种情况下，都向日志写入一个警告，因为管理员需要知道我们正在使用旧库，
+    并在没有新库的情况下使其可用。
   */
   if (is_client)
     push_warning_printf(current_thd, Sql_condition::SL_NOTE,
@@ -301,12 +389,12 @@ static int semi_sync_slave_plugin_init(void *p) {
          "rpl_semi_sync_slave", "rpl_semi_sync_replica");
 #endif
 
-  repl_semisync = new ReplSemiSyncSlave();
-  if (repl_semisync->initObject()) return 1;
-  if (register_binlog_relay_io_observer(&relay_io_observer, p)) return 1;
+  repl_semisync = new ReplSemiSyncSlave();  // 创建半同步从库对象
+  if (repl_semisync->initObject()) return 1;  // 初始化半同步从库对象
+  if (register_binlog_relay_io_observer(&relay_io_observer, p)) return 1;  // 注册 binlog_relay_io 观察者
 
-  success = true;
-  return 0;
+  success = true;  // 设置成功标志
+  return 0;  // 返回成功
 }
 
 static int semi_sync_replica_plugin_check_uninstall(void *) {
@@ -320,10 +408,21 @@ static int semi_sync_replica_plugin_check_uninstall(void *) {
 }
 
 static int semi_sync_slave_plugin_deinit(void *p) {
+  // 注销二进制日志中继 I/O 观察者
+  // Unregister the binlog relay I/O observer
   if (unregister_binlog_relay_io_observer(&relay_io_observer, p)) return 1;
+
+  // 删除半同步复制对象并释放内存
+  // Delete the semi-sync replication object and free memory
   delete repl_semisync;
   repl_semisync = nullptr;
+
+  // 反初始化插件的日志服务
+  // Deinitialize the logging service for the plugin
   deinit_logging_service_for_plugin(&reg_srv, &log_bi, &log_bs);
+
+  // 返回 0 表示成功
+  // Return 0 to indicate success
   return 0;
 }
 

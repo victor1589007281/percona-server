@@ -447,8 +447,21 @@ class List : public base_list {
   inline bool push_back(T *a) {
     return base_list::push_back(const_cast<void *>(((const void *)a)));
   }
+  /**
+    将元素添加到列表的末尾。
+  
+    @param a         要添加的元素指针。
+                     The pointer to the element to be added.
+    @param mem_root  用于分配新节点的内存池。
+                     The memory root used for allocating the new node.
+  
+    @return 如果成功添加元素，则返回 false；如果内存分配失败，则返回 true。
+            Returns false if the element is successfully added, true if memory allocation fails.
+  */
   inline bool push_back(T *a, MEM_ROOT *mem_root) {
-    return base_list::push_back(const_cast<void *>((const void *)a), mem_root);
+      // 调用 base_list 的 push_back 方法，将元素添加到列表末尾
+      // 使用 const_cast 去掉 const 限制，将元素指针转换为 void* 类型
+      return base_list::push_back(const_cast<void *>((const void *)a), mem_root);
   }
   inline bool push_front(T *a) {
     return base_list::push_front(const_cast<void *>((const void *)a));
