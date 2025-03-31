@@ -2545,11 +2545,14 @@ class THD : public MDL_context_owner,
     Used by Intvar_log_event::do_apply_event() and by "SET INSERT_ID=#"
     (mysqlbinlog). We'll soon add a variant which can take many intervals in
     argument.
+    用于 Intvar_log_event::do_apply_event() 和 "SET INSERT_ID=#"（mysqlbinlog）。
+    我们很快会添加一个可以接受多个间隔参数的变体。
   */
-  inline void force_one_auto_inc_interval(ulonglong next_id) {
-    auto_inc_intervals_forced.clear();  // in case of multiple SET INSERT_ID
-    auto_inc_intervals_forced.append(next_id, ULLONG_MAX, 0);
-  }
+ inline void force_one_auto_inc_interval(ulonglong next_id) {
+  auto_inc_intervals_forced.clear();  // 清除已有的强制自增间隔，以防多次设置 SET INSERT_ID
+  auto_inc_intervals_forced.append(next_id, ULLONG_MAX, 0);
+  // 添加一个新的自增间隔，从 next_id 开始，到 ULLONG_MAX 结束
+}
 
   /**
     Stores the result of the FOUND_ROWS() function.  Set at query end, stable

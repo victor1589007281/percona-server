@@ -173,9 +173,14 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
   interested in nearby lsn values (lsn belonging to the same log block).
   Note that false wake-ups are possible, in which case user threads
   simply retry waiting. */
+  // 指向事件数组的未对齐指针，这些事件用于从日志写入通知线程向用户线程发送通知。
+  // 当 write_lsn 推进时发送通知。用户线程等待 write_lsn >= lsn（针对某个 lsn）。
+  // 日志写入器推进 write_lsn 并通知日志写入通知线程，后者通知所有对附近 lsn 值
+  // （属于同一日志块的 lsn）感兴趣的用户线程。注意可能会出现虚假唤醒，此时用户线程会重新尝试等待。
   alignas(ut::INNODB_CACHE_LINE_SIZE) os_event_t *write_events;
 
   /** Number of entries in the array with writer_events. */
+  // writer_events 数组中的条目数量
   size_t write_events_size;
 
   /** Approx. number of requests to write/flush redo since startup. */

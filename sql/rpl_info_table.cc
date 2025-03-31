@@ -106,69 +106,117 @@ int Rpl_info_table::do_init_info(uint instance) {
   return do_init_info(FIND_KEY, instance);
 }
 
+/**
+  Initializes the repository by reading information from the table.
+
+  @param[in] method    The method to find the row (FIND_KEY or FIND_SCAN).
+  @param[in] instance  The instance ID to scan for (used with FIND_SCAN).
+
+  @retval 0  Success
+  @retval 1  Failure
+  通过从表中读取信息来初始化仓库。
+
+  @param[in] method    查找行的方法（FIND_KEY 或 FIND_SCAN）。
+  @param[in] instance  要扫描的实例 ID（与 FIND_SCAN 一起使用）。
+
+  @retval 0  成功
+  @retval 1  失败
+*/
 int Rpl_info_table::do_init_info(enum_find_method method, uint instance) {
-  int error = 1;
-  enum enum_return_id res = FOUND_ID;
-  TABLE *table = nullptr;
-  sql_mode_t saved_mode;
-  Open_tables_backup backup;
+  int error = 1;  // 错误标志，初始化为 1（失败）
+  enum enum_return_id res = FOUND_ID;  // 查找结果，初始化为 FOUND_ID
+  TABLE *table = nullptr;  // 表指针
+  sql_mode_t saved_mode;  // 保存当前的 SQL 模式
+  Open_tables_backup backup;  // 用于备份和恢复表状态
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
-  THD *thd = access->create_thd();
+  THD *thd = access->create_thd();  // 创建临时 THD 对象
 
-  saved_mode = thd->variables.sql_mode;
-  ulonglong saved_options = thd->variables.option_bits;
-  thd->variables.option_bits &= ~OPTION_BIN_LOG;
+  saved_mode = thd->variables.sql_mode;  // 保存当前的 SQL 模式
+  ulonglong saved_options = thd->variables.option_bits;  // 保存当前的选项位
+  thd->variables.option_bits &= ~OPTION_BIN_LOG;  // 禁用二进制日志选项
 
   /*
     Opens and locks the rpl_info table before accessing it.
+    在访问之前打开并锁定 rpl_info 表。
   */
   if (access->open_table(thd, to_lex_cstring(str_schema),
                          to_lex_cstring(str_table), get_number_info(), TL_WRITE,
-                         &table, &backup))
-    goto end;
+                         &table, &backup))  // 以写模式打开表
+    goto end;  // 如果打开失败，跳转到结束
 
-  if (verify_table_primary_key_fields(table)) goto end;
+  if (verify_table_primary_key_fields(table)) goto end;  // 验证表的主键字段，失败则跳转到结束
 
   /*
     Points the cursor at the row to be read according to the
     keys.
+    根据键将游标指向要读取的行。
   */
-  switch (method) {
-    case FIND_KEY:
-      res = access->find_info(field_values, table);
+  switch (method) {  // 根据查找方法进行选择
+    case FIND_KEY:  // 使用键查找
+      res = access->find_info(field_values, table);  // 查找信息
       break;
 
-    case FIND_SCAN:
-      res = access->scan_info(table, instance);
+    case FIND_SCAN:  // 使用扫描查找
+      res = access->scan_info(table, instance);  // 扫描信息
       break;
 
-    default:
-      assert(0);
+    default:  // 默认情况
+      assert(0);  // 断言失败，表示未知的查找方法
       break;
   }
 
-  if (res == FOUND_ID) {
+  if (res == FOUND_ID) {  // 如果找到记录
     /*
       Reads the information stored in the rpl_info table into a
       set of variables. If there is a failure, an error is returned.
+      将 rpl_info 表中存储的信息读取到一组变量中。如果失败，则返回错误。
     */
-    if (access->load_info_values(get_number_info(), table->field, field_values))
-      goto end;
+    if (access->load_info_values(get_number_info(), table->field, field_values))  // 加载信息值
+      goto end;  // 如果加载失败，跳转到结束
   }
-  error = (res == ERROR_ID);
+  error = (res == ERROR_ID);  // 设置错误标志，如果 res 为 ERROR_ID 则 error 为 1
 end:
   /*
     Unlocks and closes the rpl_info table.
+    解锁并关闭 rpl_info 表。
   */
-  error = access->close_table(thd, table, &backup, error) || error;
-  thd->variables.sql_mode = saved_mode;
-  thd->variables.option_bits = saved_options;
-  access->drop_thd(thd);
-  return error;
+  error = access->close_table(thd, table, &backup, error) || error;  // 关闭表并更新错误标志
+  thd->variables.sql_mode = saved_mode;  // 恢复 SQL 模式
+  thd->variables.option_bits = saved_options;  // 恢复选项位
+  access->drop_thd(thd);  // 销毁临时 THD 对象
+  return error;  // 返回错误标志
 }
 
+/**
+   Flushes and syncs in-memory information into a stable storage (i.e.
+   repository). Usually, syncing after flushing depends on other options
+   such as @c relay-log-info-sync, @c master-info-sync. These options
+   dictate after how many events or transactions the information
+   should be synced. We can ignore them and always sync by setting the
+   parameter @c force, which is by default @c false, to @c true.
+
+   So if the number of events is below a threshold, the parameter
+   @c force is false and we are using a file system as a storage
+   system, it may happen that the changes will only end up in the
+   operating system's cache and a crash may lead to inconsistencies.
+
+   @retval false No error
+   @retval true  Failure
+*/
+/**
+   将内存中的信息刷新并同步到稳定的存储（即存储库）中。通常，刷新后的同步取决于其他选项，
+   例如 @c relay-log-info-sync、@c master-info-sync。这些选项决定了在多少个事件或事务后
+   应该同步信息。我们可以通过将参数 @c force（默认为 @c false）设置为 @c true 来忽略这些选项，
+   并始终进行同步。
+
+   因此，如果事件数量低于某个阈值，参数 @c force 为 false，并且我们使用文件系统作为存储系统，
+   则可能会发生更改仅存在于操作系统的缓存中，而崩溃可能导致不一致。
+
+   @retval false 无错误
+   @retval true  失败
+*/
 int Rpl_info_table::do_flush_info(const bool force) {
   int error = 1;
   enum enum_return_id res = FOUND_ID;
@@ -178,8 +226,10 @@ int Rpl_info_table::do_flush_info(const bool force) {
 
   DBUG_TRACE;
 
+  // 如果不需要强制刷新且未达到同步周期，则直接返回 0
   if (!(force || (sync_period && ++(sync_counter) >= sync_period))) return 0;
 
+  // 创建一个新的 THD（线程描述符）
   THD *thd = access->create_thd();
 
   sync_counter = 0;
@@ -191,6 +241,9 @@ int Rpl_info_table::do_flush_info(const bool force) {
   /*
     Opens and locks the rpl_info table before accessing it.
   */
+  /*
+    在访问 rpl_info 表之前，打开并锁定它。
+  */
   if (access->open_table(thd, to_lex_cstring(str_schema),
                          to_lex_cstring(str_table), get_number_info(), TL_WRITE,
                          &table, &backup))
@@ -200,9 +253,15 @@ int Rpl_info_table::do_flush_info(const bool force) {
     Points the cursor at the row to be read according to the
     keys. If the row is not found an error is reported.
   */
+  /*
+    根据键将游标指向要读取的行。如果未找到该行，则报告错误。
+  */
   if ((res = access->find_info(field_values, table)) == NOT_FOUND_ID) {
     /*
       Prepares the information to be stored before calling ha_write_row.
+    */
+    /*
+      在调用 ha_write_row 之前，准备要存储的信息。
     */
     empty_record(table);
     if (access->store_info_values(get_number_info(), table->field,
@@ -212,11 +271,17 @@ int Rpl_info_table::do_flush_info(const bool force) {
     /*
       Inserts a new row into rpl_info table.
     */
+    /*
+      向 rpl_info 表中插入新行。
+    */
     if ((error = table->file->ha_write_row(table->record[0]))) {
       table->file->print_error(error, MYF(0));
       /*
         This makes sure that the error is 1 and not the status returned
         by the handler.
+      */
+      /*
+        这确保错误是 1，而不是处理程序返回的状态。
       */
       error = 1;
       goto end;
@@ -226,6 +291,9 @@ int Rpl_info_table::do_flush_info(const bool force) {
     /*
       Prepares the information to be stored before calling ha_update_row.
     */
+    /*
+      在调用 ha_update_row 之前，准备要存储的信息。
+    */
     store_record(table, record[1]);
     if (access->store_info_values(get_number_info(), table->field,
                                   field_values))
@@ -234,6 +302,9 @@ int Rpl_info_table::do_flush_info(const bool force) {
     /*
       Updates a row in the rpl_info table.
     */
+    /*
+      更新 rpl_info 表中的一行。
+    */
     if ((error =
              table->file->ha_update_row(table->record[1], table->record[0])) &&
         error != HA_ERR_RECORD_IS_THE_SAME) {
@@ -241,6 +312,9 @@ int Rpl_info_table::do_flush_info(const bool force) {
       /*
         This makes sure that the error is 1 and not the status returned
         by the handler.
+      */
+      /*
+        这确保错误是 1，而不是处理程序返回的状态。
       */
       error = 1;
       goto end;
@@ -261,6 +335,9 @@ end:
 
   /*
     Unlocks and closes the rpl_info table.
+  */
+  /*
+    解锁并关闭 rpl_info 表。
   */
   error = access->close_table(thd, table, &backup, error) || error;
   thd->is_operating_substatement_implicitly = false;
@@ -421,109 +498,145 @@ end:
   return error;
 }
 
+/**
+  Checks if the repository exists and contains the expected data.
+
+  @retval ERROR_CHECKING_REPOSITORY      Failure
+  @retval REPOSITORY_DOES_NOT_EXIST      Repository exists but has no data
+  @retval REPOSITORY_EXISTS              Repository exists and has data
+  检查仓库是否存在并包含预期的数据。
+
+  @retval ERROR_CHECKING_REPOSITORY      失败
+  @retval REPOSITORY_DOES_NOT_EXIST      仓库存在但没有数据
+  @retval REPOSITORY_EXISTS              仓库存在且有数据
+*/
 enum_return_check Rpl_info_table::do_check_info() {
-  TABLE *table = nullptr;
-  sql_mode_t saved_mode;
-  Open_tables_backup backup;
-  enum_return_check return_check = ERROR_CHECKING_REPOSITORY;
+  TABLE *table = nullptr;  // 表指针
+  sql_mode_t saved_mode;  // 保存当前的 SQL 模式
+  Open_tables_backup backup;  // 用于备份和恢复表状态
+  enum_return_check return_check = ERROR_CHECKING_REPOSITORY;  // 返回值，初始化为错误
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
-  THD *thd = access->create_thd();
-  saved_mode = thd->variables.sql_mode;
+  THD *thd = access->create_thd();  // 创建临时 THD 对象
+  saved_mode = thd->variables.sql_mode;  // 保存当前的 SQL 模式
 
   /*
     Opens and locks the rpl_info table before accessing it.
+    在访问之前打开并锁定 rpl_info 表。
   */
   if (access->open_table(thd, to_lex_cstring(str_schema),
                          to_lex_cstring(str_table), get_number_info(), TL_READ,
-                         &table, &backup)) {
+                         &table, &backup)) {  // 打开表
     LogErr(WARNING_LEVEL, ER_RPL_CANT_OPEN_INFO_TABLE, str_schema.str,
-           str_table.str);
+           str_table.str);  // 记录警告日志
 
-    return_check = ERROR_CHECKING_REPOSITORY;
-    goto end;
+    return_check = ERROR_CHECKING_REPOSITORY;  // 设置返回值为错误
+    goto end;  // 跳转到结束
   }
 
   /*
     Points the cursor at the row to be read according to the
     keys.
+    根据键将游标指向要读取的行。
   */
-  if (access->find_info(field_values, table) != FOUND_ID) {
+  if (access->find_info(field_values, table) != FOUND_ID) {  // 查找信息
     /*
        We cannot simply call my_error here because it does not
        really means that there was a failure but only that the
        record was not found.
+       我们不能简单地调用 my_error，因为这并不真正意味着失败，只是记录未找到。
     */
-    return_check = REPOSITORY_DOES_NOT_EXIST;
-    goto end;
+    return_check = REPOSITORY_DOES_NOT_EXIST;  // 设置返回值为仓库不存在
+    goto end;  // 跳转到结束
   }
-  return_check = REPOSITORY_EXISTS;
+  return_check = REPOSITORY_EXISTS;  // 设置返回值为仓库存在
 
 end:
   /*
     Unlocks and closes the rpl_info table.
+    解锁并关闭 rpl_info 表。
   */
   access->close_table(thd, table, &backup,
-                      return_check == ERROR_CHECKING_REPOSITORY);
-  thd->variables.sql_mode = saved_mode;
-  access->drop_thd(thd);
-  return return_check;
+                      return_check == ERROR_CHECKING_REPOSITORY);  // 关闭表
+  thd->variables.sql_mode = saved_mode;  // 恢复 SQL 模式
+  access->drop_thd(thd);  // 销毁临时 THD 对象
+  return return_check;  // 返回检查结果
 }
 
+/**
+  Checks if the repository exists and contains the expected data for a specific instance.
+
+  @param[in] instance The instance ID to check.
+
+  @retval ERROR_CHECKING_REPOSITORY      Failure
+  @retval REPOSITORY_DOES_NOT_EXIST      Repository exists but has no data
+  @retval REPOSITORY_EXISTS              Repository exists and has data
+  检查仓库是否存在并包含特定实例的预期数据。
+
+  @param[in] instance 要检查的实例 ID。
+
+  @retval ERROR_CHECKING_REPOSITORY      失败
+  @retval REPOSITORY_DOES_NOT_EXIST      仓库存在但没有数据
+  @retval REPOSITORY_EXISTS              仓库存在且有数据
+*/
 enum_return_check Rpl_info_table::do_check_info(uint instance) {
-  TABLE *table = nullptr;
-  sql_mode_t saved_mode;
-  Open_tables_backup backup;
-  enum_return_check return_check = ERROR_CHECKING_REPOSITORY;
+  TABLE *table = nullptr;  // 表指针
+  sql_mode_t saved_mode;  // 保存当前的 SQL 模式
+  Open_tables_backup backup;  // 用于备份和恢复表状态
+  enum_return_check return_check = ERROR_CHECKING_REPOSITORY;  // 返回值，初始化为错误
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
-  THD *thd = access->create_thd();
-  saved_mode = thd->variables.sql_mode;
+  THD *thd = access->create_thd();  // 创建临时 THD 对象
+  saved_mode = thd->variables.sql_mode;  // 保存当前的 SQL 模式
 
   /*
     Opens and locks the rpl_info table before accessing it.
+    在访问之前打开并锁定 rpl_info 表。
   */
   if (access->open_table(thd, to_lex_cstring(str_schema),
                          to_lex_cstring(str_table), get_number_info(), TL_READ,
-                         &table, &backup)) {
+                         &table, &backup)) {  // 打开表
     LogErr(WARNING_LEVEL, ER_RPL_CANT_OPEN_INFO_TABLE, str_schema.str,
-           str_table.str);
+           str_table.str);  // 记录警告日志
 
-    return_check = ERROR_CHECKING_REPOSITORY;
-    goto end;
+    return_check = ERROR_CHECKING_REPOSITORY;  // 设置返回值为错误
+    goto end;  // 跳转到结束
   }
 
-  if (verify_table_primary_key_fields(table)) {
-    return_check = ERROR_CHECKING_REPOSITORY;
-    goto end;
+  if (verify_table_primary_key_fields(table)) {  // 验证表的主键字段
+    return_check = ERROR_CHECKING_REPOSITORY;  // 设置返回值为错误
+    goto end;  // 跳转到结束
   }
 
   /*
     Points the cursor at the row to be read according to the
     keys.
+    根据键将游标指向要读取的行。
   */
-  if (access->scan_info(table, instance) != FOUND_ID) {
+  if (access->scan_info(table, instance) != FOUND_ID) {  // 扫描信息
     /*
        We cannot simply call my_error here because it does not
        really means that there was a failure but only that the
        record was not found.
+       我们不能简单地调用 my_error，因为这并不真正意味着失败，只是记录未找到。
     */
-    return_check = REPOSITORY_DOES_NOT_EXIST;
-    goto end;
+    return_check = REPOSITORY_DOES_NOT_EXIST;  // 设置返回值为仓库不存在
+    goto end;  // 跳转到结束
   }
-  return_check = REPOSITORY_EXISTS;
+  return_check = REPOSITORY_EXISTS;  // 设置返回值为仓库存在
 
 end:
   /*
     Unlocks and closes the rpl_info table.
+    解锁并关闭 rpl_info 表。
   */
   access->close_table(thd, table, &backup,
-                      return_check == ERROR_CHECKING_REPOSITORY);
-  thd->variables.sql_mode = saved_mode;
-  access->drop_thd(thd);
-  return return_check;
+                      return_check == ERROR_CHECKING_REPOSITORY);  // 关闭表
+  thd->variables.sql_mode = saved_mode;  // 恢复 SQL 模式
+  access->drop_thd(thd);  // 销毁临时 THD 对象
+  return return_check;  // 返回检查结果
 }
 
 bool Rpl_info_table::do_count_info(uint nparam, const char *param_schema,

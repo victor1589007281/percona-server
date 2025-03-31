@@ -755,14 +755,18 @@ static void log_flush_low(log_t &log);
 
 /** Computes index of a slot (in array of "wait events"), which should
 be used when waiting until redo reached provided lsn.
-@param[in]  lsn         lsn up to which waiting takes place
-@param[in]  events_n    size of the array (number of slots)
-@return  index of the slot (integer in range 0 .. events_n-1) */
+计算槽的索引（在“等待事件”数组中），该索引应在等待重做日志达到指定 lsn 时使用。
+@param[in]  lsn         lsn up to which waiting takes place 等待的目标 lsn 值
+@param[in]  events_n    size of the array (number of slots) 数组的大小（槽的数量）
+@return  index of the slot (integer in range 0 .. events_n-1) 返回槽的索引（范围为 0 .. events_n-1 的整数） */
 static inline size_t log_compute_wait_event_slot(lsn_t lsn, size_t events_n) {
   /* We subtract one from lsn, because it is better to assign right boundary
   of a log block to the slot representing the given block. If write or flush
   happens within block, all threads interested in some lsn in that block should
   be notified.
+
+  我们从 lsn 中减去 1，因为将日志块的右边界分配给代表该块的槽更合适。如果写入或刷新发生在块内，
+  则应通知所有对该块中某些 lsn 感兴趣的线程。
 
   Suppose lsn % 512 == 0 (this is the only case for which subtracting 1 makes
   any difference here). All threads waiting for some lsn in (lsn-1)/512 must
@@ -774,16 +778,25 @@ static inline size_t log_compute_wait_event_slot(lsn_t lsn, size_t events_n) {
   waking up those in lsn/512. Note that this scenario (lsn % 512 == 0) happens
   often because our strategy is to prefer writes of full log blocks only,
   leaving the incomplete last block for next write (unless there are no full
-  blocks). */
+  blocks).
+
+  假设 lsn % 512 == 0（这是唯一一种减去 1 会在此处产生影响的情况）。无论如何，所有等待 (lsn-1)/512 范围内
+  某些 lsn 的线程都必须被通知（因为之前的 lsn 较小，块尚未关闭）。另一方面，通知等待 lsn / 512 范围内的线程是无用的，
+  因为这些是更大的 lsn 值，除非线程正好在等待这个 lsn。因此，最好将这组线程移动到对应于 (lsn-1)/512 的槽，
+  这样可以避免唤醒 lsn/512 中的线程。注意，这种情况（lsn % 512 == 0）经常发生，因为我们的策略是
+  优先写入完整的日志块，将不完整的最后一个块留到下一次写入（除非没有完整的块）。 */
+  // 计算槽的索引：(lsn - 1) / 日志块大小后，再与 events_n - 1 进行按位与运算
   return ((lsn - 1) / OS_FILE_LOG_BLOCK_SIZE) & (events_n - 1);
 }
 
 /** Computes index of a slot (in array of "wait events"), which should
 be used when waiting in log.write_events (for redo written up to lsn).
-@param[in]  log  redo log
-@param[in]  lsn  lsn up to which waiting (for log.write_lsn)
-@return  index of the slot (integer in range 0 .. log.write_events_size-1) */
+计算槽的索引（在“等待事件”数组中），该索引应在等待 log.write_events（用于等待写入到 lsn 的重做日志）时使用。
+@param[in]  log  redo log 重做日志
+@param[in]  lsn  lsn up to which waiting (for log.write_lsn) 等待的 lsn 值（用于 log.write_lsn）
+@return  index of the slot (integer in range 0 .. log.write_events_size-1) 返回槽的索引（范围为 0 .. log.write_events_size-1 的整数） */
 static inline size_t log_compute_write_event_slot(const log_t &log, lsn_t lsn) {
+  // 调用 log_compute_wait_event_slot 函数计算等待事件的槽索引
   return log_compute_wait_event_slot(lsn, log.write_events_size);
 }
 
@@ -1081,6 +1094,19 @@ static Wait_stats log_self_write_up_to(log_t &log, lsn_t end_lsn,
   return Wait_stats{waits};
 }
 
+/**
+  将日志写入到指定LSN位置。
+  该函数负责将重做日志写入到指定位置，并可选择刷新到磁盘。
+  Write the redo log up to the specified LSN.
+  @param log           重做日志系统引用
+                       Reference to the redo log system
+  @param end_lsn       目标LSN位置
+                       Target LSN position
+  @param flush_to_disk 是否刷新到磁盘
+                       Whether to flush to disk
+  @return              等待统计信息
+                       Wait statistics
+*/
 Wait_stats log_write_up_to(log_t &log, lsn_t end_lsn, bool flush_to_disk) {
   ut_a(!srv_read_only_mode);  // 断言服务器不是只读模式
 
@@ -1115,26 +1141,24 @@ Wait_stats log_write_up_to(log_t &log, lsn_t end_lsn, bool flush_to_disk) {
   to avoid spinning in log threads to save on CPU power usage. */  // 我们不需要确切的数字，也不关心我们是否在重负载下丢失了一些增量。该值仅在低负载时有用途，我们需要发现我们只是偶尔请求 redo 写入或刷新。在这种情况下，我们更愿意避免在日志线程中旋转以节省 CPU 功耗。
   log.write_to_file_requests_total.store(
       log.write_to_file_requests_total.load(std::memory_order_relaxed) + 1,
-      std::memory_order_relaxed);  // 增加写入文件请求的总数
+      std::memory_order_relaxed);
 
-  ut_a(end_lsn != LSN_MAX);  // 断言 end_lsn 不等于 LSN_MAX
-
+  // 参数校验断言
+  ut_a(end_lsn != LSN_MAX);
   ut_a(end_lsn % OS_FILE_LOG_BLOCK_SIZE == 0 ||
-       end_lsn % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE);  // 断言 end_lsn 是日志块大小的倍数，或者 end_lsn 的余数大于等于日志块头大小
-
+       end_lsn % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE);
   ut_a(end_lsn % OS_FILE_LOG_BLOCK_SIZE <=
-       OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE);  // 断言 end_lsn 的余数小于等于日志块大小减去日志块尾部大小
+       OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE);
+  ut_ad(end_lsn <= log_get_lsn(log));
 
-  ut_ad(end_lsn <= log_get_lsn(log));  // 断言 end_lsn 小于等于日志的当前 LSN
-
-  Wait_stats wait_stats{0};  // 定义等待统计对象
-  bool interrupted = false;  // 定义中断标志
+  Wait_stats wait_stats{0};  // 初始化等待统计
+  bool interrupted = false;  // 中断标志
 
 retry:
   if (log.writer_threads_paused.load(std::memory_order_acquire)) {  // 如果日志写入线程被暂停
     /* the log writer threads are paused not to waste CPU resource. */  // 日志写入线程被暂停以避免浪费 CPU 资源
     wait_stats +=
-        log_self_write_up_to(log, end_lsn, flush_to_disk, &interrupted);  // 调用 log_self_write_up_to 函数
+        log_self_write_up_to(log, end_lsn, flush_to_disk, &interrupted);
 
     if (UNIV_UNLIKELY(interrupted)) {  // 如果被中断
       /* the log writer threads might be working. retry. */  // 日志写入线程可能正在工作，重试
@@ -1142,7 +1166,7 @@ retry:
     }
 
     DEBUG_SYNC_C("log_flushed_by_self");  // 调试同步点
-    return wait_stats;  // 返回等待统计
+    return wait_stats;
   }
 
   /* the log writer threads are working for high concurrency scale */  // 日志写入线程正在为高并发工作
@@ -1177,10 +1201,11 @@ retry:
       goto retry;  // 跳转到 retry 标签
     }
 
-    DEBUG_SYNC_C("log_flushed_by_writer");  // 调试同步点
-  } else {  // 如果不需要刷新到磁盘
-    if (log.write_lsn.load() >= end_lsn) {  // 如果日志写入的 LSN 大于等于 end_lsn
-      return wait_stats;  // 返回等待统计
+    DEBUG_SYNC_C("log_flushed_by_writer");
+  } else {
+    // 仅等待写入不刷新
+    if (log.write_lsn.load() >= end_lsn) {
+      return wait_stats;
     }
 
     /* Wait until log gets written up to end_lsn. */  // 等待日志写入到 end_lsn
@@ -1192,7 +1217,7 @@ retry:
     }
   }
 
-  return wait_stats;  // 返回等待统计
+  return wait_stats;
 }
 
 /** @} */

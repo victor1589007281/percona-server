@@ -689,24 +689,26 @@ void log_buffer_x_lock_exit(log_t &log) {
 
 /** @} */
 
-/**************************************************/ /**
-
- @name Reservation of space in the redo log
-
- *******************************************************/
-
-/** @{ */
-
+/**
+  在预留空间后等待日志缓冲区空间。
+  该函数处理日志缓冲区空间不足的情况，可能触发缓冲区扩容。
+  Wait for space in the redo log buffer after reservation.
+  @param log    重做日志系统引用
+                Reference to the redo log system
+  @param handle 包含起始和结束LSN的日志句柄
+                Log handle containing start and end LSNs
+*/
 static void log_wait_for_space_after_reserving(log_t &log,
                                                const Log_handle &handle) {
-  ut_ad(rw_lock_own(log.sn_lock_inst, RW_LOCK_S));
+  ut_ad(rw_lock_own(log.sn_lock_inst, RW_LOCK_S));  // 断言持有SN锁的共享锁
 
-  const sn_t start_sn = log_translate_lsn_to_sn(handle.start_lsn);
+  const sn_t start_sn = log_translate_lsn_to_sn(handle.start_lsn);  // 起始序列号
+  const sn_t end_sn = log_translate_lsn_to_sn(handle.end_lsn);      // 结束序列号
+  const sn_t len = end_sn - start_sn;                              // 数据长度
 
-  const sn_t end_sn = log_translate_lsn_to_sn(handle.end_lsn);
-
-  const sn_t len = end_sn - start_sn;
-
+  /* 如果不允许调整日志缓冲区大小，这里只需调用：
+          - log_wait_for_space_in_log_buf(log, end_sn)
+     但我们允许调整大小，需要处理可能的竞争条件 */
   /* If we had not allowed to resize log buffer, it would have
   been sufficient here to simply call:
           - log_wait_for_space_in_log_buf(log, end_sn).
@@ -741,8 +743,8 @@ static void log_wait_for_space_after_reserving(log_t &log,
 
   log_sync_point("log_wfs_after_reserving_before_buf_size_1");
 
-  if (len > log.buf_size_sn.load()) {
-    DBUG_EXECUTE_IF("ib_log_buffer_is_short_crash", DBUG_SUICIDE(););
+  if (len > log.buf_size_sn.load()) {  // 需要扩容的情况
+    DBUG_EXECUTE_IF("ib_log_buffer_is_short_crash", DBUG_SUICIDE(););  // 调试注入
 
     log_write_up_to(log, log_translate_sn_to_lsn(start_sn), false);
 
@@ -771,7 +773,7 @@ static void log_wait_for_space_after_reserving(log_t &log,
     must happen at the very end of the resize procedure. */
     ut_a(log_translate_lsn_to_sn(log.write_lsn.load()) == start_sn);
 
-    ib::info(ER_IB_MSG_1231)
+    ib::info(ER_IB_MSG_1231)  // 输出扩容信息
         << "The transaction log size is too large"
         << " for srv_log_buffer_size (" << len << " > "
         << log.buf_size_sn.load() << "). Trying to extend it.";
@@ -796,10 +798,9 @@ static void log_wait_for_space_after_reserving(log_t &log,
 
     lsn_t new_lsn_size = log_translate_sn_to_lsn(
         static_cast<sn_t>(1.382 * len + OS_FILE_LOG_BLOCK_SIZE));
-
     new_lsn_size = ut_uint64_align_up(new_lsn_size, OS_FILE_LOG_BLOCK_SIZE);
 
-    log_buffer_resize_low(log, new_lsn_size, handle.start_lsn);
+    log_buffer_resize_low(log, new_lsn_size, handle.start_lsn);  // 执行扩容
 
     log_writer_mutex_exit(log);
     log_checkpointer_mutex_exit(log);
@@ -809,9 +810,8 @@ static void log_wait_for_space_after_reserving(log_t &log,
     We are safe to continue. */
   }
 
-  ut_a(len <= log.buf_size_sn.load());
-
-  log_wait_for_space_in_log_buf(log, end_sn);
+  ut_a(len <= log.buf_size_sn.load());  // 断言最终长度有效
+  log_wait_for_space_in_log_buf(log, end_sn);  // 等待结束位置可用
 }
 
 void log_update_buf_limit(log_t &log) {
@@ -855,9 +855,23 @@ static void log_wait_for_space_in_log_buf(log_t &log, sn_t end_sn) {
        log_translate_lsn_to_sn(log.write_lsn.load()) + buf_size_sn);
 }
 
+/**
+  在日志缓冲区中预留空间。
+  该函数用于在重做日志缓冲区中预留指定长度的空间，并返回对应的LSN范围。
+  Reserve space in the redo log buffer.
+  @param log  重做日志系统引用
+              Reference to the redo log system
+  @param len  需要预留的字节长度
+              Number of bytes to reserve
+  @return     包含起始和结束LSN的句柄
+              Handle containing start and end LSNs
+*/
 Log_handle log_buffer_reserve(log_t &log, size_t len) {
-  Log_handle handle;
+  Log_handle handle;  // 初始化日志句柄
 
+  /* 在5.7版本中，我们在迷你事务提交时对每个写入日志缓冲区的操作递增log_write_requests计数器。
+     但是，通过log_reserve_and_write_fast解决的写入操作漏掉了递增计数器。因此它不可靠。
+     Dimitri和我决定改变计数器的含义以反映mtr提交率。 */
   /* In 5.7, we incremented log_write_requests for each single
   write to log buffer in commit of mini-transaction.
 
@@ -866,46 +880,53 @@ Log_handle log_buffer_reserve(log_t &log, size_t len) {
 
   Dimitri and I have decided to change meaning of the counter
   to reflect mtr commit rate. */
-  srv_stats.log_write_requests.inc();
+  srv_stats.log_write_requests.inc();  // 递增日志写入请求统计
 
+  // 断言服务器处于正常关闭流程中
   ut_ad(srv_shutdown_state_matches([](auto state) {
     return state <= SRV_SHUTDOWN_FLUSH_PHASE ||
            state == SRV_SHUTDOWN_EXIT_THREADS;
   }));
 
-  ut_a(len > 0);
+  ut_a(len > 0);  // 断言长度必须大于0
 
+  /* 在数据字节序列中预留空间： */
   /* Reserve space in sequence of data bytes: */
-  const sn_t start_sn = log_buffer_s_lock_enter_reserve(log, len);
+  const sn_t start_sn = log_buffer_s_lock_enter_reserve(log, len);  // 获取序列号(SN)
 
+  /* 确保重做日志已正确初始化 */
   /* Ensure that redo log has been initialized properly. */
-  ut_a(start_sn > 0);
+  ut_a(start_sn > 0);  // 断言序列号有效
 
-#ifdef UNIV_DEBUG
-  if (!recv_recovery_is_on()) {
-    log_background_threads_active_validate(log);
+#ifdef UNIV_DEBUG  // 调试模式下
+  if (!recv_recovery_is_on()) {  // 非恢复模式
+    log_background_threads_active_validate(log);  // 验证后台线程活动
   } else {
-    ut_a(!recv_no_ibuf_operations);
+    ut_a(!recv_no_ibuf_operations);  // 恢复模式下必须允许ibuf操作
   }
 #endif
 
+  /* 重做块中的头部不计入sn值： */
   /* Headers in redo blocks are not calculated to sn values: */
-  const sn_t end_sn = start_sn + len;
+  const sn_t end_sn = start_sn + len;  // 计算结束序列号
 
-  log_sync_point("log_buffer_reserve_before_buf_limit_sn");
+  log_sync_point("log_buffer_reserve_before_buf_limit_sn");  // 同步点
 
+  /* 将sn转换为lsn（包含重做块中的头部）： */
   /* Translate sn to lsn (which includes also headers in redo blocks): */
-  handle.start_lsn = log_translate_sn_to_lsn(start_sn);
-  handle.end_lsn = log_translate_sn_to_lsn(end_sn);
+  handle.start_lsn = log_translate_sn_to_lsn(start_sn);  // 转换起始LSN
+  handle.end_lsn = log_translate_sn_to_lsn(end_sn);      // 转换结束LSN
 
+  // 如果超出缓冲区限制，等待空间释放
   if (unlikely(end_sn > log.buf_limit_sn.load())) {
     log_wait_for_space_after_reserving(log, handle);
   }
 
+  // 断言LSN是数据LSN
   ut_a(log_is_data_lsn(handle.start_lsn));
   ut_a(log_is_data_lsn(handle.end_lsn));
 
-  return handle;
+  return handle;  // 返回日志句柄
 }
 
 /** @} */

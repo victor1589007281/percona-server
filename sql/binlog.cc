@@ -8410,22 +8410,34 @@ bool MYSQL_BIN_LOG::truncate_relaylog_file(Master_info *mi,
 /** This is called on shutdown, after ha_panic. */
 void MYSQL_BIN_LOG::close() {}
 
-/*
+/**
+  在事务协调器中准备事务。
+  该函数通过调用@c ha_prepare_low在存储引擎中准备事务，将准备记录写入日志缓冲区。
   Prepare the transaction in the transaction coordinator.
-
   This function will prepare the transaction in the storage engines
   (by calling @c ha_prepare_low) what will write a prepare record
   to the log buffers.
 
-  @retval 0    success
-  @retval 1    error
+  @param thd  线程句柄
+              Thread handle
+  @param all  是否提交完整事务（true）或仅语句事务（false）
+              Whether to commit full transaction (true) or statement only (false)
+
+  @retval 0   成功
+              success
+  @retval 1   错误
+              error
 */
 int MYSQL_BIN_LOG::prepare(THD *thd, bool all) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪宏
 
-  assert(opt_bin_log);
+  assert(opt_bin_log);  // 断言二进制日志已启用
 
   /*
+    设置HA_IGNORE_DURABILITY以避免在准备阶段将事务的准备记录刷新到存储引擎日志
+    （例如InnoDB重做日志）。这样我们可以在二进制日志组提交的刷新阶段，
+    将这些事务的准备记录成组刷新到存储引擎日志中。
+    在解析下一条命令时会重置为HA_REGULAR_DURABILITY。
     Set HA_IGNORE_DURABILITY to not flush the prepared record of the
     transaction to the log of storage engine (for example, InnoDB
     redo log) during the prepare phase. So that we can flush prepared
@@ -8434,17 +8446,18 @@ int MYSQL_BIN_LOG::prepare(THD *thd, bool all) {
     commit flush stage. Reset to HA_REGULAR_DURABILITY at the
     beginning of parsing next command.
   */
-  thd->durability_property = HA_IGNORE_DURABILITY;
+  thd->durability_property = HA_IGNORE_DURABILITY;  // 设置持久性属性为忽略
 
-  CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_prepare_in_engines");
-  int error = ha_prepare_low(thd, all);
+  CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_prepare_in_engines");  // 条件同步点
+  int error = ha_prepare_low(thd, all);  // 调用底层存储引擎准备函数
 
-  CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("after_ha_prepare_low");
+  CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("after_ha_prepare_low");  // 条件同步点
+  // 如果是XA PREPARE操作，则调用commit以使用BCG将事件写入文件
   // Invoke `commit` if we're dealing with `XA PREPARE` in order to use BCG
   // to write the event to file.
-  if (!error && all && is_xa_prepare(thd)) return this->commit(thd, true);
+  if (!error && all && is_xa_prepare(thd)) return this->commit(thd, true);  // XA PREPARE特殊处理
 
-  return error;
+  return error;  // 返回错误码
 }
 
 /**

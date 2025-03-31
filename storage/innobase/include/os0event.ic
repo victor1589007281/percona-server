@@ -32,18 +32,29 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 /** Waits in loop until a provided condition is satisfied. Combines usage
 of spin-delay and event.
 
+循环等待，直到提供的条件被满足。结合了自旋延迟和事件的使用。
+
 @remarks
 First it uses a spin loop with PAUSE instructions. In each spin iteration
 it checks the condition and stops as soon as it returned true.
 
+备注：
+首先使用带有 PAUSE 指令的自旋循环。在每次自旋迭代中检查条件，一旦条件返回 true 就停止。
+
 When a provided number of spin iterations is reached, and the condition
 still has not returned true, waiting on a provided event starts.
+
+当达到提供的自旋迭代次数且条件仍未返回 true 时，开始在提供的事件上等待。
 
 Each wait uses a provided timeout. After each wake-up the condition is
 re-checked and function stops as soon as the condition returned true.
 
+每次等待使用提供的超时时间。每次唤醒后重新检查条件，一旦条件返回 true 函数就停止。
+
 Every k-waits (ended on wake-up or timeout), the timeout is multiplied by two
 (but it's limited up to maximum value of 100ms).
+
+每 k 次等待（以唤醒或超时结束），超时时间乘以 2（但限制在最大 100ms 内）。
 
 @param[in,out]  event                   event on which function may wait
 @param[in]      spins_limit             maximum spin iterations
@@ -51,48 +62,73 @@ Every k-waits (ended on wake-up or timeout), the timeout is multiplied by two
 @param[in]      condition               returns true when condition is
                                         satisfied
 
-@return number of loops with wait on event that have been used */
+参数：
+[in,out] event：函数可能在其上等待的事件
+[in] spins_limit：最大自旋迭代次数
+[in] timeout：初始超时值
+[in] condition：当条件满足时返回 true
+
+@return number of loops with wait on event that have been used 
+返回值：已使用的在事件上等待的循环次数*/
 template <typename Condition>
 inline static Wait_stats os_event_wait_for(os_event_t &event,
                                            uint64_t spins_limit,
                                            std::chrono::microseconds timeout,
                                            Condition condition = {}) {
 #ifdef _WIN32
-  uint32_t next_level = 64;  // 在 Windows 平台上，设置 next_level 为 64
+  uint32_t next_level = 64;  // On Windows, set next_level to 64
+                             // 在 Windows 平台上，设置 next_level 为 64
 #else
-  uint32_t next_level = 4;  // 在其他平台上，设置 next_level 为 4
+  uint32_t next_level = 4;   // On other platforms, set next_level to 4
+                             // 在其他平台上，设置 next_level 为 4
 #endif
-  uint32_t waits = 0;  // 初始化等待次数为 0
+  uint32_t waits = 0;        // Initialize wait count to 0
+                             // 初始化等待次数为 0
 
-  constexpr auto MIN_TIMEOUT = std::chrono::microseconds{1};  // 最小超时时间为 1 微秒
-  constexpr auto MAX_TIMEOUT = std::chrono::microseconds{100 * 1000};  // 最大超时时间为 100 毫秒
+  constexpr auto MIN_TIMEOUT = std::chrono::microseconds{1};       // Minimum timeout is 1 microsecond
+                                                                  // 最小超时时间为 1 微秒
+  constexpr auto MAX_TIMEOUT = std::chrono::microseconds{100 * 1000}; // Maximum timeout is 100 milliseconds
+                                                                      // 最大超时时间为 100 毫秒
 
-  while (true) {  // 无限循环
+  while (true) {  // Infinite loop
+                  // 无限循环
     /* Store current sig_count before checking the
     condition, not to miss notification. */  // 在检查条件之前存储当前的 sig_count，以免错过通知
     const bool wait = spins_limit == 0;  // 如果自旋次数限制为 0，则进入等待模式
 
-    const int64_t sig_count = !wait ? 0 : os_event_reset(event);  // 如果不需要等待，sig_count 为 0，否则重置事件并获取 sig_count
+    const int64_t sig_count = !wait ? 0 : os_event_reset(event);  // If no wait needed, sig_count is 0; otherwise reset event and get sig_count
+                                                                 // 如果不需要等待，sig_count 为 0；否则重置事件并获取 sig_count
 
     /* Important: we do not want to split this loop to two
     loops (one for spin-delay and one for event), because
     we assume the condition is inlined below, and we don't
-    want to make it inlined in two places. */  // 重要：我们不希望将此循环拆分为两个循环（一个用于自旋延迟，一个用于事件），因为我们假设条件在下面内联，并且我们不希望它在两个地方内联
+    want to make it inlined in two places. */
+    // 重要：我们不希望将此循环拆分为两个循环（一个用于自旋延迟，一个用于事件），因为我们假设条件在下面内联，并且我们不希望它在两个地方内联
 
-    if (condition(wait)) {  // 如果条件满足
-      return (Wait_stats{waits});  // 返回等待统计
+    if (condition(wait)) {  // If condition is satisfied
+                           // 如果条件满足
+      return (Wait_stats{waits});  // Return wait statistics
+                                  // 返回等待统计
     }
 
-    if (!wait) {  // 如果不需要等待
-      /* It's still spin-delay loop. */  // 仍然处于自旋延迟循环
-      --spins_limit;  // 减少自旋次数限制
+    if (!wait) {  // If no wait needed
+                 // 如果不需要等待
+      /* It's still spin-delay loop. */
+      // 仍然处于自旋延迟循环
+      --spins_limit;  // Decrement spin limit
+                     // 减少自旋次数限制
 
-      UT_RELAX_CPU();  // 执行 CPU 放松指令
+      UT_RELAX_CPU();  // Execute CPU relaxation instruction
+                      // 执行 CPU 放松指令
 
-    } else {  // 如果需要等待
-      /* Event-based loop. */  // 基于事件的循环
-      ++waits;  // 增加等待次数
-      if (timeout < MIN_TIMEOUT) {  // 如果超时时间小于最小超时时间
+    } else {  // If wait is needed
+             // 如果需要等待
+      /* Event-based loop. */
+      // 基于事件的循环
+      ++waits;  // Increment wait count
+               // 增加等待次数
+      if (timeout < MIN_TIMEOUT) {  // If timeout is less than minimum timeout
+                                   // 如果超时时间小于最小超时时间
         /* If timeout = 0, then timeout * 2 = 0 and
         we would not keep increasing timeout below.
         Therefore we need some limitation for min.
@@ -110,8 +146,10 @@ inline static Wait_stats os_event_wait_for(os_event_t &event,
         timeout = MIN_TIMEOUT;  // 设置超时时间为最小超时时间
       }
 
-      if (waits == next_level) {  // 如果等待次数达到 next_level
-        timeout = std::min(timeout * 2, MAX_TIMEOUT);  // 将超时时间乘以 2，但不超过最大超时时间
+      if (waits == next_level) {  // If wait count reaches next_level
+                                 // 如果等待次数达到 next_level
+        timeout = std::min(timeout * 2, MAX_TIMEOUT);  // Double timeout, but not exceeding maximum timeout
+                                                      // 将超时时间乘以 2，但不超过最大超时时间
 
 #ifdef _WIN32
         /* On Windows timeout is expressed in ms,
@@ -122,15 +160,21 @@ inline static Wait_stats os_event_wait_for(os_event_t &event,
         perform single SleepConditionVariableCS.
 
         So we need to perform more such 10us waits
-        to simulate given number of timeout waits. */  // 在 Windows 平台上，超时时间以毫秒表示，因此当它小于 1000 时，它会被除以 1000 并向下舍入为 0。在这种情况下，执行单个 SleepConditionVariableCS 平均需要 10us。因此，我们需要执行更多这样的 10us 等待来模拟给定的超时等待次数。
-        next_level += 64;  // 增加 next_level 64
+        to simulate given number of timeout waits. */
+        // 在 Windows 平台上，超时时间以毫秒表示，因此当它小于 1000 时，它会被除以 1000 并向下舍入为 0。在这种情况下，执行单个 SleepConditionVariableCS 平均需要 10us。因此，我们需要执行更多这样的 10us 等待来模拟给定的超时等待次数。
+        next_level += 64;  // Increase next_level by 64
+                          // 增加 next_level 64
 #else
-        next_level += 4;  // 增加 next_level 4
+        next_level += 4;  // Increase next_level by 4
+                         // 增加 next_level 4
 #endif
       }
 
-      /* This translates to pthread_cond_wait (linux). */  // 这转换为 pthread_cond_wait（Linux）
-      os_event_wait_time_low(event, timeout, sig_count);  // 在事件上等待指定的超时时间
+      /* This translates to pthread_cond_wait (linux). */
+      // 这转换为 pthread_cond_wait（Linux）
+      os_event_wait_time_low(event, timeout, sig_count);  // Wait on event with specified timeout
+                                                         // 在事件上等待指定的超时时间
     }
   }
 }
+

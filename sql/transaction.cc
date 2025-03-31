@@ -228,26 +228,34 @@ bool trans_begin(THD *thd, uint flags) {
   @retval false  Success
   @retval true   Failure
 */
+/**
+  提交当前事务，使其更改永久化。
 
+  @param[in] thd                       当前线程
+  @param[in] ignore_global_read_lock   即使全局读锁处于活动状态，也允许提交完成。这可以用于允许更改内部表（例如从库状态表，分析表）。
+
+  @retval false 成功
+  @retval true  失败
+*/
 bool trans_commit(THD *thd, bool ignore_global_read_lock) {
-  int res;
-  DBUG_TRACE;
+  int res;  // 结果变量
+  DBUG_TRACE;  // 调试跟踪
 
   DBUG_EXECUTE_IF(
       "crash_on_transactional_ddl_commit",
       if (thd->m_transactional_ddl.inited() &&
-          thd->lex->sql_command == SQLCOM_COMMIT) { DBUG_SUICIDE(); });
+          thd->lex->sql_command == SQLCOM_COMMIT) { DBUG_SUICIDE(); });  // 调试：在事务性 DDL 提交时崩溃
 
-  if (trans_check_state(thd)) return true;
+  if (trans_check_state(thd)) return true;  // 检查事务状态，如果失败则返回 true
 
   thd->server_status &=
-      ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
-  DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
-  res = ha_commit_trans(thd, true, ignore_global_read_lock);
+      ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);  // 清除事务状态标志
+  DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));  // 打印调试信息
+  res = ha_commit_trans(thd, true, ignore_global_read_lock);  // 提交事务
   if (res == false)
     if (thd->rpl_thd_ctx.session_gtids_ctx().notify_after_transaction_commit(
-            thd))
-      LogErr(WARNING_LEVEL, ER_TRX_GTID_COLLECT_REJECT);
+            thd))  // 如果提交成功，通知 GTID 上下文
+      LogErr(WARNING_LEVEL, ER_TRX_GTID_COLLECT_REJECT);  // 记录警告日志
   /*
     When gtid mode is enabled, a transaction may cause binlog
     rotation, which inserts a record into the gtid system table
@@ -261,17 +269,23 @@ bool trans_commit(THD *thd, bool ignore_global_read_lock) {
     we clear the bit unconditionally.  This has no side effects since
     if gtid_mode=off the bit is already cleared.
   */
-  thd->server_status &= ~SERVER_STATUS_IN_TRANS;
-  thd->variables.option_bits &= ~OPTION_BEGIN;
-  thd->get_transaction()->reset_unsafe_rollback_flags(Transaction_ctx::SESSION);
-  thd->lex->start_transaction_opt = 0;
+  /*
+    当 GTID 模式启用时，事务可能会导致 binlog 轮换，这会在 GTID 系统表中插入一条记录（可能是一个事务表）。因此，在调用 ha_commit_trans(...) 时，SERVER_STATUS_IN_TRANS 标志可能会再次被设置。因此，我们需要将其重置，就像在调用 ha_commit_trans(...) 之前所做的那样。
+
+    我们实际上只需要在 gtid_mode=on 时执行此操作。然而，检查 gtid_mode 需要持有锁，这很昂贵。因此，我们无条件地清除该位。这没有副作用，因为如果 gtid_mode=off，该位已经被清除。
+  */
+  thd->server_status &= ~SERVER_STATUS_IN_TRANS;  // 清除事务状态标志
+  thd->variables.option_bits &= ~OPTION_BEGIN;  // 清除 OPTION_BEGIN 标志
+  thd->get_transaction()->reset_unsafe_rollback_flags(Transaction_ctx::SESSION);  // 重置不安全的回滚标志
+  thd->lex->start_transaction_opt = 0;  // 重置事务选项
 
   /* The transaction should be marked as complete in P_S. */
-  assert(thd->m_transaction_psi == nullptr);
+  /* 事务应该在 P_S 中标记为完成。 */
+  assert(thd->m_transaction_psi == nullptr);  // 断言事务 PSI 为空
 
-  thd->tx_priority = 0;
+  thd->tx_priority = 0;  // 重置事务优先级
 
-  trans_track_end_trx(thd);
+  trans_track_end_trx(thd);  // 跟踪事务结束
 
   /*
     Avoid updating modified uncommitted objects when committing attachable
@@ -279,23 +293,29 @@ bool trans_commit(THD *thd, bool ignore_global_read_lock) {
     table statistics during CREATE TABLE ... SELECT, otherwise the
     uncommitted object added by DDL would be removed by I_S query.
   */
+  /*
+    在提交可附加的读写事务时，避免更新未提交的修改对象。这是为了允许 I_S 查询在 CREATE TABLE ... SELECT 期间更新表统计信息，否则 DDL 添加的未提交对象将被 I_S 查询删除。
+  */
   if (!thd->is_attachable_rw_transaction_active()) {
     /*
       If the SE failed to commit the transaction, we must rollback the
       modified dictionary objects to make sure the DD cache, the DD
       tables and the state in the SE stay in sync.
     */
+    /*
+      如果存储引擎未能提交事务，我们必须回滚修改的字典对象，以确保 DD 缓存、DD 表和存储引擎中的状态保持同步。
+    */
     if (res)
-      thd->dd_client()->rollback_modified_objects();
+      thd->dd_client()->rollback_modified_objects();  // 回滚修改的对象
     else
-      thd->dd_client()->commit_modified_objects();
+      thd->dd_client()->commit_modified_objects();  // 提交修改的对象
   }
 
-  thd->locked_tables_list.adjust_renamed_tablespace_mdls(&thd->mdl_context);
+  thd->locked_tables_list.adjust_renamed_tablespace_mdls(&thd->mdl_context);  // 调整重命名的表空间 MDL
 
-  thd->m_transactional_ddl.post_ddl();
+  thd->m_transactional_ddl.post_ddl();  // 执行 DDL 后操作
 
-  return res;
+  return res;  // 返回结果
 }
 
 /**

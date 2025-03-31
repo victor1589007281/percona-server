@@ -1583,34 +1583,32 @@ std::pair<int, bool> commit_owned_gtids(THD *thd, bool all) {
 }
 
 /**
-  @param[in] thd                       Thread handle.
-  @param[in] all                       Session transaction if true, statement
-                                       otherwise.
-  @param[in] ignore_global_read_lock   Allow commit to complete even if a
-                                       global read lock is active. This can be
-                                       used to allow changes to internal tables
-                                       (e.g. slave status tables).
+  提交事务处理函数。
+  处理事务提交逻辑，包括2PC准备、提交、GTID管理及从库状态更新。
+  @param[in] thd                       线程句柄
+                                       Thread handle.
+  @param[in] all                       是否提交会话事务（true）或仅语句事务（false）
+                                       Session transaction if true, statement otherwise.
+  @param[in] ignore_global_read_lock   是否忽略全局读锁（用于内部表修改）
+                                       Allow commit to complete even if a global read lock is active.
 
-  @retval
-    0   ok
-  @retval
-    1   transaction was rolled back
-  @retval
-    2   error during commit, data may be inconsistent
-
-  @todo
-    Since we don't support nested statement transactions in 5.0,
-    we can't commit or rollback stmt transactions while we are inside
-    stored functions or triggers. So we simply do nothing now.
-    TODO: This should be fixed in later ( >= 5.1) releases.
+  @retval 0   成功
+               ok
+  @retval 1   事务已回滚
+               transaction was rolled back
+  @retval 2   提交过程中出错，数据可能不一致
+               error during commit, data may be inconsistent
 */
 
 int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
   int error = 0;
-  THD_STAGE_INFO(thd, stage_waiting_for_handler_commit);
-  bool run_slave_post_commit = false;
-  bool need_clear_owned_gtid = false;
+  THD_STAGE_INFO(thd, stage_waiting_for_handler_commit);  // 设置线程状态
+  bool run_slave_post_commit = false;  // 是否运行从库提交后逻辑
+  bool need_clear_owned_gtid = false;  // 是否需要清除拥有的GTID
+
   /*
+    在事务准备前，如果binlog禁用，或binlog启用但log_replica_updates禁用（从库SQL线程或工作线程），
+    将事务拥有的GTID保存到表中。
     Save transaction owned gtid into table before transaction prepare
     if binlog is disabled, or binlog is enabled and log_replica_updates
     is disabled with slave SQL thread or slave worker thread.
@@ -1618,14 +1616,16 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
   std::tie(error, need_clear_owned_gtid) = commit_owned_gtids(thd, all);
 
   /*
+    'all'表示这是用户显式提交或DDL隐式提交。
     'all' means that this is either an explicit commit issued by
     user, or an implicit commit issued by a DDL.
   */
-  Transaction_ctx *trn_ctx = thd->get_transaction();
+  Transaction_ctx *trn_ctx = thd->get_transaction();  // 获取事务上下文
   Transaction_ctx::enum_trx_scope trx_scope =
-      all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;
+      all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;  // 确定事务范围
 
   /*
+    "real"表示会使更改持久化的事务。例如，'all'事务中的'stmt'事务不是'real'的。
     "real" is a nick name for a transaction for which a commit will
     make persistent changes. E.g. a 'stmt' transaction inside a 'all'
     transaction is not 'real': even though it's possible to commit it,
@@ -1635,18 +1635,19 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
   bool is_real_trans = all || !trn_ctx->is_active(Transaction_ctx::SESSION);
 #ifndef NDEBUG
   bool transaction_to_skip = false;
-  DBUG_EXECUTE_IF("replica_crash_after_commit", {
+  DBUG_EXECUTE_IF("replica_crash_after_commit", {  // 调试：模拟已记录事务
     transaction_to_skip = is_already_logged_transaction(thd);
   });
 #endif  // NDEBUG
-  auto ha_info = trn_ctx->ha_trx_info(trx_scope);
-  XID_STATE *xid_state = trn_ctx->xid_state();
+  auto ha_info = trn_ctx->ha_trx_info(trx_scope);  // 获取存储引擎事务信息
+  XID_STATE *xid_state = trn_ctx->xid_state();  // 获取XA事务状态
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
   DBUG_PRINT("info", ("all=%d thd->in_sub_stmt=%d ha_info=%p is_real_trans=%d",
                       all, thd->in_sub_stmt, ha_info.head(), is_real_trans));
   /*
+    如果有语句事务未提交，不能提交主事务。
     We must not commit the normal transaction if a statement
     transaction is pending. Otherwise statement transaction
     flags will not get propagated to its normal transaction's
@@ -1654,12 +1655,13 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
   */
   assert(!trn_ctx->is_active(Transaction_ctx::STMT) || !all);
 
-  DBUG_EXECUTE_IF("pre_commit_error", {
+  DBUG_EXECUTE_IF("pre_commit_error", {  // 调试：模拟提交前错误
     error = true;
     my_error(ER_UNKNOWN_ERROR, MYF(0));
   });
 
   /*
+    在从库执行原子DDL时，在DDL事务提交前更新从库状态。
     When atomic DDL is executed on the slave, we would like to
     to update slave applier state as part of DDL's transaction.
     Call Relay_log_info::pre_commit() hook to do this before DDL
@@ -1678,19 +1680,19 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
        (thd->is_operating_gtid_table_implicitly &&
         thd->get_stmt_da()->mysql_errno() == ER_SLAVE_IGNORED_TABLE))) {
     run_slave_post_commit = true;
-    error = error || thd->rli_slave->pre_commit();
+    error = error || thd->rli_slave->pre_commit();  // 执行从库预提交
 
-    DBUG_EXECUTE_IF("rli_pre_commit_error", {
+    DBUG_EXECUTE_IF("rli_pre_commit_error", {  // 调试：模拟预提交错误
       error = true;
       my_error(ER_UNKNOWN_ERROR, MYF(0));
     });
     DBUG_EXECUTE_IF("replica_crash_before_commit", {
-      /* This pre-commit crash aims solely at atomic DDL */
+      /* This pre-commit crash aims solely at atomic DDL */  // 调试：模拟提交前崩溃
       DBUG_SUICIDE();
     });
   }
 
-  if (thd->in_sub_stmt) {
+  if (thd->in_sub_stmt) {  // 子语句中不允许提交
     assert(0);
     /*
       Since we don't support nested statement transactions in 5.0,
@@ -1698,29 +1700,30 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
       stored functions or triggers. So we simply do nothing now.
       TODO: This should be fixed in later ( >= 5.1) releases.
     */
-    if (!all) return 0;
-    /*
-      We assume that all statements which commit or rollback main transaction
-      are prohibited inside of stored functions or triggers. So they should
-      bail out with error even before ha_commit_trans() call. To be 100% safe
-      let us throw error in non-debug builds.
-    */
-    my_error(ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG, MYF(0));
-    return 2;
+   if (!all) return 0;
+   /*
+     We assume that all statements which commit or rollback main transaction
+     are prohibited inside of stored functions or triggers. So they should
+     bail out with error even before ha_commit_trans() call. To be 100% safe
+     let us throw error in non-debug builds.
+   */
+   my_error(ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG, MYF(0));
+       return 2;
   }
 
-  MDL_request mdl_request;
+  MDL_request mdl_request;  // 元数据锁请求
   bool release_mdl = false;
   if (ha_info && !error) {
     uint rw_ha_count = 0;
     bool rw_trans;
 
-    DBUG_EXECUTE_IF("crash_commit_before", DBUG_SUICIDE(););
+    DBUG_EXECUTE_IF("crash_commit_before", DBUG_SUICIDE(););  // 调试：提交前崩溃
 
+    // 检查事务是否只读
     /*
      skip 2PC if the transaction is empty and it is not marked as started (which
      can happen when the slave's binlog is disabled)
-    */
+    */    
     if (ha_info->is_started())
       rw_ha_count = ha_check_and_coalesce_trx_read_only(thd, ha_info, all);
     trn_ctx->set_rw_ha_count(trx_scope, rw_ha_count);
@@ -1747,7 +1750,7 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
       DBUG_PRINT("debug", ("Acquire MDL commit lock"));
       if (thd->mdl_context.acquire_lock(&mdl_request,
                                         thd->variables.lock_wait_timeout)) {
-        ha_rollback_trans(thd, all);
+        ha_rollback_trans(thd, all);  // 获取锁失败则回滚
         return 1;
       }
       release_mdl = true;
@@ -1756,20 +1759,21 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
     }
 
     if (rw_trans && stmt_has_updated_trans_table(ha_info) &&
-        check_readonly(thd, true)) {
+        check_readonly(thd, true)) {  // 检查只读模式
       ha_rollback_trans(thd, all);
       error = 1;
       goto end;
     }
 
     if (!trn_ctx->no_2pc(trx_scope) && (trn_ctx->rw_ha_count(trx_scope) > 1))
-      error = tc_log->prepare(thd, all);
+      error = tc_log->prepare(thd, all);  // 执行2PC准备阶段
   }
   /*
     The state of XA transaction is changed to Prepared, intermediately.
     It's going to change to the regular NOTR at the end.
     The fact of the Prepared state is of interest to binary logger.
   */
+  // XA单阶段提交状态转换
   if (!error && all && xid_state->has_state(XID_STATE::XA_IDLE)) {
     assert(
         thd->lex->sql_command == SQLCOM_XA_COMMIT &&
@@ -1778,7 +1782,8 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
 
     xid_state->set_state(XID_STATE::XA_PREPARED);
   }
-  if (error || (error = tc_log->commit(thd, all))) {
+
+  if (error || (error = tc_log->commit(thd, all))) {  // 执行提交
     ha_rollback_trans(thd, all);
     error = 1;
     goto end;
@@ -1813,6 +1818,7 @@ end:
     thd->tx_priority = 0;
   }
 
+  // GTID状态更新
   if (need_clear_owned_gtid) {
     thd->server_status &= ~SERVER_STATUS_IN_TRANS;
     /*
@@ -1827,11 +1833,12 @@ end:
   } else {
     if (has_commit_order_manager(thd) && error) {
       gtid_state->update_on_rollback(thd);
-    }
+  }
   }
   if (run_slave_post_commit) {
     DBUG_EXECUTE_IF("replica_crash_after_commit", DBUG_SUICIDE(););
 
+  if (run_slave_post_commit) {  // 从库提交后处理
     thd->rli_slave->post_commit(error != 0);
     /*
       SERVER_STATUS_IN_TRANS may've been gained by pre_commit alone
@@ -1854,7 +1861,7 @@ end:
     });
   }
 
-  if (!error) thd->diff_commit_trans++;
+  if (!error) thd->diff_commit_trans++;  // 统计成功提交次数
 
   return error;
 }
@@ -2286,41 +2293,60 @@ int ha_rollback_to_savepoint(THD *thd, SAVEPOINT *sv) {
   return error;
 }
 
+/**
+  底层事务准备函数。
+  遍历所有参与事务的存储引擎，调用其prepare方法进行两阶段提交的准备阶段。
+  This function prepares the transaction in all participating storage engines
+  by calling their prepare methods for two-phase commit.
+
+  @param thd  线程句柄
+              Thread handle
+  @param all  是否准备完整事务（true）或仅语句事务（false）
+              Whether to prepare full transaction (true) or statement only (false)
+
+  @retval 0   成功
+              success
+  @retval 1   错误
+              error
+*/
 int ha_prepare_low(THD *thd, bool all) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪宏
   int error = 0;
   Transaction_ctx::enum_trx_scope trx_scope =
-      all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;
-  auto ha_list = thd->get_transaction()->ha_trx_info(trx_scope);
+      all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;  // 确定事务范围
+  auto ha_list = thd->get_transaction()->ha_trx_info(trx_scope);  // 获取存储引擎事务列表
 
-  if (ha_list) {
-    for (auto const &ha_info : ha_list) {
-      if (!ha_info.is_trx_read_write() &&  // Do not call two-phase commit if
+  if (ha_list) {  // 如果有参与事务的存储引擎
+    for (auto const &ha_info : ha_list) {  // 遍历每个存储引擎
+      if (!ha_info.is_trx_read_write() &&  // 跳过只读事务
+                                           // Do not call two-phase commit if
                                            // transaction is read-only
-          !thd_holds_xa_transaction(thd))  // but only if is not an XA
+          !thd_holds_xa_transaction(thd))  // 除非是XA事务
+                                           // but only if is not an XA
                                            // transaction
         continue;
 
-      auto ht = ha_info.ht();
-      int err = ht->prepare(ht, thd, all);
-      if (err) {
+      auto ht = ha_info.ht();  // 获取存储引擎句柄
+      int err = ht->prepare(ht, thd, all);  // 调用存储引擎的prepare方法
+      if (err) {  // 处理错误
         if (!thd_holds_xa_transaction(
-                thd)) {  // If XA PREPARE, let error be handled by caller
+                thd)) {  // 如果不是XA PREPARE，直接处理错误
+                         // If XA PREPARE, let error be handled by caller
           char errbuf[MYSQL_ERRMSG_SIZE];
           my_error(ER_ERROR_DURING_COMMIT, MYF(0), err,
-                   my_strerror(errbuf, MYSQL_ERRMSG_SIZE, err));
+                   my_strerror(errbuf, MYSQL_ERRMSG_SIZE, err));  // 报告错误
         }
-        error = 1;
+        error = 1;  // 标记错误
       }
-      assert(!thd->status_var_aggregated);
-      thd->status_var.ha_prepare_count++;
+      assert(!thd->status_var_aggregated);  // 断言状态变量未聚合
+      thd->status_var.ha_prepare_count++;  // 增加prepare计数器
 
-      if (error) break;
+      if (error) break;  // 如果出错则终止循环
     }
-    DBUG_EXECUTE_IF("crash_commit_after_prepare", DBUG_SUICIDE(););
+    DBUG_EXECUTE_IF("crash_commit_after_prepare", DBUG_SUICIDE(););  // 调试：prepare后崩溃
   }
 
-  return error;
+  return error;  // 返回错误码
 }
 
 /**

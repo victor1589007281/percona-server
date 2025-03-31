@@ -591,43 +591,58 @@ struct mtr_write_log_t {
 thread_local ut::unordered_set<const mtr_t *> mtr_t::s_my_thread_active_mtrs;
 #endif
 
+/**
+  启动一个迷你事务（Mini-Transaction）。
+  初始化MTR对象的状态和缓冲区。
+  Start a mini-transaction.
+  Initializes the MTR object state and buffers.
+  
+  @param sync 是否同步操作（true=等待I/O完成）
+              Whether to perform synchronous operations (true=wait for I/O completion)
+*/
 void mtr_t::start(bool sync) {
+  // 断言MTR状态必须是INIT或COMMITTED
   ut_ad(m_impl.m_state == MTR_STATE_INIT ||
         m_impl.m_state == MTR_STATE_COMMITTED);
 
-  UNIV_MEM_INVALID(this, sizeof(*this));
-  IF_DEBUG(UNIV_MEM_VALID(&m_restart_count, sizeof(m_restart_count)););
+  // 内存调试标记
+  UNIV_MEM_INVALID(this, sizeof(*this));  // 标记整个对象内存为无效
+  IF_DEBUG(UNIV_MEM_VALID(&m_restart_count, sizeof(m_restart_count)););  // 调试模式下验证重启计数器内存
 
-  UNIV_MEM_INVALID(&m_impl, sizeof(m_impl));
+  UNIV_MEM_INVALID(&m_impl, sizeof(m_impl));  // 标记实现体内存为无效
 
-  m_sync = sync;
+  m_sync = sync;  // 设置同步标志
 
-  m_commit_lsn = 0;
+  m_commit_lsn = 0;  // 初始化提交LSN为0
 
-  new (&m_impl.m_log) mtr_buf_t();
-  new (&m_impl.m_memo) mtr_buf_t();
+  // 使用placement new初始化日志缓冲区和备忘录缓冲区
+  new (&m_impl.m_log) mtr_buf_t();   // 构造日志缓冲区
+  new (&m_impl.m_memo) mtr_buf_t();  // 构造备忘录缓冲区
 
-  m_impl.m_mtr = this;
-  m_impl.m_log_mode = MTR_LOG_ALL;
-  m_impl.m_inside_ibuf = false;
-  m_impl.m_modifications = false;
-  m_impl.m_made_dirty = false;
-  m_impl.m_n_log_recs = 0;
-  m_impl.m_state = MTR_STATE_ACTIVE;
-  m_impl.m_flush_observer = nullptr;
-  m_impl.m_marked_nolog = false;
+  // 初始化MTR实现体成员
+  m_impl.m_mtr = this;          // 设置回指指针
+  m_impl.m_log_mode = MTR_LOG_ALL;  // 默认记录所有日志
+  m_impl.m_inside_ibuf = false; // 不在插入缓冲区内部
+  m_impl.m_modifications = false; // 没有修改标记
+  m_impl.m_made_dirty = false;  // 未产生脏页
+  m_impl.m_n_log_recs = 0;      // 日志记录数清零
+  m_impl.m_state = MTR_STATE_ACTIVE;  // 设置状态为活跃
+  m_impl.m_flush_observer = nullptr;  // 刷新观察器置空
+  m_impl.m_marked_nolog = false;  // 未标记为无日志
 
-#ifndef UNIV_HOTBACKUP
-  check_nolog_and_mark();
+#ifndef UNIV_HOTBACKUP  // 非热备份模式
+  check_nolog_and_mark();  // 检查并标记无日志操作
 #endif /* !UNIV_HOTBACKUP */
-  ut_d(m_impl.m_magic_n = MTR_MAGIC_N);
+  ut_d(m_impl.m_magic_n = MTR_MAGIC_N);  // 调试模式下设置魔术数
 
 #ifdef UNIV_DEBUG
+  // 调试模式下将当前MTR加入线程活跃MTR集合
   auto res = s_my_thread_active_mtrs.insert(this);
+  /* 断言线程本地上下文没有冲突 - 这意味着重复使用未提交或销毁的MTR */
   /* Assert there are no collisions in thread local context - it would mean
   reusing MTR without committing or destructing it. */
   ut_a(res.second);
-  m_restart_count++;
+  m_restart_count++;  // 增加重启计数器
 #endif /* UNIV_DEBUG */
 }
 
@@ -688,30 +703,48 @@ void mtr_t::Command::release_resources() {
   m_impl = nullptr;
 }
 
-/** Commit a mini-transaction. */
+/**
+  提交一个迷你事务。
+  该函数执行迷你事务的提交操作，包括日志写入和资源释放。
+  Commit a mini-transaction.
+*/
 void mtr_t::commit() {
+  // 断言检查：事务必须处于活跃状态
   ut_ad(is_active());
+  // 断言检查：不能在插入缓冲区内部
   ut_ad(!is_inside_ibuf());
+  // 断言检查：魔术数必须匹配
   ut_ad(m_impl.m_magic_n == MTR_MAGIC_N);
+  // 设置状态为"正在提交"
   m_impl.m_state = MTR_STATE_COMMITTING;
 
+  // 调试注入：模拟提交时崩溃
   DBUG_EXECUTE_IF("mtr_commit_crash", DBUG_SUICIDE(););
 
+  // 创建提交命令对象
   Command cmd(this);
 
+  // 检查是否需要执行日志写入：
+  // 1. 有日志记录 或 2. 有修改且日志模式为NO_REDO
   if (m_impl.m_n_log_recs > 0 ||
       (m_impl.m_modifications && m_impl.m_log_mode == MTR_LOG_NO_REDO)) {
+    // 断言：只读模式下必须为NO_REDO日志模式
     ut_ad(!srv_read_only_mode || m_impl.m_log_mode == MTR_LOG_NO_REDO);
 
+    // 执行提交操作
     cmd.execute();
   } else {
+    // 无日志需要写入时，直接释放所有资源
     cmd.release_all();
     cmd.release_resources();
   }
-#ifndef UNIV_HOTBACKUP
+
+#ifndef UNIV_HOTBACKUP  // 非热备份模式
+  // 检查并清除无日志标记
   check_nolog_and_unmark();
 #endif /* !UNIV_HOTBACKUP */
 
+  // 调试模式下从调试列表中移除
   ut_d(remove_from_debug_list());
 }
 
@@ -807,69 +840,82 @@ void mtr_t::release_page(const void *ptr, mtr_memo_type_t type) {
   ut_d(ut_error);
 }
 
-/** Prepare to write the mini-transaction log to the redo log buffer.
-@return number of bytes to write in finish_write() */
+/**
+  准备将迷你事务日志写入重做日志缓冲区。
+  根据日志模式决定是否需要写入及写入的字节数。
+  Prepare to write the mini-transaction log to the redo log buffer.
+  @return 需要在finish_write()中写入的字节数
+          number of bytes to write in finish_write()
+*/
 ulint mtr_t::Command::prepare_write() {
+  // 根据日志模式处理不同情况
   switch (m_impl->m_log_mode) {
-    case MTR_LOG_SHORT_INSERTS:
-      ut_d(ut_error);
+    case MTR_LOG_SHORT_INSERTS:  // 短插入日志模式（已弃用）
+      ut_d(ut_error);  // 调试模式下触发错误
+      /* 继续执行（不写redo日志） */
       /* fall through (write no redo log) */
       [[fallthrough]];
-    case MTR_LOG_NO_REDO:
-    case MTR_LOG_NONE:
-      ut_ad(m_impl->m_log.size() == 0);
-      return 0;
-    case MTR_LOG_ALL:
-      break;
-    default:
-      ut_d(ut_error);
-      ut_o(return 0);
+    case MTR_LOG_NO_REDO:  // 无redo日志模式
+    case MTR_LOG_NONE:     // 无日志模式
+      ut_ad(m_impl->m_log.size() == 0);  // 断言日志缓冲区为空
+      return 0;  // 返回0字节需要写入
+    case MTR_LOG_ALL:  // 全日志模式
+      break;  // 继续执行后续处理
+    default:  // 未知日志模式
+      ut_d(ut_error);  // 调试模式下触发错误
+      ut_o(return 0);  // 优化模式下返回0
   }
 
+  /* 在恢复期间应用日志记录加载页面时可能发生ibuf合并。
+     在ibuf合并期间会使用mtr。 */
   /* An ibuf merge could happen when loading page to apply log
   records during recovery. During the ibuf merge mtr is used. */
 
-  ut_a(!recv_recovery_is_on() || !recv_no_ibuf_operations);
+  ut_a(!recv_recovery_is_on() || !recv_no_ibuf_operations);  // 断言：非恢复模式或允许ibuf操作
 
-  ulint len = m_impl->m_log.size();
-  ut_ad(len > 0);
+  ulint len = m_impl->m_log.size();  // 获取日志缓冲区大小
+  ut_ad(len > 0);  // 断言日志非空
 
-  ulint n_recs = m_impl->m_n_log_recs;
-  ut_ad(n_recs > 0);
+  ulint n_recs = m_impl->m_n_log_recs;  // 获取日志记录数
+  ut_ad(n_recs > 0);  // 断言有日志记录
 
-  ut_ad(log_sys != nullptr);
+  ut_ad(log_sys != nullptr);  // 断言日志系统已初始化
 
-  ut_ad(m_impl->m_n_log_recs == n_recs);
+  ut_ad(m_impl->m_n_log_recs == n_recs);  // 断言日志记录数一致
 
+  /* 这不是自上次检查点以来第一次脏化表空间 */
   /* This was not the first time of dirtying a
   tablespace since the latest checkpoint. */
 
-  ut_ad(n_recs == m_impl->m_n_log_recs);
+  ut_ad(n_recs == m_impl->m_n_log_recs);  // 再次断言日志记录数
 
-  if (n_recs <= 1) {
-    ut_ad(n_recs == 1);
+  if (n_recs <= 1) {  // 单条日志记录处理
+    ut_ad(n_recs == 1);  // 断言只有一条记录
 
+    /* 将单条日志记录标记为此迷你事务的唯一记录 */
     /* Flag the single log record as the
     only record in this mini-transaction. */
 
-    *m_impl->m_log.front()->begin() |= MLOG_SINGLE_REC_FLAG;
+    *m_impl->m_log.front()->begin() |= MLOG_SINGLE_REC_FLAG;  // 设置单记录标志位
 
-  } else {
+  } else {  // 多条日志记录处理
+    /* 由于此迷你事务包含多条日志记录，
+       在末尾追加MLOG_MULTI_REC_END标记 */
     /* Because this mini-transaction comprises
     multiple log records, append MLOG_MULTI_REC_END
     at the end. */
 
-    mlog_catenate_ulint(&m_impl->m_log, MLOG_MULTI_REC_END, MLOG_1BYTE);
-    ++len;
+    mlog_catenate_ulint(&m_impl->m_log, MLOG_MULTI_REC_END, MLOG_1BYTE);  // 追加结束标记
+    ++len;  // 增加日志长度
   }
 
-  ut_ad(m_impl->m_log_mode == MTR_LOG_ALL);
-  ut_ad(m_impl->m_log.size() == len);
-  ut_ad(len > 0);
+  ut_ad(m_impl->m_log_mode == MTR_LOG_ALL);  // 断言日志模式
+  ut_ad(m_impl->m_log.size() == len);  // 断言日志长度
+  ut_ad(len > 0);  // 断言有效长度
 
-  return len;
+  return len;  // 返回需要写入的字节数
 }
-#endif /* !UNIV_HOTBACKUP */
+#endif /* !UNIV_HOTBACKUP */  // 非热备份模式结束
 
 /** Release the latches and blocks acquired by this mini-transaction */
 void mtr_t::Command::release_all() {

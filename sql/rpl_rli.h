@@ -381,6 +381,16 @@ class Relay_log_info : public Rpl_info {
     @param  immediate_ts_arg the immediate commit timestamp of the transaction
     @param  skipped          true if the transaction was gtid skipped
   */
+  /**
+    存储刚刚开始处理的事务的详细信息。
+
+    当 STS 应用器或 MTS Worker 应用 GTID 时调用此函数。
+
+    @param  gtid_arg         事务的 GTID
+    @param  original_ts_arg  事务的原始提交时间戳
+    @param  immediate_ts_arg 事务的立即提交时间戳
+    @param  skipped          如果事务被 GTID 跳过，则为 true
+  */
   void started_processing(Gtid gtid_arg, ulonglong original_ts_arg,
                           ulonglong immediate_ts_arg, bool skipped = false) {
     gtid_monitoring_info->start(gtid_arg, original_ts_arg, immediate_ts_arg,
@@ -395,14 +405,24 @@ class Relay_log_info : public Rpl_info {
 
     @param  gtid_log_ev_arg the gtid log event of the trx
   */
-  void started_processing(Gtid_log_event *gtid_log_ev_arg) {
-    Gtid gtid = {0, 0};
-    if (gtid_log_ev_arg->get_type() == ASSIGNED_GTID) {
-      gtid = {gtid_log_ev_arg->get_sidno(true), gtid_log_ev_arg->get_gno()};
-    }
-    started_processing(gtid, gtid_log_ev_arg->original_commit_timestamp,
-                       gtid_log_ev_arg->immediate_commit_timestamp);
+  /**
+    存储刚刚开始处理的事务的详细信息。
+
+    当 MTS 协调器将 Gtid 排队到 Worker 时调用此函数。
+
+    @param  gtid_log_ev_arg 事务的 gtid 日志事件
+  */
+ void started_processing(Gtid_log_event *gtid_log_ev_arg) {
+  // 定义一个 Gtid 结构体变量 gtid，并初始化为 {0, 0}。Gtid 结构体通常包含两个字段：sidno（源标识符编号）和 gno（全局事务标识符编号）。
+  Gtid gtid = {0, 0};
+  // ASSIGNED_GTID 表示分配的 GTID。
+  if (gtid_log_ev_arg->get_type() == ASSIGNED_GTID) {
+    gtid = {gtid_log_ev_arg->get_sidno(true), gtid_log_ev_arg->get_gno()};
   }
+  // 传入 gtid、original_commit_timestamp（原始提交时间戳）和 immediate_commit_timestamp（立即提交时间戳）。
+  started_processing(gtid, gtid_log_ev_arg->original_commit_timestamp,
+                     gtid_log_ev_arg->immediate_commit_timestamp);
+}
 
   /**
     When the processing of a transaction is completed, that timestamp is
@@ -412,7 +432,12 @@ class Relay_log_info : public Rpl_info {
     If the transaction was "applied" but GTID-skipped, the copy will not
     happen and the last_processed_trx will keep its current value.
   */
-  void finished_processing() { gtid_monitoring_info->finish(); }
+  /**
+    当事务处理完成时，记录时间戳，将信息复制到 last_processed_trx，并清除 processing_trx 中的信息。
+
+    如果事务被“应用”但 GTID 被跳过，则不会进行复制，last_processed_trx 将保持其当前值。
+  */
+ void finished_processing() { gtid_monitoring_info->finish(); }
 
   /**
     @return True if there is a transaction being currently processed
@@ -794,8 +819,13 @@ class Relay_log_info : public Rpl_info {
     keys.
     If set to GENERATE it adds GIPKs to tables that are created without a PK
     in the replica applier threads.
+    标识从库对表中主键的策略。
+    如果设置为 STREAM，则仅复制 sql_require_primary_key 的值。从库会继承源库的主键检查策略，而不是强制执行自己的策略。直接使用源库的 sql_require_primary_key 设置
+    如果设置为 ON，则当源库尝试复制没有主键的表创建或修改操作时，会失败。
+    如果设置为 OFF，则不会对通道中的主键强制执行任何策略。
+    如果设置为 GENERATE，则会在从库应用线程中为没有主键的表添加 GIPKs（生成的不可见主键）。
   */
-  enum_require_table_primary_key m_require_table_primary_key_check;
+ enum_require_table_primary_key m_require_table_primary_key_check;
 
   /**
     Are positions invalid. If true it means the applier related position

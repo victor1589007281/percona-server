@@ -85,63 +85,76 @@ int Rpl_info_file::do_init_info(uint instance) {
   return do_init_info();
 }
 
+/**
+  Initializes the file repository by checking its existence and setting up the file descriptor and cache.
+
+  @retval 0  Success
+  @retval 1  Failure
+  初始化文件仓库，检查其是否存在并设置文件描述符和缓存。
+
+  @retval 0  成功
+  @retval 1  失败
+*/
 int Rpl_info_file::do_init_info() {
-  int error = 0;
-  DBUG_TRACE;
+  int error = 0;  // 错误标志，初始化为 0（成功）
+  DBUG_TRACE;  // 调试跟踪标记
 
   /* does info file exist ? */
-  enum_return_check ret_check = do_check_info();
-  if (ret_check == REPOSITORY_DOES_NOT_EXIST) {
+  /* 信息文件是否存在？ */
+  enum_return_check ret_check = do_check_info();  // 检查仓库文件状态
+  if (ret_check == REPOSITORY_DOES_NOT_EXIST) {  // 如果文件不存在
     /*
       If someone removed the file from underneath our feet, just close
       the old descriptor and re-create the old file
+      如果文件被意外删除，关闭旧的文件描述符并重新创建文件
     */
-    if (info_fd >= 0) {
-      if (my_b_inited(&info_file)) end_io_cache(&info_file);
-      my_close(info_fd, MYF(MY_WME));
+    if (info_fd >= 0) {  // 如果文件描述符有效
+      if (my_b_inited(&info_file)) end_io_cache(&info_file);  // 如果 IO 缓存已初始化，结束缓存
+      my_close(info_fd, MYF(MY_WME));  // 关闭文件描述符
     }
-    if ((info_fd = my_open(info_fname, O_CREAT | O_RDWR, MYF(MY_WME))) < 0) {
+    if ((info_fd = my_open(info_fname, O_CREAT | O_RDWR, MYF(MY_WME))) < 0) {  // 创建并打开文件
       LogErr(ERROR_LEVEL, ER_RPL_FAILED_TO_CREATE_NEW_INFO_FILE, info_fname,
-             my_errno());
-      error = 1;
+             my_errno());  // 记录错误日志
+      error = 1;  // 设置错误标志
     } else if (init_io_cache(&info_file, info_fd, IO_SIZE * 2, READ_CACHE, 0L,
-                             false, MYF(MY_WME))) {
+                             false, MYF(MY_WME))) {  // 初始化 IO 缓存
       LogErr(ERROR_LEVEL, ER_RPL_FAILED_TO_CREATE_CACHE_FOR_INFO_FILE,
-             info_fname);
-      error = 1;
+             info_fname);  // 记录错误日志
+      error = 1;  // 设置错误标志
     }
-    if (error) {
-      if (info_fd >= 0) my_close(info_fd, MYF(0));
-      info_fd = -1;
+    if (error) {  // 如果发生错误
+      if (info_fd >= 0) my_close(info_fd, MYF(0));  // 关闭文件描述符
+      info_fd = -1;  // 重置文件描述符
     }
   }
   /* file exists */
-  else if (ret_check == REPOSITORY_EXISTS) {
-    if (info_fd >= 0) {
-      if (reinit_io_cache(&info_file, READ_CACHE, 0L, false, false)) {
+  /* 文件存在 */
+  else if (ret_check == REPOSITORY_EXISTS) {  // 如果文件存在且可访问
+    if (info_fd >= 0) {  // 如果文件描述符有效
+      if (reinit_io_cache(&info_file, READ_CACHE, 0L, false, false)) {  // 重新初始化 IO 缓存
         LogErr(ERROR_LEVEL, ER_RPL_FAILED_TO_RECREATE_CACHE_FOR_INFO_FILE,
-               info_fname);
-        error = 1;
+               info_fname);  // 记录错误日志
+        error = 1;  // 设置错误标志
       }
     } else {
-      if ((info_fd = my_open(info_fname, O_RDWR, MYF(MY_WME))) < 0) {
+      if ((info_fd = my_open(info_fname, O_RDWR, MYF(MY_WME))) < 0) {  // 以读写模式打开文件
         LogErr(ERROR_LEVEL, ER_RPL_FAILED_TO_OPEN_INFO_FILE, info_fname,
-               my_errno());
-        error = 1;
+               my_errno());  // 记录错误日志
+        error = 1;  // 设置错误标志
       } else if (init_io_cache(&info_file, info_fd, IO_SIZE * 2, READ_CACHE, 0L,
-                               false, MYF(MY_WME))) {
+                               false, MYF(MY_WME))) {  // 初始化 IO 缓存
         LogErr(ERROR_LEVEL, ER_RPL_FAILED_TO_CREATE_CACHE_FOR_INFO_FILE,
-               info_fname);
-        error = 1;
+               info_fname);  // 记录错误日志
+        error = 1;  // 设置错误标志
       }
     }
-    if (error) {
-      if (info_fd >= 0) my_close(info_fd, MYF(0));
-      info_fd = -1;
+    if (error) {  // 如果发生错误
+      if (info_fd >= 0) my_close(info_fd, MYF(0));  // 关闭文件描述符
+      info_fd = -1;  // 重置文件描述符
     }
   } else
-    error = 1;
-  return error;
+    error = 1;  // 如果仓库检查失败，设置错误标志
+  return error;  // 返回错误标志
 }
 
 int Rpl_info_file::do_prepare_info_for_read() {
@@ -158,12 +171,28 @@ int Rpl_info_file::do_prepare_info_for_write() {
   return (reinit_io_cache(&info_file, WRITE_CACHE, 0L, false, true));
 }
 
+/**
+  Checks if the repository file exists and is accessible.
+
+  @param[in] fname The file name to check.
+
+  @retval REPOSITORY_DOES_NOT_EXIST File does not exist
+  @retval ERROR_CHECKING_REPOSITORY File exists but is not accessible
+  @retval REPOSITORY_EXISTS        File exists and is accessible
+  检查仓库文件是否存在并可访问。
+
+  @param[in] fname 要检查的文件名。
+
+  @retval REPOSITORY_DOES_NOT_EXIST 文件不存在
+  @retval ERROR_CHECKING_REPOSITORY 文件存在但不可访问
+  @retval REPOSITORY_EXISTS        文件存在且可访问
+*/
 inline enum_return_check do_check_repository_file(const char *fname) {
-  if (my_access(fname, F_OK)) return REPOSITORY_DOES_NOT_EXIST;
+  if (my_access(fname, F_OK)) return REPOSITORY_DOES_NOT_EXIST;  // 检查文件是否存在，不存在则返回 REPOSITORY_DOES_NOT_EXIST
 
-  if (my_access(fname, F_OK | R_OK | W_OK)) return ERROR_CHECKING_REPOSITORY;
+  if (my_access(fname, F_OK | R_OK | W_OK)) return ERROR_CHECKING_REPOSITORY;  // 检查文件是否可读写，不可读写则返回 ERROR_CHECKING_REPOSITORY
 
-  return REPOSITORY_EXISTS;
+  return REPOSITORY_EXISTS;  // 文件存在且可读写，返回 REPOSITORY_EXISTS
 }
 
 /*
@@ -334,12 +363,30 @@ bool Rpl_info_file::do_set_info(const int pos, const char *value) {
   return (my_b_printf(&info_file, "%s\n", value) > (size_t)0 ? false : true);
 }
 
+/**
+  Sets the information for a specific position in the file.
+
+  @param[in] pos   The position to set.
+  @param[in] value The value to set.
+  @param[in] size  The size of the value.
+
+  @retval true  Failure
+  @retval false Success
+  设置文件中特定位置的信息。
+
+  @param[in] pos   要设置的位置。
+  @param[in] value 要设置的值。
+  @param[in] size  值的大小。
+
+  @retval true  失败
+  @retval false 成功
+*/
 bool Rpl_info_file::do_set_info(const int pos, const uchar *value,
                                 const size_t size) {
-  if (value == nullptr) {
-    return do_set_info(pos, nullptr, size);
+  if (value == nullptr) {  // 如果值为空指针
+    return do_set_info(pos, nullptr, size);  // 调用 do_set_info 设置空值
   }
-  return (my_b_write(&info_file, value, size));
+  return (my_b_write(&info_file, value, size));  // 将值写入文件
 }
 
 bool Rpl_info_file::do_set_info(const int, const ulong value) {
@@ -390,10 +437,28 @@ bool Rpl_info_file::do_set_info(const int pos, const std::nullptr_t) {
   return (my_b_printf(&info_file, "\n") > (size_t)0 ? false : true);
 }
 
+/**
+  Sets the information for a specific position in the file to NULL.
+
+  @param[in] pos   The position to set.
+  @param[in]      Unused parameter (nullptr).
+  @param[in]      Unused parameter (size).
+
+  @retval true  Failure
+  @retval false Success
+  将文件中特定位置的信息设置为 NULL。
+
+  @param[in] pos   要设置的位置。
+  @param[in]      未使用的参数（nullptr）。
+  @param[in]      未使用的参数（size）。
+
+  @retval true  失败
+  @retval false 成功
+*/
 bool Rpl_info_file::do_set_info(const int pos, const std::nullptr_t,
                                 const size_t) {
-  if (!this->is_field_nullable(pos)) return true;
-  return (my_b_printf(&info_file, "\n") > (size_t)0 ? false : true);
+  if (!this->is_field_nullable(pos)) return true;  // 如果该位置不可为空，返回 true 表示失败
+  return (my_b_printf(&info_file, "\n") > (size_t)0 ? false : true);  // 写入换行符并返回结果
 }
 
 Rpl_info_handler::enum_field_get_status Rpl_info_file::check_for_error(

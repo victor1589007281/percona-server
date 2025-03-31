@@ -80,8 +80,13 @@ class Rpl_info_handler {
 
     @retval false success,
     @retval true  otherwise error.
+    在创建对象并组装组件后，此方法用于初始化内部结构。
+    不依赖于其他组件的内容（如互斥锁）应放在对象的构造函数中。
+
+    @retval false 成功，
+    @retval true  否则表示错误。
   */
-  int init_info() { return do_init_info(); }
+ int init_info() { return do_init_info(); }  // 调用 do_init_info() 方法进行初始化
 
   /**
     Checks the repository's status.
@@ -111,7 +116,19 @@ class Rpl_info_handler {
     @retval false No error
     @retval true  Failure
   */
-  int flush_info(const bool force) { return do_flush_info(force); }
+  /**
+    将内存中的信息刷新并同步到稳定的存储（即存储库）中。通常，刷新后的同步取决于其他选项，
+    例如 @c relay-log-info-sync、@c master-info-sync。这些选项决定了在多少个事件或事务后
+    应该同步信息。我们可以通过将参数 @c force（默认为 @c false）设置为 @c true 来忽略这些选项，
+    并始终进行同步。
+
+    因此，如果事件数量低于某个阈值，参数 @c force 为 false，并且我们使用文件系统作为存储系统，
+    则可能会发生更改仅存在于操作系统的缓存中，而崩溃可能导致不一致。
+
+    @retval false 无错误
+    @retval true  失败
+  */
+ int flush_info(const bool force) { return do_flush_info(force); }
 
   /**
     Deletes any information in it and in some cases the repository.
@@ -208,10 +225,26 @@ class Rpl_info_handler {
   */
 
   template <class TypeHandler>
-  bool set_info(int pk_cursor, TypeHandler const value) {
-    if (pk_cursor >= ninfo) return true;
+  /**
+    Sets the information for a specific primary key cursor.
 
-    return (do_set_info(pk_cursor, value));
+    @param[in] pk_cursor The primary key cursor.
+    @param[in] value     The value to set.
+
+    @retval true  Failure
+    @retval false Success
+    设置特定主键游标的信息。
+
+    @param[in] pk_cursor 主键游标。
+    @param[in] value     要设置的值。
+
+    @retval true  失败
+    @retval false 成功
+  */
+  bool set_info(int pk_cursor, TypeHandler const value) {
+    if (pk_cursor >= ninfo) return true;  // 如果主键游标超出范围，返回 true 表示失败
+
+    return (do_set_info(pk_cursor, value));  // 调用 do_set_info 设置信息
   }
 
   /**

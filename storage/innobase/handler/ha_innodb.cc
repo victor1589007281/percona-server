@@ -20804,59 +20804,77 @@ ulint innobase_get_at_most_n_mbchars(
   return (char_length);
 }
 
+/**
+  准备X/Open XA分布式事务的函数。
+  该函数用于准备InnoDB中的XA事务。
+  This function is used to prepare an X/Open XA distributed transaction.
+
+  @param hton          InnoDB handlerton指针
+                       in: InnoDB handlerton
+  @param thd           MySQL线程句柄，对应要准备XA事务的用户
+                       in: handle to the MySQL thread of the user whose XA transaction should be prepared
+  @param prepare_trx   true表示准备整个事务，false表示仅结束当前SQL语句
+                       in: true - prepare transaction false - the current SQL statement ended
+
+  @return 0或错误码
+          @return 0 or error number
+*/
 /** This function is used to prepare an X/Open XA distributed transaction.
- @return 0 or error number */
+@return 0 or error number */
 static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
                                THD *thd, /*!< in: handle to the MySQL thread of
-                                         the user whose XA transaction should
-                                         be prepared */
+the user whose XA transaction should
+be prepared */
                                bool prepare_trx) /*!< in: true - prepare
-                                                 transaction false - the current
+transaction false - the current
                                                  SQL statement ended */
 {
-  trx_t *trx = check_trx_exists(thd);
+  trx_t *trx = check_trx_exists(thd);  // 获取或创建与THD关联的事务对象
 
-  assert(hton == innodb_hton_ptr);
+  assert(hton == innodb_hton_ptr);  // 断言handlerton指针有效
 
-  thd_get_xid(thd, (MYSQL_XID *)trx->xid);
+  thd_get_xid(thd, (MYSQL_XID *)trx->xid);  // 从THD获取XID并存储到事务中
 
-  innobase_srv_conc_force_exit_innodb(trx);
+  innobase_srv_conc_force_exit_innodb(trx);  // 强制退出InnoDB并发控制
 
-  TrxInInnoDB trx_in_innodb(trx);
+  TrxInInnoDB trx_in_innodb(trx);  // RAII对象，标记事务在InnoDB中活动
 
+  // 检查事务是否已中止或模拟失败
   if (trx_in_innodb.is_aborted() ||
       DBUG_EVALUATE_IF("simulate_xa_failure_prepare_in_engine", 1, 0)) {
-    innobase_rollback(hton, thd, prepare_trx);
+    innobase_rollback(hton, thd, prepare_trx);  // 回滚事务
 
-    return (convert_error_code_to_mysql(DB_FORCED_ABORT, 0, thd));
+    return (convert_error_code_to_mysql(DB_FORCED_ABORT, 0, thd));  // 返回错误码
   }
 
+  // 检查未注册2PC但已启动的事务
   if (!trx_is_registered_for_2pc(trx) && trx_is_started(trx)) {
-    log_errlog(ERROR_LEVEL, ER_INNODB_UNREGISTERED_TRX_ACTIVE);
+    log_errlog(ERROR_LEVEL, ER_INNODB_UNREGISTERED_TRX_ACTIVE);  // 记录错误日志
   }
 
   if (prepare_trx ||
       (!thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN))) {
+    /* 我们被指示准备整个事务，或者这是SQL语句结束且启用了自动提交 */
     /* We were instructed to prepare the whole transaction, or
     this is an SQL statement end and autocommit is on */
 
-    ut_ad(trx_is_registered_for_2pc(trx));
+    ut_ad(trx_is_registered_for_2pc(trx));  // 断言事务已注册2PC
 
-    dberr_t err = trx_prepare_for_mysql(trx);
+    dberr_t err = trx_prepare_for_mysql(trx);  // 执行事务准备
 
-    ut_ad(err == DB_SUCCESS || err == DB_FORCED_ABORT);
+    ut_ad(err == DB_SUCCESS || err == DB_FORCED_ABORT);  // 断言结果有效
 
-    if (err == DB_FORCED_ABORT) {
+    if (err == DB_FORCED_ABORT) {  // 处理强制中止
       innobase_rollback(hton, thd, prepare_trx);
 
       return (convert_error_code_to_mysql(DB_FORCED_ABORT, 0, thd));
     }
 
-    DBUG_EXECUTE_IF("crash_innodb_after_prepare", DBUG_SUICIDE(););
+    DBUG_EXECUTE_IF("crash_innodb_after_prepare", DBUG_SUICIDE(););  // 调试：准备后崩溃
 
   } else {
-    /* We just mark the SQL statement ended and do not do a
-    transaction prepare */
+    /* 我们仅标记SQL语句结束，不执行事务准备 */
+    /* We just mark the SQL statement ended and do not do a transaction prepare */
 
     /* If we had reserved the auto-inc lock for some
     table in this SQL statement we release it now */
@@ -20870,6 +20888,7 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
     trx_mark_sql_stat_end(trx);
   }
 
+  // 非XA_PREPARE命令且需要准备时处理binlog顺序
   if (thd_sql_command(thd) != SQLCOM_XA_PREPARE &&
       (prepare_trx ||
        !thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN))) {
@@ -20886,7 +20905,7 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
     to handle this case. */
   }
 
-  return (0);
+  return (0);  // 返回成功
 }
 
 /**

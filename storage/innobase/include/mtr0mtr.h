@@ -48,8 +48,14 @@ this program; if not, write to the Free Software Foundation, Inc.,
 /** Start a mini-transaction. */
 #define mtr_start(m) (m)->start()
 
-/** Start a synchronous mini-transaction */
-#define mtr_start_sync(m) (m)->start(true)
+/**
+  启动一个同步的迷你事务。
+  该宏用于初始化一个同步迷你事务对象。
+  Start a synchronous mini-transaction
+  @param m 要启动的迷你事务对象指针
+           mini-transaction object pointer to start
+*/
+#define mtr_start_sync(m) (m)->start(true)  // 调用mtr_t的start方法，参数true表示同步模式
 
 /** Start an asynchronous read-only mini-transaction */
 #define mtr_start_ro(m) (m)->start(true, true)

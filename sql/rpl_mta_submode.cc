@@ -112,6 +112,19 @@ void Mts_submode_database::attach_temp_tables(THD *thd, const Relay_log_info *,
            or -1 to indicate there has been a failure on a not-ignored Worker
            as indicated by its running_status so synchronization can't succeed.
 */
+/**
+   当协调器（Coordinator）识别到需要顺序执行的事件时调用此函数。
+   创建顺序上下文包括等待分配给 Worker 的任务完成，并将它们的资源（如临时表）返回到协调器的存储库。
+   如果所有 Worker 都已完成等待，协调器将更改其组状态。
+
+   @param  rli     协调器的 Relay_log_info 实例。
+   @param  ignore  可选的 Worker 实例指针，如果顺序上下文是由于忽略的 Worker 而建立的，则保留其资源。
+
+   @note   未被 Worker 占用的资源（例如 APH 中未使用（零使用）记录中的临时表列表）将被重新定位到协调器的占位符。
+
+   @return 非负数表示 Worker 释放的分区数量（一个 Worker 的一个分区可以多次计数），
+           或者 -1 表示未忽略的 Worker 发生了故障（由其 running_status 指示），因此同步无法成功。
+*/
 
 int Mts_submode_database::wait_for_workers_to_finish(Relay_log_info *rli,
                                                      Slave_worker *ignore) {
@@ -135,6 +148,7 @@ int Mts_submode_database::wait_for_workers_to_finish(Relay_log_info *rli,
     assert(entry);
 
     // the ignore Worker retains its active resources
+    // 忽略的 Worker 保留其活动资源
     if (ignore && entry->worker == ignore && entry->usage > 0) {
       continue;
     }
@@ -144,6 +158,7 @@ int Mts_submode_database::wait_for_workers_to_finish(Relay_log_info *rli,
       Slave_worker *w_entry = entry->worker;
 
       entry->worker = nullptr;  // mark Worker to signal when  usage drops to 0
+      // 标记 Worker，当 usage 降为 0 时发出信号
       thd->ENTER_COND(
           &rli->slave_worker_hash_cond, &rli->slave_worker_hash_lock,
           &stage_replica_waiting_worker_to_release_partition, &old_stage);
@@ -156,6 +171,7 @@ int Mts_submode_database::wait_for_workers_to_finish(Relay_log_info *rli,
       } while (entry->usage != 0 && !thd->killed);
       entry->worker =
           w_entry;  // restoring last association, needed only for assert
+      // 恢复最后的关联，仅用于断言
       mysql_mutex_unlock(&rli->slave_worker_hash_lock);
       thd->EXIT_COND(&old_stage);
       ret++;
@@ -163,6 +179,7 @@ int Mts_submode_database::wait_for_workers_to_finish(Relay_log_info *rli,
       mysql_mutex_unlock(&rli->slave_worker_hash_lock);
     }
     // resources relocation
+    // 资源重新定位
     mts_move_temp_tables_to_thd(thd, entry->temporary_tables);
     entry->temporary_tables = nullptr;
     if (entry->worker->running_status != Slave_worker::RUNNING)
@@ -617,49 +634,67 @@ bool Mts_submode_logical_clock::wait_for_last_committed_trx(
  @return ER_MTS_CANT_PARALLEL, ER_MTS_INCONSISTENT_DATA
           0 if no error or slave has been killed gracefully
  */
+/**
+ 在调度下一个事件之前进行必要的安排。
+ 该方法计算由事件参数表示的即将调度的事务的元组状态。当状态为OUT（当前元组之外）时，
+ 编码为is_new_group == true，全局调度器（协调线程）请求与所有工作线程完全同步。
+ 当前被分配的组描述符与组的逻辑时间戳（即sequence_number）相关联。
+
+ @return ER_MTS_CANT_PARALLEL, ER_MTS_INCONSISTENT_DATA
+          如果没有错误或从库已优雅地停止，则返回0
+ */
 int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
                                                    Log_event *ev) {
-  longlong last_sequence_number = sequence_number;
-  bool gap_successor = false;
+  longlong last_sequence_number = sequence_number;  // 上一个序列号
+  bool gap_successor = false;  // 是否存在序列号间隙
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
   // We should check if the SQL thread was already killed before we schedule
   // the next transaction
+  // 在调度下一个事务之前，我们应该检查SQL线程是否已经被终止
   if (sql_slave_killed(rli->info_thd, rli)) return 0;
 
   Slave_job_group *ptr_group =
-      rli->gaq->get_job_group(rli->gaq->assigned_group_index);
+      rli->gaq->get_job_group(rli->gaq->assigned_group_index);  // 获取当前分配的任务组
   /*
     A group id updater must satisfy the following:
     - A query log event ("BEGIN" ) or a GTID EVENT
     - A DDL or an implicit DML commit.
   */
+  /*
+    组ID更新器必须满足以下条件：
+    - 查询日志事件（"BEGIN"）或GTID事件
+    - DDL或隐式DML提交
+  */
   switch (ev->get_type_code()) {
     case binary_log::GTID_LOG_EVENT:
     case binary_log::ANONYMOUS_GTID_LOG_EVENT:
       // TODO: control continuity
+      // TODO: 控制连续性
       ptr_group->sequence_number = sequence_number =
-          static_cast<Gtid_log_event *>(ev)->sequence_number;
+          static_cast<Gtid_log_event *>(ev)->sequence_number;  // 设置序列号
       ptr_group->last_committed = last_committed =
-          static_cast<Gtid_log_event *>(ev)->last_committed;
+          static_cast<Gtid_log_event *>(ev)->last_committed;  // 设置最后提交时间
       break;
 
     default:
 
-      sequence_number = last_committed = SEQ_UNINIT;
+      sequence_number = last_committed = SEQ_UNINIT;  // 未初始化的序列号和最后提交时间
 
       break;
   }
 
   DBUG_PRINT("info", ("sequence_number %lld, last_committed %lld",
-                      sequence_number, last_committed));
+                      sequence_number, last_committed));  // 打印序列号和最后提交时间
 
   if (first_event) {
-    first_event = false;
+    first_event = false;  // 如果是第一个事件，标记为false
   } else {
+    // 如果序列号小于或等于最后提交时间，或者序列号小于或等于上一个序列号，代码会记录错误并返回ER_MTS_CANT_PARALLEL，表示无法并行执行事务。
     if (unlikely(clock_leq(sequence_number, last_committed) &&
                  last_committed != SEQ_UNINIT)) {
       /* inconsistent (buggy) timestamps */
+      /* 不一致的时间戳 */
       LogErr(ERROR_LEVEL, ER_RPL_INCONSISTENT_TIMESTAMPS_IN_TRX,
              sequence_number, last_committed);
       return ER_MTS_CANT_PARALLEL;
@@ -667,6 +702,7 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
     if (unlikely(clock_leq(sequence_number, last_sequence_number) &&
                  sequence_number != SEQ_UNINIT)) {
       /* inconsistent (buggy) timestamps */
+      /* 不一致的时间戳 */
       LogErr(ERROR_LEVEL, ER_RPL_INCONSISTENT_SEQUENCE_NO_IN_TRX,
              sequence_number, last_sequence_number);
       return ER_MTS_CANT_PARALLEL;
@@ -677,22 +713,33 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
       wait for all earlier that were scheduled to finish. It's marked
       as gap successor now.
     */
+    /*
+      事务序列在调度时可能会有间隙，即使在中继日志中也是如此。在这种情况下，
+      一个事务如果位于间隙之后，它将等待所有之前调度的事务完成。现在它被标记为间隙后继者。
+    */
     static_assert(SEQ_UNINIT == 0, "");
     if (unlikely(sequence_number > last_sequence_number + 1)) {
       /*
         TODO: account autopositioning
         assert(rli->replicate_same_server_id);
       */
+      /*
+        TODO: 考虑自动定位
+        assert(rli->replicate_same_server_id);
+      */
       DBUG_PRINT("info", ("sequence_number gap found, "
                           "last_sequence_number %lld, sequence_number %lld",
-                          last_sequence_number, sequence_number));
-      gap_successor = true;
+                          last_sequence_number, sequence_number));  // 打印序列号间隙
+      gap_successor = true;  // 标记为间隙后继者
     }
   }
 
   /*
     The new group flag is practically the same as the force flag
     when up to indicate synchronization with Workers.
+  */
+  /*
+    新组标志实际上与force标志相同，用于指示与工作线程的同步。
   */
   is_new_group =
       (/* First event after a submode switch; */
@@ -702,11 +749,13 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
        // condition
        force_new_group ||
        /* Rewritten event without commit point timestamp (todo: find use case)
+       如果当前事件的序列号未初始化（SEQ_UNINIT），则说明该事件没有有效的提交时间戳，需要创建一个新的事务组。
         */
        sequence_number == SEQ_UNINIT ||
        /*
          undefined parent (e.g the very first trans from the master),
          or old master.
+         如果上一个事务的提交时间戳未初始化，说明可能是从旧主库或未定义父事务的事件，需要创建一个新的事务组。
        */
        last_committed == SEQ_UNINIT ||
        /*
@@ -714,6 +763,7 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
          to serialize this transaction execution with previously
          scheduled ones. Below for simplicity it's assumed that such
          gap-dependency is always the case.
+         如果当前事务是间隙后继者（即依赖于之前的事务完成），则需要创建一个新的事务组，以确保事务的顺序性。
        */
        gap_successor ||
        /*
@@ -722,15 +772,21 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
          can be assigned.
          Dependency of the current group on the previous
          can't be tracked. So let's wait till the former is over.
+         如果上一个事务组的序列号未初始化，说明上一个事务组还没有完成，当前事务组需要等待上一个事务组完成后才能开始。
        */
        last_sequence_number == SEQ_UNINIT);
   /*
     The coordinator waits till all transactions on which the current one
     depends on are applied.
   */
+  /*
+    协调器等待所有当前事务依赖的事务被应用。
+  */
   if (!is_new_group) {
-    longlong lwm_estimate = estimate_lwm_timestamp();
+    longlong lwm_estimate = estimate_lwm_timestamp();  // 估计最低水位线时间戳
 
+    //   - `!clock_leq(last_committed, lwm_estimate)`：检查当前事务的最后提交时间是否大于从库的最低水位线（`lwm_estimate`）。如果大于，说明当前事务依赖于尚未提交的事务，需要等待。
+    //   - `rli->gaq->assigned_group_index != rli->gaq->entry`：检查当前分配的任务组索引是否不等于任务队列的入口索引。如果不等于，说明当前任务组不是队列中的第一个任务组，可能需要等待。
     if (!clock_leq(last_committed, lwm_estimate) &&
         rli->gaq->assigned_group_index != rli->gaq->entry) {
       /*
@@ -742,6 +798,12 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
         At awakening set min_waited_timestamp to commit_parent in the
         subsequent GAQ index (could be NIL).
       */
+      /*
+        "不太可能"的分支。
+
+        以下代码块改进了可能过时的lwm，并在等待条件保持不变时，重新计算min_waited_timestamp并进入等待状态。
+        在唤醒时，将min_waited_timestamp设置为后续GAQ索引中的commit_parent（可能为NIL）。
+      */
       if (wait_for_last_committed_trx(rli, last_committed)) {
         /*
           MTS was waiting for a dependent transaction to finish but either it
@@ -750,6 +812,10 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
           coordinator stopping in a middle of a transaction to avoid polluting
           the server error log.
         */
+        /*
+          MTS正在等待一个依赖的事务完成，但它要么失败了，要么应用者被要求停止。无论如何，
+          这个事务还没有开始，因此不应该警告协调器在事务中间停止，以避免污染服务器错误日志。
+        */
         rli->reported_unsafe_warning = true;
         return -1;
       }
@@ -757,18 +823,22 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
         Making the slave's max last committed (lwm) to satisfy this
         transaction's scheduling condition.
       */
+      /*
+        使从库的最大最后提交时间（lwm）满足此事务的调度条件。
+           - 如果当前事务是间隙后继者（`gap_successor`为`true`），则将`last_lwm_timestamp`设置为当前序列号减1，以确保从库的最低水位线满足当前事务的调度条件。
+      */
       if (gap_successor) last_lwm_timestamp = sequence_number - 1;
       assert(!clock_leq(sequence_number, estimate_lwm_timestamp()));
     }
 
-    delegated_jobs++;
+    delegated_jobs++;  // 增加委托的任务数
 
-    assert(!force_new_group);
+    assert(!force_new_group);  // 确保force_new_group为false
   } else {
-    assert(delegated_jobs >= jobs_done);
+    assert(delegated_jobs >= jobs_done);  // 确保委托的任务数大于等于已完成的任务数
     assert(is_error ||
-           (rli->gaq->get_length() + jobs_done == 1 + delegated_jobs));
-    assert(rli->mts_group_status == Relay_log_info::MTS_IN_GROUP);
+           (rli->gaq->get_length() + jobs_done == 1 + delegated_jobs));  // 确保任务队列长度与任务数一致
+    assert(rli->mts_group_status == Relay_log_info::MTS_IN_GROUP);  // 确保组状态为MTS_IN_GROUP
 
     /*
       Under the new group fall the following use cases:
@@ -779,33 +849,47 @@ int Mts_submode_logical_clock::schedule_next_event(Relay_log_info *rli,
         The malformed group is handled exceptionally each event is executed
         as a solitary group yet by the same (zero id) worker.
     */
-    if (-1 == wait_for_workers_to_finish(rli)) return ER_MTS_INCONSISTENT_DATA;
+    /*
+      新组适用于以下用例：
+      - 来自旧主库（不支持sequence_number）的事件；
+      - 格式错误（缺少BEGIN或GTID_NEXT）的组，包括其特定形式的CREATE..SELECT..from..@user_var（或rand-和int-变量代替@user-变量）。
+        格式错误的组被特殊处理，每个事件作为一个独立组执行，但由同一个（零ID）工作线程执行。
+    */
+    if (-1 == wait_for_workers_to_finish(rli)) return ER_MTS_INCONSISTENT_DATA;  // 等待工作线程完成
 
     rli->mts_group_status = Relay_log_info::MTS_IN_GROUP;  // wait set it to NOT
     assert(min_waited_timestamp == SEQ_UNINIT);
     /*
       the instant last lwm timestamp must reset when force flag is up.
     */
-    rli->gaq->lwm.sequence_number = last_lwm_timestamp = SEQ_UNINIT;
-    delegated_jobs = 1;
-    jobs_done = 0;
-    force_new_group = false;
+    /*
+      当force标志为true时，必须重置最后的lwm时间戳。
+    */
+    rli->gaq->lwm.sequence_number = last_lwm_timestamp = SEQ_UNINIT;  // 重置lwm时间戳
+    delegated_jobs = 1;  // 重置委托的任务数为1
+    jobs_done = 0;  // 重置已完成的任务数为0
+    force_new_group = false;  // 重置force_new_group为false
     /*
       Not sequenced event can be followed with a logically relating
       e.g User var to be followed by CREATE table.
       It's supported to be executed in one-by-one fashion.
       Todo: remove with the event group parser worklog.
     */
+    /*
+      未排序的事件可以跟随逻辑相关的事件，例如User var后跟随CREATE table。
+      支持以一对一的方式执行。
+      Todo: 通过事件组解析器工作日志删除。
+    */
     if (sequence_number == SEQ_UNINIT && last_committed == SEQ_UNINIT)
-      rli->last_assigned_worker = *rli->workers.begin();
+      rli->last_assigned_worker = *rli->workers.begin();  // 设置最后分配的工作线程
   }
 
 #ifndef NDEBUG
-  mysql_mutex_lock(&rli->mts_gaq_LOCK);
-  assert(is_error || (rli->gaq->get_length() + jobs_done == delegated_jobs));
-  mysql_mutex_unlock(&rli->mts_gaq_LOCK);
+  mysql_mutex_lock(&rli->mts_gaq_LOCK);  // 加锁
+  assert(is_error || (rli->gaq->get_length() + jobs_done == delegated_jobs));  // 确保任务队列长度与任务数一致
+  mysql_mutex_unlock(&rli->mts_gaq_LOCK);  // 解锁
 #endif
-  return 0;
+  return 0;  // 返回0表示成功
 }
 
 /**
@@ -1015,6 +1099,15 @@ Slave_worker *Mts_submode_logical_clock::get_free_worker(Relay_log_info *rli) {
   @param ignore worker to ignore.
   @return -1 for error.
            0 no error.
+ */
+/**
+  等待从库 Worker 完成所有待处理任务后再返回。
+  在此子模式下使用，以确保所有分配的任务都已完成。
+
+  @param rli  协调器的 Relay_log_info。
+  @param ignore 要忽略的 Worker。
+  @return -1 表示错误。
+           0 表示没有错误。
  */
 int Mts_submode_logical_clock::wait_for_workers_to_finish(
     Relay_log_info *rli, [[maybe_unused]] Slave_worker *ignore) {

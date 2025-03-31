@@ -4715,6 +4715,7 @@ apply_event_and_update_pos(Log_event **ptr_ev, THD *thd, Relay_log_info *rli) {
   if (reason == Log_event::EVENT_SKIP_NOT) {
     // Sleeps if needed, and unlocks rli->data_lock
     // 如果需要，休眠并解锁 rli->data_lock
+    // change master delay 用法，每个语句执行前都sleep一下
     if (sql_delay_event(ev, thd, rli))
       return SLAVE_APPLY_EVENT_AND_UPDATE_POS_OK;
 
@@ -4982,6 +4983,17 @@ apply_event_and_update_pos(Log_event **ptr_ev, THD *thd, Relay_log_info *rli) {
 
   @retval true  There was an error while injecting events.
 */
+/**
+  让正在应用当前组的 Worker 回滚并优雅地完成其工作。
+
+  @param rli 从库的 relay log 信息。
+
+  @param ev 在应用此回滚过程之前持有的 event 的指针。
+
+  @retval false 回滚成功。
+
+  @retval true  在注入事件时发生错误。
+*/
 static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
                                                        const Log_event *ev) {
   DBUG_TRACE;
@@ -4990,11 +5002,18 @@ static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
     We must return it still holding this lock, except in the case of returning
     error.
   */
+  /*
+    此函数在持有 rli->data_lock 的情况下被调用。
+    我们必须返回时仍然持有此锁，除非返回错误。
+  */
   mysql_mutex_assert_owner(&rli->data_lock);
   THD *thd = rli->info_thd;
 
+  //若没有显式的begin事件，则增加一个
+  // 如果没有显式的 BEGIN 语句，SQL 线程可能没有正确开始一个新的事务，直接执行 ROLLBACK 可能会导致未定义的行为或错误
   if (!rli->curr_group_seen_begin) {
     DBUG_PRINT("info", ("Injecting QUERY(BEGIN) to rollback worker"));
+    // 创建一个新的 BEGIN 事件
     Log_event *begin_event = new Query_log_event(thd, STRING_WITH_LEN("BEGIN"),
                                                  true,  /* using_trans */
                                                  false, /* immediate */
@@ -5010,14 +5029,24 @@ static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
       Make the timestamp to be same as that of the FORMAT_DESCRIPTION_EVENT
       event which triggered this.
     */
+    /*
+      此事件不是在主库上生成的，仅特定于从库。
+      因此，我们不希望此 BEGIN 查询尊重 MASTER_DELAY。
+      使时间戳与触发此事件的 FORMAT_DESCRIPTION_EVENT 事件相同。
+      下面的赋值都是FORMAT_DESCRIPTION_EVENT事件的
+    */
     begin_event->common_header->when = ev->common_header->when;
     /*
       We must be careful to avoid SQL thread increasing its position
       farther than the event that triggered this QUERY(BEGIN).
     */
+    /*
+      我们必须小心，避免 SQL 线程将其位置增加到超过触发此 QUERY(BEGIN) 的事件。
+    */
     begin_event->common_header->log_pos = ev->common_header->log_pos;
     begin_event->future_event_relay_log_pos = ev->future_event_relay_log_pos;
 
+    // 应用 BEGIN 事件并更新位置
     if (apply_event_and_update_pos(&begin_event, thd, rli) !=
         SLAVE_APPLY_EVENT_AND_UPDATE_POS_OK) {
       delete begin_event;
@@ -5027,6 +5056,7 @@ static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
   }
 
   DBUG_PRINT("info", ("Injecting QUERY(ROLLBACK) to rollback worker"));
+  // 创建一个新的 ROLLBACK 事件
   Log_event *rollback_event = new Query_log_event(
       thd, STRING_WITH_LEN("ROLLBACK"), true, /* using_trans */
       false,                                  /* immediate */
@@ -5042,16 +5072,25 @@ static bool coord_handle_partial_binlogged_transaction(Relay_log_info *rli,
     Make the timestamp to be same as that of the FORMAT_DESCRIPTION_EVENT
     event which triggered this.
   */
+  /*
+    此事件不是在主库上生成的，仅特定于从库。
+    因此，我们不希望此 ROLLBACK 查询尊重 MASTER_DELAY。
+    使时间戳与触发此事件的 FORMAT_DESCRIPTION_EVENT 事件相同。
+  */
   rollback_event->common_header->when = ev->common_header->when;
   /*
     We must be careful to avoid SQL thread increasing its position
     farther than the event that triggered this QUERY(ROLLBACK).
+  */
+  /*
+    我们必须小心，避免 SQL 线程将其位置增加到超过触发此 QUERY(ROLLBACK) 的事件。
   */
   rollback_event->common_header->log_pos = ev->common_header->log_pos;
   rollback_event->future_event_relay_log_pos = ev->future_event_relay_log_pos;
 
   ((Query_log_event *)rollback_event)->rollback_injected_by_coord = true;
 
+  // 应用 ROLLBACK 事件并更新位置
   if (apply_event_and_update_pos(&rollback_event, thd, rli) !=
       SLAVE_APPLY_EVENT_AND_UPDATE_POS_OK) {
     delete rollback_event;
@@ -5262,6 +5301,18 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
       worker roll back the current group and gracefully finish its work,
       before starting to apply the new (complete) copy of the group.
     */
+    /*
+      GTID 协议会在每次（重新）连接后，如果启用了自动定位，将来自主库的 FORMAT_DESCRIPTION_EVENT 放入日志中，
+      并且 log_pos != 0。这意味着 SQL 线程可能已经开始应用当前组，但由于 IO 线程必须重新连接，
+      它使该组不完整，并会从头开始重新应用该组。
+      因此，在应用这个 FORMAT_DESCRIPTION_EVENT 之前，我们必须让 Worker 回滚当前组并优雅地完成其工作，
+      然后再开始应用新的（完整的）组副本。
+      
+      告诉主库我从库接收到的以及执行过的完整的GTID集合，避免重复
+      注意：
+      它不包括正在执行的事务GTID，假设它是一个大事务，这个事务的事件是持续发送的，并不完整。因此，此时会把这个事务重头发送过来。
+      因此，主库会发送一个FORMAT_DESCRIPTION_EVENT过来，作为信号告诉SQL线程，你真正运行的事务组不完整，需要回滚。
+    */
     if (ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT &&
         ev->server_id != ::server_id && ev->common_header->log_pos != 0 &&
         rli->is_parallel_exec() && rli->curr_group_seen_gtid) {
@@ -5270,10 +5321,14 @@ static int exec_relay_log_event(THD *thd, Relay_log_info *rli,
           In the case of an error, coord_handle_partial_binlogged_transaction
           will not try to get the rli->data_lock again.
         */
+        /*
+          如果发生错误，coord_handle_partial_binlogged_transaction 不会再次尝试获取 rli->data_lock。
+        */
         return 1;
     }
 
     /* ptr_ev can change to NULL indicating MTS coorinator passed to a Worker */
+    /* ptr_ev 可以变为 NULL，表示 MTS 协调器已将事件传递给 Worker */
     exec_res = apply_event_and_update_pos(ptr_ev, thd, rli);
     /*
       Note: the above call to apply_event_and_update_pos executes
@@ -6222,126 +6277,142 @@ static int check_temp_dir(char *tmp_file, const char *channel_name) {
 /*
   Worker thread for the parallel execution of the replication events.
 */
+/*
+  Worker 线程用于并行执行复制事件。
+*/
 extern "C" {
 static void *handle_slave_worker(void *arg) {
   THD *thd; /* needs to be first for thread_stack */
   bool thd_added = false;
   int error = 0;
-  Slave_worker *w = (Slave_worker *)arg;
-  Relay_log_info *rli = w->c_rli;
-  ulong purge_cnt = 0;
-  ulonglong purge_size = 0;
-  struct slave_job_item _item, *job_item = &_item;
-  Global_THD_manager *thd_manager = Global_THD_manager::get_instance();
+  Slave_worker *w = (Slave_worker *)arg;  // 获取传入的 Slave_worker 对象
+  Relay_log_info *rli = w->c_rli;  // 获取协调器的 Relay_log_info 对象
+  ulong purge_cnt = 0;  // 清理的任务计数
+  ulonglong purge_size = 0;  // 清理的任务大小
+  struct slave_job_item _item, *job_item = &_item;  // 任务项结构体
+  Global_THD_manager *thd_manager = Global_THD_manager::get_instance();  // 获取全局 THD 管理器
 #ifdef HAVE_PSI_THREAD_INTERFACE
-  struct PSI_thread *psi;
+  struct PSI_thread *psi;  // PSI 线程接口
 #endif
 
-  my_thread_init();
-  DBUG_TRACE;
+  my_thread_init();  // 初始化线程
+  DBUG_TRACE;  // 调试跟踪
 
-  thd = new THD;
+  thd = new THD;  // 创建新的 THD 对象
   if (!thd) {
+    // 如果创建失败，记录错误日志
     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_CANT_INITIALIZE_SLAVE_WORKER,
            rli->get_for_channel_str());
-    goto err;
+    goto err;  // 跳转到错误处理
   }
-  mysql_mutex_lock(&w->info_thd_lock);
-  w->info_thd = thd;
-  mysql_mutex_unlock(&w->info_thd_lock);
-  thd->thread_stack = (char *)&thd;
+  mysql_mutex_lock(&w->info_thd_lock);  // 加锁
+  w->info_thd = thd;  // 将 THD 对象赋值给 Worker 的 info_thd
+  mysql_mutex_unlock(&w->info_thd_lock);  // 解锁
+  thd->thread_stack = (char *)&thd;  // 设置线程栈
 
 #ifdef HAVE_PSI_THREAD_INTERFACE
   // save the instrumentation for worker thread in w->info_thd
+  // 将 Worker 线程的 instrumentation 保存到 w->info_thd 中
   psi = PSI_THREAD_CALL(get_thread)();
   thd_set_psi(w->info_thd, psi);
 #endif
-  mysql_thread_set_psi_THD(thd);
+  mysql_thread_set_psi_THD(thd);  // 设置 PSI THD
 
+  // 初始化从库线程
   if (init_replica_thread(thd, SLAVE_THD_WORKER)) {
     // todo make SQL thread killed
+    // 如果初始化失败，记录错误日志
     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_CANT_INITIALIZE_SLAVE_WORKER,
            rli->get_for_channel_str());
-    goto err;
+    goto err;  // 跳转到错误处理
   }
-  thd->rli_slave = w;
-  thd->init_query_mem_roots();
+  thd->rli_slave = w;  // 设置 THD 的 rli_slave 为当前 Worker
+  thd->init_query_mem_roots();  // 初始化查询内存根
 
+  // 检查是否为组复制通道
   if (channel_map.is_group_replication_channel_name(rli->get_channel())) {
     if (channel_map.is_group_replication_channel_name(rli->get_channel(),
                                                       true)) {
-      thd->rpl_thd_ctx.set_rpl_channel_type(GR_APPLIER_CHANNEL);
+      thd->rpl_thd_ctx.set_rpl_channel_type(GR_APPLIER_CHANNEL);  // 设置为组复制应用通道
     } else {
-      thd->rpl_thd_ctx.set_rpl_channel_type(GR_RECOVERY_CHANNEL);
+      thd->rpl_thd_ctx.set_rpl_channel_type(GR_RECOVERY_CHANNEL);  // 设置为组复制恢复通道
     }
   } else {
-    thd->rpl_thd_ctx.set_rpl_channel_type(RPL_STANDARD_CHANNEL);
+    thd->rpl_thd_ctx.set_rpl_channel_type(RPL_STANDARD_CHANNEL);  // 设置为标准复制通道
   }
 
-  w->set_filter(rli->rpl_filter);
+  w->set_filter(rli->rpl_filter);  // 设置 Worker 的过滤器
 
+  // 如果启用了延迟事件收集，则创建 Deferred_log_events 对象
   if ((w->deferred_events_collecting = w->rpl_filter->is_on()))
     w->deferred_events = new Deferred_log_events();
-  assert(thd->rli_slave->info_thd == thd);
+  assert(thd->rli_slave->info_thd == thd);  // 断言 THD 的 info_thd 与 Worker 的 info_thd 一致
 
   /* Set applier thread InnoDB priority */
+  // 设置应用线程的 InnoDB 优先级
   set_thd_tx_priority(thd, rli->get_thd_tx_priority());
   /* Set write set related options */
+  // 设置写集相关选项
   set_thd_write_set_options(thd, rli->get_ignore_write_set_memory_limit(),
                             rli->get_allow_drop_write_set());
 
-  thd->variables.require_row_format = rli->is_row_format_required();
+  thd->variables.require_row_format = rli->is_row_format_required();  // 设置行格式要求
 
+  // 设置主键检查选项
   if (Relay_log_info::PK_CHECK_STREAM !=
       rli->get_require_table_primary_key_check())
     thd->variables.sql_require_primary_key =
         (rli->get_require_table_primary_key_check() ==
          Relay_log_info::PK_CHECK_ON);
   w->set_require_table_primary_key_check(
-      rli->get_require_table_primary_key_check());
+      rli->get_require_table_primary_key_check());  // 设置 Worker 的主键检查选项
 
-  thd->variables.sql_generate_invisible_primary_key = false;
+  thd->variables.sql_generate_invisible_primary_key = false;  // 设置不可见主键生成选项
   if (thd->rpl_thd_ctx.get_rpl_channel_type() != GR_APPLIER_CHANNEL &&
       thd->rpl_thd_ctx.get_rpl_channel_type() != GR_RECOVERY_CHANNEL &&
       Relay_log_info::PK_CHECK_GENERATE ==
           rli->get_require_table_primary_key_check()) {
-    thd->variables.sql_generate_invisible_primary_key = true;
+    thd->variables.sql_generate_invisible_primary_key = true;  // 如果需要生成不可见主键，则设置为 true
   }
 
-  thd_manager->add_thd(thd);
-  thd_added = true;
+  thd_manager->add_thd(thd);  // 将 THD 添加到全局 THD 管理器
+  thd_added = true;  // 标记 THD 已添加
 
+  // 检查 Worker 是否支持事务
   if (w->update_is_transactional()) {
     rli->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                 ER_THD(thd, ER_SLAVE_FATAL_ERROR),
                 "Error checking if the worker repository is transactional.");
-    goto err;
+    goto err;  // 跳转到错误处理
   }
 
+  // 初始化 Commit_order_manager 的 Worker 上下文
   if (rli->get_commit_order_manager() != nullptr)
     rli->get_commit_order_manager()->init_worker_context(
         *w);  // Initialize worker context within Commit_order_manager
 
-  mysql_mutex_lock(&w->jobs_lock);
-  w->running_status = Slave_worker::RUNNING;
-  mysql_cond_signal(&w->jobs_cond);
+  mysql_mutex_lock(&w->jobs_lock);  // 加锁
+  w->running_status = Slave_worker::RUNNING;  // 设置 Worker 状态为运行中
+  mysql_cond_signal(&w->jobs_cond);  // 发送条件信号
 
-  mysql_mutex_unlock(&w->jobs_lock);
+  mysql_mutex_unlock(&w->jobs_lock);  // 解锁
 
-  assert(thd->is_slave_error == 0);
+  assert(thd->is_slave_error == 0);  // 断言从库错误标志为 0
 
-  w->stats_exec_time = w->stats_read_time = 0;
-  set_timespec_nsec(&w->ts_exec[0], 0);
-  set_timespec_nsec(&w->ts_exec[1], 0);
-  set_timespec_nsec(&w->stats_begin, 0);
+  w->stats_exec_time = w->stats_read_time = 0;  // 初始化执行时间和读取时间
+  set_timespec_nsec(&w->ts_exec[0], 0);  // 设置执行时间戳
+  set_timespec_nsec(&w->ts_exec[1], 0);  // 设置执行时间戳
+  set_timespec_nsec(&w->stats_begin, 0);  // 设置统计开始时间
 
   // No need to report anything, all error handling will be performed in the
   // slave SQL thread.
+  // 无需报告任何内容，所有错误处理将在从库 SQL 线程中执行
   if (!rli->check_privilege_checks_user())
     rli->initialize_security_context(w->info_thd);  // Worker security context
                                                     // initialization with
                                                     // `PRIVILEGE_CHECKS_USER`
 
+  // 主循环，执行任务组
   while (!error) {
     error = slave_worker_exec_job_group(w, rli);
   }
@@ -6350,41 +6421,49 @@ static void *handle_slave_worker(void *arg) {
      Cleanup after an error requires clear_error() go first.
      Otherwise assert(!all) in binlog_rollback()
   */
-  thd->clear_error();
-  w->cleanup_context(thd, error);
+  /*
+     错误后的清理需要先调用 clear_error()。
+     否则在 binlog_rollback() 中会断言失败。
+  */
+  thd->clear_error();  // 清除错误
+  w->cleanup_context(thd, error);  // 清理上下文
 
   mysql_mutex_lock(&w->jobs_lock);
 
   while (w->jobs.de_queue(job_item)) {
-    purge_cnt++;
-    purge_size += job_item->data->common_header->data_written;
-    assert(job_item->data);
-    delete job_item->data;
+    purge_cnt++;  // 增加清理计数
+    purge_size += job_item->data->common_header->data_written;  // 增加清理大小
+    assert(job_item->data);  // 断言任务数据存在
+    delete job_item->data;  // 删除任务数据
   }
 
-  assert(w->jobs.get_length() == 0);
+  assert(w->jobs.get_length() == 0);  // 断言任务队列为空
 
-  mysql_mutex_unlock(&w->jobs_lock);
+  mysql_mutex_unlock(&w->jobs_lock);  // 解锁
 
-  mysql_mutex_lock(&rli->pending_jobs_lock);
-  rli->pending_jobs -= purge_cnt;
-  rli->mts_pending_jobs_size -= purge_size;
-  assert(rli->mts_pending_jobs_size < rli->mts_pending_jobs_size_max);
+  mysql_mutex_lock(&rli->pending_jobs_lock);  // 加锁
+  rli->pending_jobs -= purge_cnt;  // 更新待处理任务计数
+  rli->mts_pending_jobs_size -= purge_size;  // 更新待处理任务大小
+  assert(rli->mts_pending_jobs_size < rli->mts_pending_jobs_size_max);  // 断言待处理任务大小未超过最大值
 
-  mysql_mutex_unlock(&rli->pending_jobs_lock);
+  mysql_mutex_unlock(&rli->pending_jobs_lock);  // 解锁
 
   /*
      In MTS case cleanup_after_session() has be called explicitly.
      TODO: to make worker thd be deleted before Slave_worker instance.
   */
+  /*
+     在 MTS 情况下，必须显式调用 cleanup_after_session()。
+     TODO: 确保 Worker THD 在 Slave_worker 实例之前被删除。
+  */
   if (thd->rli_slave) {
-    w->cleanup_after_session();
-    thd->rli_slave = nullptr;
+    w->cleanup_after_session();  // 清理会话
+    thd->rli_slave = nullptr;  // 清空 rli_slave
   }
-  mysql_mutex_lock(&w->jobs_lock);
+  mysql_mutex_lock(&w->jobs_lock);  // 加锁
 
   struct timespec stats_end;
-  set_timespec_nsec(&stats_end, 0);
+  set_timespec_nsec(&stats_end, 0);  // 设置统计结束时间
   DBUG_PRINT("info",
              ("Worker %lu statistics: "
               "events processed = %lu "
@@ -6395,11 +6474,11 @@ static void *handle_slave_worker(void *arg) {
               "priv queue overfills = %llu ",
               w->id, w->events_done, diff_timespec(&stats_end, &w->stats_begin),
               w->stats_exec_time, w->stats_read_time, w->wq_empty_waits,
-              w->jobs.waited_overfill));
+              w->jobs.waited_overfill));  // 打印 Worker 统计信息
 
-  w->running_status = Slave_worker::NOT_RUNNING;
+  w->running_status = Slave_worker::NOT_RUNNING;  // 设置 Worker 状态为未运行
 
-  mysql_mutex_lock(&w->info_thd_lock);
+  mysql_mutex_lock(&w->info_thd_lock);  // 加锁
   /* We will delete the THD descriptior in next step.
   Before Slave_worker is deleted in slave_stop_workers() its value will be
   copied by copy_values_for_PFS including info_thd member.
@@ -6409,12 +6488,19 @@ static void *handle_slave_worker(void *arg) {
   Without setting below member to nullptr, we would copy stale pointer anyway,
   so it is safer to explicitly say that
   */
-  w->info_thd = nullptr;
-  mysql_mutex_unlock(&w->info_thd_lock);
+  /*
+     我们将在下一步删除 THD 描述符。
+     在 slave_stop_workers() 中删除 Slave_worker 之前，其值将被 copy_values_for_PFS 复制，包括 info_thd 成员。
+     该成员仅在 Slave_worker::running 状态为 Slave_worker::RUNNING 时用于 table_replication_applier_status_by_worker::make_row()，
+     因此我们在这里是安全的。
+     如果不将下面的成员设置为 nullptr，我们仍然会复制陈旧的指针，因此明确设置为 nullptr 更安全。
+  */
+  w->info_thd = nullptr;  // 清空 info_thd
+  mysql_mutex_unlock(&w->info_thd_lock);  // 解锁
 
   mysql_cond_signal(&w->jobs_cond);  // famous last goodbye
 
-  mysql_mutex_unlock(&w->jobs_lock);
+  mysql_mutex_unlock(&w->jobs_lock);  // 解锁
 
 err:
 
@@ -6426,27 +6512,36 @@ err:
 
        /Alfranio
     */
-    thd->get_protocol_classic()->end_net();
+    /*
+       从库代码非常糟糕。请注意，这里缺少几个清理调用。
+       我只是添加了必要的部分以避免 valgrind 错误。
+
+       /Alfranio
+    */
+    thd->get_protocol_classic()->end_net();  // 结束网络协议
 
     /*
       to avoid close_temporary_tables() closing temp tables as those
       are Coordinator's burden.
     */
-    thd->system_thread = NON_SYSTEM_THREAD;
-    thd->release_resources();
+    /*
+       避免 close_temporary_tables() 关闭临时表，因为这是协调器的责任。
+    */
+    thd->system_thread = NON_SYSTEM_THREAD;  // 设置线程为非系统线程
+    thd->release_resources();  // 释放资源
 
-    THD_CHECK_SENTRY(thd);
-    if (thd_added) thd_manager->remove_thd(thd);
-    mysql_thread_set_psi_THD(nullptr);
-    delete thd;
+    THD_CHECK_SENTRY(thd);  // 检查 THD 哨兵
+    if (thd_added) thd_manager->remove_thd(thd);  // 如果 THD 已添加，则从全局 THD 管理器中移除
+    mysql_thread_set_psi_THD(nullptr);  // 设置 PSI THD 为 nullptr
+    delete thd;  // 删除 THD
   }
 
-  my_thread_end();
+  my_thread_end();  // 结束线程
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-  ERR_remove_thread_state(0);
+  ERR_remove_thread_state(0);  // 移除 OpenSSL 线程状态
 #endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
-  my_thread_exit(nullptr);
-  return nullptr;
+  my_thread_exit(nullptr);  // 退出线程
+  return nullptr;  // 返回 nullptr
 }
 }  // extern "C"
 
@@ -6462,31 +6557,47 @@ int mts_event_coord_cmp(LOG_POS_COORD *id1, LOG_POS_COORD *id2) {
               : (filecmp > 0 ? 1 : (poscmp < 0 ? -1 : (poscmp > 0 ? 1 : 0))));
 }
 
+/**
+  Recover multi-threaded slave (MTS) groups from relay log.
+
+  @param rli Relay_log_info object representing the slave's state.
+
+  @retval false Success
+  @retval true  Error occurred
+  从relay log中恢复多线程slave(MTS)的组信息。
+
+  @param rli 表示slave状态的Relay_log_info对象。
+
+  @retval false 成功
+  @retval true  发生错误
+*/
 bool mts_recovery_groups(Relay_log_info *rli) {
-  Log_event *ev = nullptr;
-  bool is_error = false;
-  bool flag_group_seen_begin = false;
-  uint recovery_group_cnt = 0;
-  bool not_reached_commit = true;
+  Log_event *ev = nullptr;  // 日志事件指针
+  bool is_error = false;    // 错误标志
+  bool flag_group_seen_begin = false;  // 是否看到事务开始标志
+  uint recovery_group_cnt = 0;         // 恢复的组计数
+  bool not_reached_commit = true;      // 是否到达commit标志
 
   // Value-initialization, to avoid compiler warnings on push_back.
   Slave_job_group job_worker = Slave_job_group();
 
-  LOG_INFO linfo;
-  my_off_t offset = 0;
-  MY_BITMAP *groups = &rli->recovery_groups;
-  THD *thd = current_thd;
+  LOG_INFO linfo;          // 日志文件信息
+  my_off_t offset = 0;     // 文件偏移量
+  MY_BITMAP *groups = &rli->recovery_groups;  // 恢复组位图
+  THD *thd = current_thd;  // 当前线程
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  assert(rli->replica_parallel_workers == 0);
+  assert(rli->replica_parallel_workers == 0);  // 断言并行worker数为0
 
   /*
      Although mts_recovery_groups() is reentrant it returns
      early if the previous invocation raised any bit in
      recovery_groups bitmap.
+     虽然mts_recovery_groups()是可重入的，但如果之前的调用已经在recovery_groups位图中设置了任何位，
+     它会提前返回。
   */
-  if (rli->is_mts_recovery()) return false;
+  if (rli->is_mts_recovery()) return false;  // 如果已经在恢复中则直接返回
 
   /*
     The process of relay log recovery for the multi threaded applier
@@ -6497,15 +6608,19 @@ bool mts_recovery_groups(Relay_log_info *rli) {
     When GTID_MODE=ON however we can use the old relay log position, even if
     stale as applied transactions will be skipped due to GTIDs auto skip
     feature.
+    多线程应用relay log恢复的过程主要是标记已经执行的事务，这样SQL线程应用时会跳过它们。
+    这很重要，因为存储的最后执行relay log位置可能落后于worker已经处理的事务位置。
+    但是当GTID_MODE=ON时，我们可以使用旧的relay log位置，即使过时了，因为已应用的事务会被GTID自动跳过功能跳过。
   */
   if (global_gtid_mode.get() == Gtid_mode::ON && rli->mi &&
       rli->mi->is_auto_position()) {
-    rli->mts_recovery_group_cnt = 0;
-    return false;
+    rli->mts_recovery_group_cnt = 0;  // 重置恢复组计数
+    return false;  // 直接返回成功
   }
 
   /*
     Save relay log position to compare with worker's position.
+    保存relay log位置用于与worker的位置比较
   */
   LOG_POS_COORD cp = {const_cast<char *>(rli->get_group_master_log_name()),
                       rli->get_group_master_log_pos()};
@@ -6513,45 +6628,53 @@ bool mts_recovery_groups(Relay_log_info *rli) {
   /*
     Gathers information on valuable workers and stores it in
     above_lwm_jobs in asc ordered by the master binlog coordinates.
+    收集有价值的worker信息并按master binlog坐标升序存储在above_lwm_jobs中
   */
   Prealloced_array<Slave_job_group, 16> above_lwm_jobs(PSI_NOT_INSTRUMENTED);
-  above_lwm_jobs.reserve(rli->recovery_parallel_workers);
+  above_lwm_jobs.reserve(rli->recovery_parallel_workers);  // 预分配空间
 
   /*
     When info tables are used and autocommit= 0 we force a new
     transaction start to avoid table access deadlocks when START SLAVE
     is executed after STOP SLAVE with MTS enabled.
+    当使用信息表且autocommit=0时，我们强制开始新事务以避免在启用MTS时，
+    STOP SLAVE后执行START SLAVE导致的表访问死锁。
   */
   if (is_autocommit_off_and_infotables(thd))
-    if (trans_begin(thd)) goto err;
+    if (trans_begin(thd)) goto err;  // 开始事务失败则跳转到错误处理
 
+  // 为每个worker创建并初始化
   for (uint id = 0; id < rli->recovery_parallel_workers; id++) {
     Slave_worker *worker =
         Rpl_info_factory::create_worker(opt_rli_repository_id, id, rli, true);
 
-    if (!worker) {
-      if (is_autocommit_off_and_infotables(thd)) trans_rollback(thd);
-      goto err;
+    if (!worker) {  // 创建worker失败
+      if (is_autocommit_off_and_infotables(thd)) trans_rollback(thd);  // 回滚事务
+      goto err;  // 跳转到错误处理
     }
 
+    // 获取worker的最后执行位置
     LOG_POS_COORD w_last = {
         const_cast<char *>(worker->get_group_master_log_name()),
         worker->get_group_master_log_pos()};
-    if (mts_event_coord_cmp(&w_last, &cp) > 0) {
+    if (mts_event_coord_cmp(&w_last, &cp) > 0) {  // 如果worker位置大于检查点位置
       /*
         Inserts information into a dynamic array for further processing.
         The jobs/workers are ordered by the last checkpoint positions
         workers have seen.
+        将信息插入动态数组以供进一步处理。
+        jobs/workers按worker看到的最后检查点位置排序。
       */
       job_worker.worker = worker;
       job_worker.checkpoint_log_pos = worker->checkpoint_master_log_pos;
       job_worker.checkpoint_log_name = worker->checkpoint_master_log_name;
 
-      above_lwm_jobs.push_back(job_worker);
+      above_lwm_jobs.push_back(job_worker);  // 添加到数组
     } else {
       /*
         Deletes the worker because its jobs are included in the latest
         checkpoint.
+        删除worker，因为它的jobs已经包含在最新的检查点中。
       */
       delete worker;
     }
@@ -6561,9 +6684,11 @@ bool mts_recovery_groups(Relay_log_info *rli) {
     When info tables are used and autocommit= 0 we force transaction
     commit to avoid table access deadlocks when START SLAVE is executed
     after STOP SLAVE with MTS enabled.
+    当使用信息表且autocommit=0时，我们强制提交事务以避免在启用MTS时，
+    STOP SLAVE后执行START SLAVE导致的表访问死锁。
   */
   if (is_autocommit_off_and_infotables(thd))
-    if (trans_commit(thd)) goto err;
+    if (trans_commit(thd)) goto err;  // 提交事务失败则跳转到错误处理
 
   /*
     In what follows, the group Recovery Bitmap is constructed.
@@ -6581,49 +6706,58 @@ bool mts_recovery_groups(Relay_log_info *rli) {
            group_cnt++;
         while(!eof);
         continue;
+    以下是构建组恢复位图的过程。
   */
-  assert(!rli->recovery_groups_inited);
+  assert(!rli->recovery_groups_inited);  // 断言恢复组未初始化
 
-  if (!above_lwm_jobs.empty()) {
-    bitmap_init(groups, nullptr, MTS_MAX_BITS_IN_GROUP);
-    rli->recovery_groups_inited = true;
-    bitmap_clear_all(groups);
+  if (!above_lwm_jobs.empty()) {  // 如果有需要恢复的worker
+    bitmap_init(groups, nullptr, MTS_MAX_BITS_IN_GROUP);  // 初始化位图
+    rli->recovery_groups_inited = true;  // 标记已初始化
+    bitmap_clear_all(groups);  // 清除位图
   }
-  rli->mts_recovery_group_cnt = 0;
+  rli->mts_recovery_group_cnt = 0;  // 重置恢复组计数
+  // 遍历所有需要恢复的worker
   for (Slave_job_group *jg = above_lwm_jobs.begin(); jg != above_lwm_jobs.end();
        ++jg) {
     Slave_worker *w = jg->worker;
+    // 获取worker的最后执行位置
     LOG_POS_COORD w_last = {const_cast<char *>(w->get_group_master_log_name()),
                             w->get_group_master_log_pos()};
 
+    // 记录worker的恢复信息
     LogErr(INFORMATION_LEVEL,
            ER_RPL_MTS_GROUP_RECOVERY_RELAY_LOG_INFO_FOR_WORKER, w->id,
            w->get_group_relay_log_name(), w->get_group_relay_log_pos(),
            w->get_group_master_log_name(), w->get_group_master_log_pos());
 
-    recovery_group_cnt = 0;
-    not_reached_commit = true;
+    recovery_group_cnt = 0;  // 重置恢复组计数
+    not_reached_commit = true;  // 重置到达commit标志
+    // 查找relay log文件位置
     if (rli->relay_log.find_log_pos(&linfo, rli->get_group_relay_log_name(),
                                     true)) {
       LogErr(ERROR_LEVEL, ER_RPL_ERROR_LOOKING_FOR_LOG,
              rli->get_group_relay_log_name());
       goto err;
     }
-    offset = rli->get_group_relay_log_pos();
+    offset = rli->get_group_relay_log_pos();  // 获取relay log位置偏移
 
+    // 创建relay log文件读取器
     Relaylog_file_reader relaylog_file_reader(opt_replica_sql_verify_checksum);
 
+    // 读取relay log直到找到commit位置
     while (not_reached_commit) {
-      if (relaylog_file_reader.open(linfo.log_file_name, offset)) {
+      if (relaylog_file_reader.open(linfo.log_file_name, offset)) {  // 打开文件失败
         LogErr(ERROR_LEVEL, ER_BINLOG_FILE_OPEN_FAILED,
                relaylog_file_reader.get_error_str());
         goto err;
       }
 
+      // 读取事件
       while (not_reached_commit &&
              (ev = relaylog_file_reader.read_event_object())) {
-        assert(ev->is_valid());
+        assert(ev->is_valid());  // 断言事件有效
 
+        // 跳过不需要处理的事件类型
         if (ev->get_type_code() == binary_log::ROTATE_EVENT ||
             ev->get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT ||
             ev->get_type_code() == binary_log::PREVIOUS_GTIDS_LOG_EVENT ||
@@ -6640,22 +6774,23 @@ bool mts_recovery_groups(Relay_log_info *rli) {
              linfo.log_file_name, ev->common_header->log_pos,
              ev->get_type_code()));
 
-        if (ev->starts_group()) {
+        if (ev->starts_group()) {  // 事务开始事件
           flag_group_seen_begin = true;
         } else if ((ev->ends_group() || !flag_group_seen_begin) &&
-                   !is_gtid_event(ev)) {
+                   !is_gtid_event(ev)) {  // 事务结束事件或非GTID事件
           int ret = 0;
           LOG_POS_COORD ev_coord = {
               const_cast<char *>(rli->get_group_master_log_name()),
               ev->common_header->log_pos};
           flag_group_seen_begin = false;
-          recovery_group_cnt++;
+          recovery_group_cnt++;  // 增加恢复组计数
 
           LogErr(INFORMATION_LEVEL, ER_RPL_MTS_GROUP_RECOVERY_RELAY_LOG_INFO,
                  rli->get_group_master_log_name_info(),
                  ev->common_header->log_pos);
-          if ((ret = mts_event_coord_cmp(&ev_coord, &w_last)) == 0) {
+          if ((ret = mts_event_coord_cmp(&ev_coord, &w_last)) == 0) {  // 位置匹配
 #ifndef NDEBUG
+            // 调试信息：打印已设置的位
             for (uint i = 0; i <= w->worker_checkpoint_seqno; i++) {
               if (bitmap_is_set(&w->group_executed, i))
                 DBUG_PRINT("mts", ("Bit %u is set.", i));
@@ -6668,31 +6803,37 @@ bool mts_recovery_groups(Relay_log_info *rli) {
                         (w->worker_checkpoint_seqno + 1) - recovery_group_cnt,
                         w->worker_checkpoint_seqno));
 
+            // 设置恢复位图
+            // 将worker的已执行事务组信息映射到全局恢复位图中，后续SQL线程可以跳过这些已执行的事务组。
+            // i:计算需要恢复的第一个事务组在worker位图中的位置
             for (uint i = (w->worker_checkpoint_seqno + 1) - recovery_group_cnt,
                       j = 0;
                  i <= w->worker_checkpoint_seqno; i++, j++) {
+              // 检查worker位图中第i位是否被设置(表示该事务组已执行)
               if (bitmap_is_set(&w->group_executed, i)) {
                 DBUG_PRINT("mts", ("Setting bit %u.", j));
+                // 设置全局位图的对应位
                 bitmap_test_and_set(groups, j);
               }
             }
-            not_reached_commit = false;
+            not_reached_commit = false;  // 标记已到达commit位置
           } else
-            assert(ret < 0);
+            assert(ret < 0);  // 断言位置比较结果
         }
         delete ev;
         ev = nullptr;
       }
 
-      relaylog_file_reader.close();
-      offset = BIN_LOG_HEADER_SIZE;
-      if (not_reached_commit && rli->relay_log.find_next_log(&linfo, true)) {
+      relaylog_file_reader.close();  // 关闭文件
+      offset = BIN_LOG_HEADER_SIZE;  // 重置偏移量
+      if (not_reached_commit && rli->relay_log.find_next_log(&linfo, true)) {  // 查找下一个文件
         LogErr(ERROR_LEVEL, ER_RPL_CANT_FIND_FOLLOWUP_FILE,
                linfo.log_file_name);
         goto err;
       }
     }
 
+    // 更新最大恢复组计数
     rli->mts_recovery_group_cnt =
         (rli->mts_recovery_group_cnt < recovery_group_cnt
              ? recovery_group_cnt
@@ -6700,23 +6841,41 @@ bool mts_recovery_groups(Relay_log_info *rli) {
   }
 
   assert(!rli->recovery_groups_inited ||
-         rli->mts_recovery_group_cnt <= groups->n_bits);
+         rli->mts_recovery_group_cnt <= groups->n_bits);  // 断言恢复组计数有效
 
-  goto end;
+  goto end;  // 跳转到结束
 err:
-  is_error = true;
+  is_error = true;  // 标记错误
 end:
 
+  // 清理worker资源
   for (Slave_job_group *jg = above_lwm_jobs.begin(); jg != above_lwm_jobs.end();
        ++jg) {
     delete jg->worker;
   }
 
-  if (rli->mts_recovery_group_cnt == 0) rli->clear_mts_recovery_groups();
+  if (rli->mts_recovery_group_cnt == 0) rli->clear_mts_recovery_groups();  // 如果没有恢复组则清理
 
-  return is_error;
+  return is_error;  // 返回错误状态
 }
 
+/**
+   MTA checkpoint routine.
+
+   @param rli   Pointer to Relay_log_info instance.
+   @param force If true, force the checkpoint even if the checkpoint period has
+                not been reached.
+
+   @return true if an error occurred, false otherwise.
+*/
+/**
+   MTA 检查点例程。
+
+   @param rli   Relay_log_info 实例的指针。
+   @param force 如果为 true，即使未达到检查点周期也强制检查点。
+
+   @return true 如果发生错误，否则返回 false。
+*/
 bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
   ulong cnt;
   bool error = false;
@@ -6738,6 +6897,9 @@ bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
     rli->checkpoint_group can have two possible values due to
     two possible status of the last (being scheduled) group.
   */
+  /*
+    rli->checkpoint_group 可以有两个可能的值，因为最后一个（正在调度的）组有两种可能的状态。
+  */
   const bool precondition =
       !rli->gaq->full() ||
       ((rli->rli_checkpoint_seqno == rli->checkpoint_group - 1 &&
@@ -6755,12 +6917,16 @@ bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
 #endif
 
   do {
+    // 如果数据库未分区，则锁定 mts_gaq_LOCK 互斥锁
     if (!is_mts_db_partitioned(rli)) mysql_mutex_lock(&rli->mts_gaq_LOCK);
 
+    // 移动队列头并获取已完成的任务数量
     cnt = rli->gaq->move_queue_head(&rli->workers);
 
+    // 如果数据库未分区，则解锁 mts_gaq_LOCK 互斥锁
     if (!is_mts_db_partitioned(rli)) mysql_mutex_unlock(&rli->mts_gaq_LOCK);
 #ifndef NDEBUG
+    // 如果启用了调试模式且 cnt 不等于检查点周期，则记录错误
     if (DBUG_EVALUATE_IF("check_replica_debug_group", 1, 0) &&
         cnt != opt_mta_checkpoint_period)
       LogErr(ERROR_LEVEL, ER_RPL_MTS_CHECKPOINT_PERIOD_DIFFERS_FROM_CNT);
@@ -6774,12 +6940,19 @@ bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
     routine can proceed. Otherwise, there is nothing to be
     done.
   */
+  /*
+    这检查了多少个连续的任务被处理。
+    如果这个值不为零，检查点例程可以继续。否则，无事可做。
+  */
   if (cnt == 0) goto end;
 
   /*
      The workers have completed  cnt jobs from the gaq. This means that we
      should increment C->jobs_done by cnt.
    */
+  /*
+     Workers 已经完成了 gaq 中的 cnt 个任务。这意味着我们应该将 C->jobs_done 增加 cnt。
+  */
   if (!is_mts_worker(rli->info_thd) && !is_mts_db_partitioned(rli)) {
     DBUG_PRINT("info", ("jobs_done this itr=%ld", cnt));
     static_cast<Mts_submode_logical_clock *>(rli->current_mts_submode)
@@ -6794,6 +6967,12 @@ bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
     rli->gaq->lwm has been updated in move_queue_head() and
     to contain all but rli->group_master_log_name which
     is altered solely by Coordinator at special checkpoints.
+  */
+  /*
+    "Coordinator::commit_positions"
+
+    rli->gaq->lwm 已经在 move_queue_head() 中更新，并且包含了除 rli->group_master_log_name 之外的所有内容，
+    rli->group_master_log_name 仅在特殊检查点由 Coordinator 修改。
   */
   rli->set_group_master_log_pos(rli->gaq->lwm.group_master_log_pos);
   rli->set_group_relay_log_pos(rli->gaq->lwm.group_relay_log_pos);
@@ -6825,6 +7004,9 @@ bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
     cnt is zero. This value means that the checkpoint information
     will be completely reset.
   */
+  /*
+    我们需要确保在 cnt 为零时不会调用此函数。这个值意味着检查点信息将被完全重置。
+  */
 
   /*
     Update the rli->last_master_timestamp for reporting correct
@@ -6833,6 +7015,12 @@ bool mta_checkpoint_routine(Relay_log_info *rli, bool force) {
     If GAQ is empty, set it to zero.
     Else, update it with the timestamp of the first job of the Slave_job_queue
     which was assigned in the Log_event::get_slave_worker() function.
+  */
+  /*
+    更新 rli->last_master_timestamp 以报告正确的 Seconds_behind_master。
+
+    如果 GAQ 为空，则将其设置为零。
+    否则，使用 Slave_job_queue 的第一个任务的时间戳更新它，该时间戳在 Log_event::get_slave_worker() 函数中分配。
   */
   ts = rli->gaq->empty()
            ? 0
@@ -6861,60 +7049,81 @@ end:
 
    @return 0 suppress or 1 if fails
 */
+/**
+   实例化一个 Slave_worker 并分叉出一个单独的 Worker 线程。
+
+   @param  rli  协调器的 Relay_log_info 指针
+   @param  i    Worker 的标识符
+
+   @return 0 表示成功，1 表示失败
+*/
 static int slave_start_single_worker(Relay_log_info *rli, ulong i) {
-  int error = 0;
-  my_thread_handle th;
-  Slave_worker *w = nullptr;
+  int error = 0;  // 错误码，初始化为0
+  my_thread_handle th;  // 线程句柄
+  Slave_worker *w = nullptr;  // Worker 指针，初始化为 nullptr
 
   mysql_mutex_assert_owner(&rli->run_lock);
 
   if (!(w = Rpl_info_factory::create_worker(opt_rli_repository_id, i, rli,
                                             false))) {
+    // 如果创建失败，记录错误日志
     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_WORKER_THREAD_CREATION_FAILED,
            rli->get_for_channel_str());
-    error = 1;
-    goto err;
+    error = 1;  // 设置错误码为1
+    goto err;  // 跳转到错误处理
   }
 
+  // 初始化 Worker
   if (w->init_worker(rli, i)) {
+    // 如果初始化失败，记录错误日志
     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_WORKER_THREAD_CREATION_FAILED,
            rli->get_for_channel_str());
-    error = 1;
-    goto err;
+    error = 1;  // 设置错误码为1
+    goto err;  // 跳转到错误处理
   }
 
   // We assume that workers are added in sequential order here.
-  assert(i == rli->workers.size());
-  if (i >= rli->workers.size()) rli->workers.resize(i + 1);
-  rli->workers[i] = w;
+  // 我们假设 Worker 是按顺序添加的
+  assert(i == rli->workers.size());  // 断言 i 等于当前 Worker 数量
+  if (i >= rli->workers.size()) rli->workers.resize(i + 1);  // 如果 i 大于等于 Worker 数量，调整 Worker 数组大小
+  rli->workers[i] = w;  // 将新创建的 Worker 放入数组
 
+  // 创建 Worker 线程
   if (DBUG_EVALUATE_IF("mta_worker_thread_fails", i == 1, 0) ||
       (error = mysql_thread_create(key_thread_replica_worker, &th,
                                    &connection_attrib, handle_slave_worker,
                                    (void *)w))) {
+    // 如果线程创建失败，记录错误日志
     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_WORKER_THREAD_CREATION_FAILED_WITH_ERRNO,
            rli->get_for_channel_str(), error);
-    error = 1;
-    goto err;
+    error = 1;  // 设置错误码为1
+    goto err;  // 跳转到错误处理
   }
-  mysql_mutex_lock(&w->jobs_lock);
+
+  // 等待 Worker 线程启动
+  mysql_mutex_lock(&w->jobs_lock);  // 加锁
   if (w->running_status == Slave_worker::NOT_RUNNING)
-    mysql_cond_wait(&w->jobs_cond, &w->jobs_lock);
-  mysql_mutex_unlock(&w->jobs_lock);
+    mysql_cond_wait(&w->jobs_cond, &w->jobs_lock);  // 等待 Worker 线程启动
+  mysql_mutex_unlock(&w->jobs_lock);  // 解锁
 
 err:
+  // 错误处理
   if (error && w) {
     // Free the current submode object
+    // 释放当前的 submode 对象
     delete w->current_mts_submode;
     w->current_mts_submode = nullptr;
-    delete w;
+    delete w;  // 释放 Worker 对象
     /*
       Any failure after array inserted must follow with deletion
       of just created item.
     */
-    if (rli->workers.size() == i + 1) rli->workers.erase(i);
+    /*
+      在数组插入后发生的任何失败都必须删除刚刚创建的项目。
+    */
+    if (rli->workers.size() == i + 1) rli->workers.erase(i);  // 如果 Worker 数组大小等于 i+1，删除刚刚插入的 Worker
   }
-  return error;
+  return error;  // 返回错误码
 }
 
 /**
@@ -6929,22 +7138,41 @@ err:
    @return 0         success
            non-zero  as failure
 */
+/**
+   初始化 Coordinator 角色的核心 rli 成员，
+   通信通道（如 Assigned Partition Hash (APH)），
+   并启动 Worker 池。
+
+   @param rli             Coordinator 的 Relay_log_info 实例的指针。
+   @param n               即将到来的会话中配置的 Worker 数量。
+   @param[out] mts_inited 如果初始化过程已启动。
+
+   @return 0         成功
+           non-zero  失败
+*/
 static int slave_start_workers(Relay_log_info *rli, ulong n, bool *mts_inited) {
   int error = 0;
   /**
     gtid_monitoring_info must be cleared when MTS is enabled or
     workers_copy_pfs has elements
   */
+  /**
+    当 MTS 启用或 workers_copy_pfs 有元素时，
+    gtid_monitoring_info 必须被清除。
+  */
   bool clear_gtid_monitoring_info = false;
 
+  // 确保持有 rli->run_lock 锁
   mysql_mutex_assert_owner(&rli->run_lock);
 
+  // 如果 n 为 0 且没有恢复组，则清空 workers 并跳转到 end
   if (n == 0 && rli->mts_recovery_group_cnt == 0) {
     rli->workers.clear();
     rli->clear_processing_trx();
     goto end;
   }
 
+  // 标记 MTS 已初始化
   *mts_inited = true;
 
   /*
@@ -6952,17 +7180,33 @@ static int slave_start_workers(Relay_log_info *rli, ulong n, bool *mts_inited) {
      from the previous time which ended with an error. Thereby
      the effective number of configured Workers is max of the two.
   */
+  /*
+    通过参数请求的 Worker 数量可能与上次以错误结束时的数量不同。
+    因此，配置的 Worker 的有效数量是两者的最大值。
+    max(slave_parallel_workers,recovery_parallel_workers)
+    recovery_parallel_workers:系统内部参数，通常不由用户直接配置。
+    它由 MySQL 内部根据系统的运行状态和崩溃恢复的需求自动设置。
+    这个参数用于控制在多线程复制（MTS）模式下，恢复过程中并行处理事务的 Worker 数量
+  */
+  // 初始化 workers，取 n 和 recovery_parallel_workers 的最大值
   rli->init_workers(max(n, rli->recovery_parallel_workers));
 
+  // 重置 last_assigned_worker
   rli->last_assigned_worker = nullptr;  // associated with curr_group_assigned
 
   /*
-     GAQ  queue holds seqno:s of scheduled groups. C polls workers in
+     GAQ 队列保存已调度组的序列号。C 在 @c opt_mta_checkpoint_period 中轮询 workers
+     以更新 GAQ（参见 @c next_event()）
+     GAQ 的长度设置为等于 checkpoint_group。
+     注意，大小对于 mta_checkpoint_routine 的进度循环很重要。
+  */
+  /*
+     GAQ queue holds seqno:s of scheduled groups. C polls workers in
      @c opt_mta_checkpoint_period to update GAQ (see @c next_event())
      The length of GAQ is set to be equal to checkpoint_group.
      Notice, the size matters for mta_checkpoint_routine's progress loop.
   */
-
+  // 初始化 GAQ 队列
   rli->gaq = new Slave_committed_queue(rli->checkpoint_group, n);
   if (!rli->gaq->inited) return 1;
 
@@ -6983,6 +7227,12 @@ static int slave_start_workers(Relay_log_info *rli, ulong n, bool *mts_inited) {
   rli->mts_group_status = Relay_log_info::MTS_NOT_IN_GROUP;
   clear_gtid_monitoring_info = true;
 
+  // 初始化 workers 的哈希表
+  /*
+     workers 的哈希表 用于将数据库（或分区）映射到特定的 Worker。
+     这种映射机制允许 Coordinator 将不同的数据库事务分配给不同的 Worker 并行处理，从而提高复制的效率。
+     哈希表的作用是确保每个数据库的事务由同一个 Worker 处理，以保持事务的顺序性。
+  */
   if (init_hash_workers(rli))  // MTS: mapping_db_to_worker
   {
     LogErr(ERROR_LEVEL, ER_RPL_SLAVE_FAILED_TO_INIT_PARTITIONS_HASH);
@@ -6990,6 +7240,7 @@ static int slave_start_workers(Relay_log_info *rli, ulong n, bool *mts_inited) {
     goto err;
   }
 
+  // 启动每个 worker
   for (uint i = 0; i < n; i++) {
     if ((error = slave_start_single_worker(rli, i))) goto err;
     rli->replica_parallel_workers++;
@@ -7001,6 +7252,11 @@ end:
     the table performance_schema.table_replication_applier_status_by_worker
     between stop slave and next start slave.
   */
+  /*
+    释放用于通过 performance_schema.table_replication_applier_status_by_worker
+    表报告 worker 状态的缓冲区，该缓冲区在停止 slave 和下一次启动 slave 之间使用。
+  */
+  // 释放 workers_copy_pfs 中的缓冲区
   for (int i = static_cast<int>(rli->workers_copy_pfs.size()) - 1; i >= 0;
        i--) {
     delete rli->workers_copy_pfs[i];
@@ -7017,6 +7273,7 @@ end:
   }
 
 err:
+  // 如果需要，清除 gtid_monitoring_info
   if (clear_gtid_monitoring_info) rli->clear_gtid_monitoring_info();
   return error;
 }
@@ -7453,7 +7710,7 @@ extern "C" void *handle_slave_sql(void *arg) {
       now.
       But the master timestamp is reset by RESET SLAVE & CHANGE MASTER.
     */
-       /*
+    /*
       清除错误状态，为线程的干净启动做准备。
       如果主库空闲，SQL 线程可能不会执行任何 Query_log_event，
       因此错误状态可能会保留，即使没有问题。
@@ -7579,21 +7836,22 @@ extern "C" void *handle_slave_sql(void *arg) {
     /*
       First check until condition - probably there is nothing to execute. We
       do not want to wait for next event in this case.
+      首先检查 until 条件——可能没有需要执行的内容。在这种情况下，我们不希望等待下一个事件。
     */
-    mysql_mutex_lock(&rli->data_lock);
-    if (rli->slave_skip_counter) {
-      strmake(saved_log_name, rli->get_group_relay_log_name(), FN_REFLEN - 1);
+    mysql_mutex_lock(&rli->data_lock);  // 加锁保护数据
+    if (rli->slave_skip_counter) {  // 如果存在需要跳过的计数器
+      strmake(saved_log_name, rli->get_group_relay_log_name(), FN_REFLEN - 1);  // 保存当前中继日志文件名
       strmake(saved_master_log_name, rli->get_group_master_log_name(),
-              FN_REFLEN - 1);
-      saved_log_pos = rli->get_group_relay_log_pos();
-      saved_master_log_pos = rli->get_group_master_log_pos();
-      saved_skip = rli->slave_skip_counter;
+              FN_REFLEN - 1);  // 保存当前主日志文件名
+      saved_log_pos = rli->get_group_relay_log_pos();  // 保存当前中继日志位置
+      saved_master_log_pos = rli->get_group_master_log_pos();  // 保存当前主日志位置
+      saved_skip = rli->slave_skip_counter;  // 保存需要跳过的计数器值
     }
-    if (rli->is_until_satisfied_at_start_slave()) {
-      mysql_mutex_unlock(&rli->data_lock);
-      goto err;
+    if (rli->is_until_satisfied_at_start_slave()) {  // 如果 until 条件在启动从库时已经满足
+      mysql_mutex_unlock(&rli->data_lock);  // 解锁
+      goto err;  // 跳转到错误处理
     }
-    mysql_mutex_unlock(&rli->data_lock);
+    mysql_mutex_unlock(&rli->data_lock);  // 解锁
 
     /* Read queries from the IO/THREAD until this thread is killed */
 

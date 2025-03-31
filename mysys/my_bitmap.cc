@@ -148,40 +148,61 @@ static inline uint get_first_not_set(uint32 value, uint word_pos) {
   return MY_BIT_NONE;
 }
 
+/**
+  Initialize a bitmap.
+
+  @param map          Bitmap to initialize
+  @param buf          Buffer to use for bitmap data (or NULL to allocate it)
+  @param n_bits       Number of bits in the bitmap
+  @param thread_safe  Whether to make the bitmap thread-safe
+
+  @retval false  Success
+  @retval true   Error (failed to allocate memory)
+  初始化位图。
+
+  @param map          要初始化的位图
+  @param buf          用于位图数据的缓冲区（或 NULL 表示需要分配）
+  @param n_bits       位图中的位数
+  @param thread_safe  是否使位图线程安全
+
+  @retval false  成功
+  @retval true   错误（内存分配失败）
+*/
 bool bitmap_init(MY_BITMAP *map, my_bitmap_map *buf, uint n_bits,
                  bool thread_safe) {
-  DBUG_TRACE;
-  if (!buf) {
-    uint size_in_bytes = bitmap_buffer_size(n_bits);
-    uint extra = 0;
+  DBUG_TRACE;  // 调试跟踪标记
+  if (!buf) {  // 如果未提供缓冲区
+    uint size_in_bytes = bitmap_buffer_size(n_bits);  // 计算所需缓冲区大小（字节）
+    uint extra = 0;  // 额外空间初始化为 0
 
-    if (thread_safe) {
-      size_in_bytes = ALIGN_SIZE(size_in_bytes);
-      extra = sizeof(mysql_mutex_t);
+    if (thread_safe) {  // 如果需要线程安全
+      size_in_bytes = ALIGN_SIZE(size_in_bytes);  // 对齐大小
+      extra = sizeof(mysql_mutex_t);  // 为互斥锁预留空间
     }
-    map->mutex = 0;
+    map->mutex = 0;  // 初始化互斥锁指针为 0
 
+    // 分配内存（位图缓冲区 + 可能的互斥锁空间）
     if (!(buf = (my_bitmap_map *)my_malloc(key_memory_MY_BITMAP_bitmap,
                                            size_in_bytes + extra, MYF(MY_WME))))
-      return true;
+      return true;  // 内存分配失败，返回 true
 
-    if (thread_safe) {
-      map->mutex = (mysql_mutex_t *)((char *)buf + size_in_bytes);
-      mysql_mutex_init(key_BITMAP_mutex, map->mutex, MY_MUTEX_INIT_FAST);
+    if (thread_safe) {  // 如果需要线程安全
+      map->mutex = (mysql_mutex_t *)((char *)buf + size_in_bytes);  // 设置互斥锁位置
+      mysql_mutex_init(key_BITMAP_mutex, map->mutex, MY_MUTEX_INIT_FAST);  // 初始化互斥锁
     }
 
   }
-
-  else {
-    assert(thread_safe == 0);
-    map->mutex = NULL;
+  
+  else {  // 如果提供了缓冲区
+    assert(thread_safe == 0);  // 断言线程安全标志为 false（外部缓冲区不支持线程安全）
+    map->mutex = NULL;  // 互斥锁指针设为 NULL
   }
 
-  map->bitmap = buf;
-  map->n_bits = n_bits;
-  create_last_word_mask(map);
-  bitmap_clear_all(map);
-  return false;
+  map->bitmap = buf;  // 设置位图缓冲区
+  map->n_bits = n_bits;  // 设置位数
+  create_last_word_mask(map);  // 创建最后字的掩码
+  bitmap_clear_all(map);  // 清除所有位
+  return false;  // 返回成功
 }
 
 void bitmap_free(MY_BITMAP *map) {

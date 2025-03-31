@@ -2976,8 +2976,19 @@ bool trx_weight_ge(const trx_t *a, /*!< in: transaction to be compared */
   return (TRX_WEIGHT(a) >= TRX_WEIGHT(b));
 }
 
-/** Prepares a transaction for given rollback segment.
- @return lsn_t: lsn assigned for commit of scheduled rollback segment */
+/**
+  为指定的回滚段准备事务。
+  该函数处理事务准备的核心逻辑，包括设置undo日志状态。
+  Prepares a transaction for given rollback segment.
+  @param trx         输入/输出：事务对象
+                     in/out: transaction
+  @param undo_ptr    输入/输出：指向要准备的回滚段的指针
+                     in/out: pointer to rollback segment scheduled for prepare.
+  @param noredo_logging 输入：是否禁用redo日志
+                     in: turn-off redo logging.
+  @return 分配的日志序列号(lsn)
+          @return lsn_t: lsn assigned for commit of scheduled rollback segment
+*/
 static lsn_t trx_prepare_low(
     trx_t *trx,               /*!< in/out: transaction */
     trx_undo_ptr_t *undo_ptr, /*!< in/out: pointer to rollback
@@ -2985,52 +2996,60 @@ static lsn_t trx_prepare_low(
     bool noredo_logging)      /*!< in: turn-off redo logging. */
 {
   if (undo_ptr->insert_undo != nullptr || undo_ptr->update_undo != nullptr) {
-    mtr_t mtr;
-    trx_rseg_t *rseg = undo_ptr->rseg;
+    mtr_t mtr;  // 迷你事务对象
+    trx_rseg_t *rseg = undo_ptr->rseg;  // 获取回滚段
 
-    mtr_start_sync(&mtr);
+    mtr_start_sync(&mtr);  // 启动同步迷你事务
 
+    // 设置日志模式
     if (noredo_logging) {
-      mtr_set_log_mode(&mtr, MTR_LOG_NO_REDO);
+      mtr_set_log_mode(&mtr, MTR_LOG_NO_REDO);  // 禁用redo日志
     }
 
+    /* 将undo日志段状态从TRX_UNDO_ACTIVE改为TRX_UNDO_PREPARED：
+       这些对文件数据结构的修改在基于文件的世界中将事务定义为已准备 */
     /* Change the undo log segment states from TRX_UNDO_ACTIVE to
     TRX_UNDO_PREPARED: these modifications to the file data
     structure define the transaction as prepared in the file-based
     world, at the serialization point of lsn. */
 
-    rseg->latch();
+    rseg->latch();  // 锁定回滚段
 
+    // 处理insert undo日志
     if (undo_ptr->insert_undo != nullptr) {
+      /* 这里不需要获取trx->undo_mutex，因为只允许单个OS线程为此事务做准备 */
       /* It is not necessary to obtain trx->undo_mutex here
       because only a single OS thread is allowed to do the
       transaction prepare for this transaction. */
       trx_undo_set_state_at_prepare(trx, undo_ptr->insert_undo, false, &mtr);
     }
 
+    // 处理update undo日志
     if (undo_ptr->update_undo != nullptr) {
       if (!noredo_logging) {
-        trx_undo_gtid_set(trx, undo_ptr->update_undo, true);
+        trx_undo_gtid_set(trx, undo_ptr->update_undo, true);  // 设置GTID
       }
       trx_undo_set_state_at_prepare(trx, undo_ptr->update_undo, false, &mtr);
     }
 
-    rseg->unlatch();
+    rseg->unlatch();  // 解锁回滚段
 
     /*--------------*/
+    /* 这个mtr提交使事务在基于文件的世界中变为已准备状态 */
     /* This mtr commit makes the transaction prepared in
     file-based world. */
     mtr_commit(&mtr);
     /*--------------*/
 
+    // 返回提交的lsn（如果启用了redo日志）
     if (!noredo_logging) {
       const lsn_t lsn = mtr.commit_lsn();
-      ut_ad(lsn > 0 || !mtr_t::s_logging.is_enabled());
+      ut_ad(lsn > 0 || !mtr_t::s_logging.is_enabled());  // 断言lsn有效
       return lsn;
     }
   }
 
-  return 0;
+  return 0;  // 默认返回0
 }
 
 bool trx_is_mysql_xa(const trx_t *trx) {
@@ -3038,53 +3057,67 @@ bool trx_is_mysql_xa(const trx_t *trx) {
   return (my_xid != 0);
 }
 
-/** Prepares a transaction.
-@param[in]     trx the transction to prepare. */
+/**
+  准备一个事务。
+  该函数执行事务的核心准备逻辑，包括写入redo日志和更新事务状态。
+  Prepares a transaction.
+  @param[in]     trx 要准备的事务
+                     the transaction to prepare.
+*/
 static void trx_prepare(trx_t *trx) {
+  // 断言事务可由当前线程处理或是高优先级受害者
   ut_ad(trx_can_be_handled_by_current_thread_or_is_hp_victim(trx));
 
+  /* 此事务已越过不可回退点，现在不能异步回滚。
+     必须同步提交或回滚 */
   /* This transaction has crossed the point of no return and cannot
   be rolled back asynchronously now. It must commit or rollback
   synchronously. */
 
-  lsn_t lsn = 0;
+  lsn_t lsn = 0;  // 初始化日志序列号
 
+  /* 只有新用户事务可以被准备。恢复的事务不能 */
   /* Only fresh user transactions can be prepared.
   Recovered transactions cannot. */
-  ut_a(!trx->is_recovered);
+  ut_a(!trx->is_recovered);  // 断言不是恢复的事务
 
-  DBUG_EXECUTE_IF("ib_trx_crash_during_xa_prepare_step", DBUG_SUICIDE(););
+  DBUG_EXECUTE_IF("ib_trx_crash_during_xa_prepare_step", DBUG_SUICIDE(););  // 调试：准备阶段崩溃
 
+  // 处理redo日志段
   if (trx->rsegs.m_redo.rseg != nullptr && trx_is_redo_rseg_updated(trx)) {
-    lsn = trx_prepare_low(trx, &trx->rsegs.m_redo, false);
+    lsn = trx_prepare_low(trx, &trx->rsegs.m_redo, false);  // 准备redo日志段
   }
 
+  // 处理临时表日志段
   if (trx->rsegs.m_noredo.rseg != nullptr && trx_is_temp_rseg_updated(trx)) {
-    trx_prepare_low(trx, &trx->rsegs.m_noredo, true);
+    trx_prepare_low(trx, &trx->rsegs.m_noredo, true);  // 准备临时表日志段
   }
 
+  // 断言事务状态为ACTIVE
   ut_a(trx->state.load(std::memory_order_relaxed) == TRX_STATE_ACTIVE);
 
+  // 更新事务状态为PREPARED
   trx_sys_mutex_enter();
   trx->state.store(TRX_STATE_PREPARED, std::memory_order_relaxed);
-  trx_sys->n_prepared_trx++;
+  trx_sys->n_prepared_trx++;  // 增加已准备事务计数
   trx_sys_mutex_exit();
 
-  /* Force isolation level to RC and release GAP locks
-  for test purpose. */
+  /* 强制隔离级别为RC并释放GAP锁（测试用） */
+  /* Force isolation level to RC and release GAP locks for test purpose. */
   DBUG_EXECUTE_IF("ib_force_release_gap_lock_prepare",
                   trx->isolation_level = TRX_ISO_READ_COMMITTED;);
 
-  /* Release read locks after PREPARE for READ COMMITTED
-  and lower isolation. */
+  /* 对于READ COMMITTED及更低隔离级别，在PREPARE后释放读锁 */
+  /* Release read locks after PREPARE for READ COMMITTED and lower isolation. */
   if (trx->releases_gap_locks_at_prepare()) {
-    /* Stop inheriting GAP locks. */
+    /* 停止继承GAP锁 */
     trx->skip_lock_inheritance = true;
 
-    /* Release only GAP locks for now. */
+    /* 现在只释放GAP锁 */
     lock_trx_release_read_locks(trx, true);
   }
 
+  // 如果生成了redo日志，则刷新日志
   if (lsn > 0) {
     trx_flush_logs(trx, lsn);
   }
@@ -3167,25 +3200,36 @@ static void trx_set_prepared_in_tc(trx_t *trx) {
 }
 
 /**
-Does the transaction prepare for MySQL.
-@param[in, out] trx             Transaction instance to prepare */
+  为MySQL准备事务。
+  该函数执行XA事务的准备阶段。
+  Does the transaction prepare for MySQL.
+  @param[in, out] trx             要准备的事务实例
+                                  Transaction instance to prepare 
+  @return 数据库错误码
+          @return DB_SUCCESS 成功
+          @return DB_FORCED_ABORT 事务被强制中止
+*/
 dberr_t trx_prepare_for_mysql(trx_t *trx) {
+  // 如果XA事务未启动则启动它
   trx_start_if_not_started_xa(trx, false, UT_LOCATION_HERE);
 
+  // 创建RAII对象跟踪事务在InnoDB中的状态
   TrxInInnoDB trx_in_innodb(trx, true);
 
+  // 检查事务是否已被中止且不是被当前线程中止
   if (trx_in_innodb.is_aborted() &&
       trx->killed_by != std::this_thread::get_id()) {
-    return (DB_FORCED_ABORT);
+    return (DB_FORCED_ABORT);  // 返回强制中止错误
   }
 
-  trx->op_info = "preparing";
+  trx->op_info = "preparing";  // 设置事务操作信息为"preparing"
 
+  // 调用核心准备函数
   trx_prepare(trx);
 
-  trx->op_info = "";
+  trx->op_info = "";  // 清空事务操作信息
 
-  return (DB_SUCCESS);
+  return (DB_SUCCESS);  // 返回成功
 }
 
 /**

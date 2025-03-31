@@ -259,21 +259,23 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery,
 
 /**
    The method to invoke at slave threads start
+   在从库线程启动时调用的方法
 */
 void Relay_log_info::init_workers(ulong n_workers) {
   /*
     Parallel slave parameters initialization is done regardless
     whether the feature is or going to be active or not.
+    无论并行从库功能是否激活，都会进行并行从库参数的初始化。
   */
   mts_groups_assigned = mts_events_assigned = pending_jobs = wq_size_waits_cnt =
-      0;
-  mts_wq_excess_cnt = mts_wq_no_underrun_cnt = mts_wq_overfill_cnt = 0;
-  mts_total_wait_overlap = 0;
-  mts_total_wait_worker_avail = 0;
-  mts_last_online_stat = 0;
+      0;  // 初始化并行从库相关计数器为 0
+  mts_wq_excess_cnt = mts_wq_no_underrun_cnt = mts_wq_overfill_cnt = 0;  // 初始化工作队列相关计数器为 0
+  mts_total_wait_overlap = 0;  // 初始化重叠等待时间为 0
+  mts_total_wait_worker_avail = 0;  // 初始化工作线程可用等待时间为 0
+  mts_last_online_stat = 0;  // 初始化最后在线状态为 0
 
-  workers.reserve(n_workers);
-  workers_array_initialized = true;  // set after init
+  workers.reserve(n_workers);  // 为工作线程预留空间
+  workers_array_initialized = true;  // 初始化完成后设置为 true
 }
 
 /**
@@ -425,6 +427,12 @@ void Relay_log_info::reset_notified_checkpoint(ulong shift, time_t new_ts,
 
    @return false on success true when @c reset_notified_checkpoint failed.
 */
+/**
+   从 Worker 信息表中重置恢复信息，
+   并标记 MTS 恢复已完成。
+
+   @return false 表示成功，true 表示 @c reset_notified_checkpoint 失败。
+*/
 bool Relay_log_info::mts_finalize_recovery() {
   bool ret = false;
   uint i;
@@ -432,6 +440,7 @@ bool Relay_log_info::mts_finalize_recovery() {
 
   DBUG_TRACE;
 
+  // 遍历所有 Worker，重置恢复信息
   for (Slave_worker **it = workers.begin(); !ret && it != workers.end(); ++it) {
     Slave_worker *w = *it;
     ret = w->reset_recovery_info();
@@ -443,8 +452,13 @@ bool Relay_log_info::mts_finalize_recovery() {
     even temporary holes. Therefore stale records are deleted
     from the tail.
   */
+  /*
+    由于 Worker 表存储库的特性，循环以 Worker 索引的降序遍历，
+    以避免临时空洞。因此，陈旧的记录从尾部删除。
+  */
   DBUG_EXECUTE_IF("enable_mta_wokrer_failure_in_recovery_finalize",
                   { DBUG_SET("+d,mta_worker_thread_init_fails"); });
+  // 从 recovery_parallel_workers 到 workers.size() 的范围内删除多余的 Worker
   for (i = recovery_parallel_workers; i > workers.size() && !ret; i--) {
     Slave_worker *w = Rpl_info_factory::create_worker(repo_type, i - 1, this,
                                                       !mi->is_gtid_only_mode());
@@ -454,6 +468,10 @@ bool Relay_log_info::mts_finalize_recovery() {
       NULL is returned. Hence the following check has been added to verify
       that a valid worker object exists.
     */
+    /*
+      如果在上述 create_worker 调用期间发生错误，新创建的 Worker 对象会在函数调用内部被删除，
+      并且只返回 NULL。因此，添加了以下检查以验证是否存在有效的 Worker 对象。
+    */
     if (w) {
       ret = w->remove_info();
       delete w;
@@ -462,6 +480,7 @@ bool Relay_log_info::mts_finalize_recovery() {
       goto err;
     }
   }
+  // 恢复完成后，将 recovery_parallel_workers 设置为 replica_parallel_workers
   recovery_parallel_workers = replica_parallel_workers;
 
 err:
@@ -2455,6 +2474,13 @@ bool Relay_log_info::write_info(Rpl_info_handler *to) {
 
    @return 1 if an error was encountered, 0 otherwise.
 */
+// 该方法由 SQL 线程/MTS 协调器运行。
+// 它用一个新的 FD 事件替换当前的 FD 事件。
+// 为新 FD 调用版本适应例程，以使从服务器应用执行上下文与主服务器版本对齐。
+// 由于在 MTS 模式下，FD 由协调器和工作者共享，因此通过递减其使用计数器来删除旧的 FD。
+// 当使用计数器降为零时，析构函数运行，另请参见 @c Slave_worker::set_rli_description_event()。
+// 新 FD 的使用计数器递增。
+// 尽管注意到 MTS 工作者在销毁时运行它，效率低下（参见断言）。
 
 int Relay_log_info::set_rli_description_event(
     Format_description_log_event *fe) {
@@ -2467,6 +2493,7 @@ int Relay_log_info::set_rli_description_event(
     if (info_thd) {
       /* @see rpl_rli_pdb.h:Slave_worker::set_rli_description_event for a
          detailed explanation on the following code block's logic. */
+      // 参见 rpl_rli_pdb.h:Slave_worker::set_rli_description_event 以获取以下代码块逻辑的详细解释。
       if (info_thd->variables.gtid_next.type == AUTOMATIC_GTID ||
           info_thd->variables.gtid_next.type == UNDEFINED_GTID) {
         bool in_active_multi_stmt =
@@ -2489,6 +2516,7 @@ int Relay_log_info::set_rli_description_event(
           will see notification through scheduling of a first event of
           a new post-new-FD.
         */
+        // 准备工作线程适应新的 FD 版本。工作线程将通过调度新 FD 后的第一个事件来看到通知。
         for (Slave_worker **it = workers.begin(); it != workers.end(); ++it)
           (*it)->fd_change_notified = false;
       }
@@ -2500,6 +2528,7 @@ int Relay_log_info::set_rli_description_event(
 #ifndef NDEBUG
   else
     /* It must be MTS mode when the usage counter greater than 1. */
+    // 当使用计数器大于 1 时，必须是 MTS 模式。
     assert(!rli_description_event || is_parallel_exec());
 #endif
   rli_description_event = fe;
@@ -2991,13 +3020,27 @@ void Relay_log_info::clear_relay_log_truncated() {
   m_relay_log_truncated = false;
 }
 
+/**
+   Check if it is time for MTA checkpoint.
+
+   @return true if it is time for MTA checkpoint, false otherwise.
+*/
+/**
+   检查是否到了 MTA 检查点的时间。
+
+   @return true 如果到了 MTA 检查点的时间，否则返回 false。
+*/
 bool Relay_log_info::is_time_for_mta_checkpoint() {
+  // 如果启用了并行执行且检查点周期不为 0
   if (is_parallel_exec() && opt_mta_checkpoint_period != 0) {
     struct timespec curr_clock;
+    // 获取当前时间
     set_timespec_nsec(&curr_clock, 0);
+    // 检查当前时间与上次检查点时间的差值是否大于等于检查点周期
     return diff_timespec(&curr_clock, &last_clock) >=
            opt_mta_checkpoint_period * 1000000ULL;
   }
+  // 如果不满足条件，返回 false
   return false;
 }
 

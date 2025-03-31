@@ -1030,13 +1030,16 @@ inline int Log_event::do_apply_event_worker(Slave_worker *w) {
     /* we will crash a worker after waiting for
     2 seconds to make sure that other transactions are
     scheduled and completed */
-    if (w->id == 2) {
-      DBUG_SET("-d,crash_in_a_worker");
-      my_sleep(2000000);
-      DBUG_SUICIDE();
+    /*
+       我们将在等待 2 秒后崩溃一个 Worker，以确保其他事务被调度并完成。
+    */
+    if (w->id == 2) {  // 如果 Worker 的 ID 为 2
+      DBUG_SET("-d,crash_in_a_worker");  // 设置调试标志
+      my_sleep(2000000);  // 等待 2 秒
+      DBUG_SUICIDE();  // 模拟崩溃
     }
   });
-  return do_apply_event(w);
+  return do_apply_event(w);  // 调用 do_apply_event 方法
 }
 
 int Log_event::do_update_pos(Relay_log_info *rli) {
@@ -2543,9 +2546,19 @@ bool Log_event::contains_partition_info(bool end_group_sets_max_dbs) {
   @return      true if error
                false otherwise
  */
+/*
+  概要：
+    该函数为正在并行调度的作业组分配一个父 ID。它还检查是否可以与正在执行的先前事件并行调度新事件。
+
+  @param        ev 需要调度的下一个日志事件。
+  @param       rli 指向协调器的中继日志信息的指针。
+  @return      true 如果发生错误
+               false 否则
+ */
 static bool schedule_next_event(Log_event *ev, Relay_log_info *rli) {
   int error;
   // Check if we can schedule this event
+  // 检查是否可以调度此事件
   error = rli->current_mts_submode->schedule_next_event(rli, ev);
   switch (error) {
     char llbuff[22];
@@ -2567,14 +2580,17 @@ static bool schedule_next_event(Log_event *ev, Relay_log_info *rli) {
         return true;
       }
       /* Don't have to do anything. */
+      /* 无需做任何事情。 */
       return true;
     case -1:
       /* Unable to schedule: wait_for_last_committed_trx has failed */
+      /* 无法调度：wait_for_last_committed_trx 失败 */
       return true;
     default:
       return false;
   }
   /* Keep compiler happy */
+  /* 让编译器满意 */
   return false;
 }
 
@@ -2631,6 +2647,41 @@ static bool schedule_next_event(Log_event *ev, Relay_log_info *rli) {
 
    @return a pointer to the Worker struct or NULL.
 */
+/**
+   该方法将事件映射到一个 Worker 并返回指向它的指针。
+   发送事件到 Worker 由调用者完成。
+
+   无论组的标记类型是数据库分区还是基于 BGC，以下内容都成立：
+
+   - 识别组的开始以分配组描述符并将其排队；
+   - 将事件与 Worker 关联（还处理可能的冲突检测并等待其终止）；
+   - 在遇到组关闭事件时完成组分配。
+
+   当并行化模式基于 BGC 时，事件中的分区信息被忽略。因此，与 Worker 的关联不需要分区方法的 Assigned Partition Hash。
+   该方法不关心事件组属性的所有分类，我们关心的是组的边界。
+
+   作为组的一部分，事件属于以下类型之一：
+
+   B - 事件组的开始（BEGIN query_log_event）
+   g - 包含分区信息的迷你组代表事件（任何 Table_map，Query_log_event）
+   p - 迷你组内部事件，*p*receding 其 g-parent（int_, rand_, user_ var:s）
+   r - 迷你组内部“常规”事件，跟随其 g-parent（Delete, Update, Write -rows）
+   T - 组的终止符（XID, COMMIT, ROLLBACK, auto-commit query）
+
+   只有第一个 g-event 计算分配的 Worker，一旦确定，它将用于组的其余部分。
+   也就是说，g-event 仅携带分区信息。
+   对于 B-event，分配的 Worker 为 NULL，表示协调器尚未决定。同样适用于 p-event。
+
+   注意，这是一个特殊的组，由可选的多个 p-event 组成，以 g-event 结束。
+   这种情况是由旧的主库 binlog 和当前主库版本的一些特殊情况引起的（待修复）。
+
+   如果事件访问的数据库超过 OVER_MAX_DBS，该方法必须确保之前分配给所有其他 Worker 的组已完成。
+
+   @note 该函数直接更新 GAQ 队列，更新 APH 哈希，并通过 @c map_db_to_worker 将一些临时表从协调器的列表重新定位到 APH 的相关条目中。
+         有一些内存分配的地方需要释放。
+
+   @return 指向 Worker 结构的指针或 NULL。
+*/
 
 Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
   Slave_job_group group = Slave_job_group(), *ptr_group = nullptr;
@@ -2642,9 +2693,16 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
 
   /* checking partitioning properties and perform corresponding actions */
 
+  // 检查分区属性并执行相应的操作
+
   // Beginning of a group designated explicitly with BEGIN or GTID
+  // 明确以 BEGIN（或XA START） 或 GTID 指定的组的开始
   if ((is_s_event = starts_group()) || is_gtid_event(this) ||
       // or DDL:s or autocommit queries possibly associated with own p-events
+      // 或者 DDL 或可能与自己的 p-event 关联的自动提交查询
+
+      // 检查当前事务组是否没有显式的 BEGIN 事件或 GTID 事件。
+      // 如果没有，表示当前事务组是一个特殊的组，可能由多个 p-event 组成，以 g-event 结束
       (!rli->curr_group_seen_begin && !rli->curr_group_seen_gtid &&
        /*
          the following is a special case of B-free still multi-event group like
@@ -2653,15 +2711,26 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
          assigned) or the last assigned group index points at one of
          mapped-to-a-worker.
        */
+       /*
+         以下是 B-free 但仍然多事件组的特殊情况，如 { p_1,p_2,...,p_k, g }。
+         在这种情况下，GAQ 为空（正在分配第一个组）或最后分配的组索引指向映射到 Worker 的组之一。
+       */
+      // gaq->empty():检查全局分配队列（GAQ）是否为空。如果为空，表示这是第一个事务组，需要分配一个新的组。
+      // 检查最后一个分配的组是否已经映射到一个 Worker。如果没有映射到 Worker（即 worker_id == MTS_WORKER_UNDEF），表示需要分配一个新的组。
        (gaq->empty() ||
         gaq->get_job_group(rli->gaq->assigned_group_index)->worker_id !=
             MTS_WORKER_UNDEF))) {
     if (!rli->curr_group_seen_gtid && !rli->curr_group_seen_begin) {
+      // 增加 mts_groups_assigned 计数器，表示已经分配的事务组数量增加了一个。
       rli->mts_groups_assigned++;
 
+      // 将 curr_group_isolated 设置为 false，表示当前事务组没有被隔离（即可以并行执行）。
       rli->curr_group_isolated = false;
+      // 重置 group 对象，将其初始化为一个新的组描述符。common_header->log_pos 是当前事件的日志位置，rli->mts_groups_assigned 是当前事务组的序号。
       group.reset(common_header->log_pos, rli->mts_groups_assigned);
       // the last occupied GAQ's array index
+      // 最后一个占用的 GAQ 数组索引
+      // 将新的事务组描述符 group 加入到全局分配队列（GAQ）中，并返回其在队列中的索引。assigned_group_index 被设置为这个索引，表示当前事务组在 GAQ 中的位置。
       gaq->assigned_group_index = gaq->en_queue(&group);
       DBUG_PRINT("info", ("gaq_idx= %ld  gaq->size=%zu",
                           gaq->assigned_group_index, gaq->capacity));
@@ -2672,25 +2741,34 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
       assert(rli->last_assigned_worker == nullptr ||
              !is_mts_db_partitioned(rli));
 
+      // 当一个新的事务组开始时       
       if (is_s_event || is_gtid_event(this)) {
+        // 创建一个 Slave_job_item 对象，包含当前事件、中继日志编号和事件起始位置
         Slave_job_item job_item = {this, rli->get_event_relay_log_number(),
                                    rli->get_event_start_pos()};
         // B-event is appended to the Deferred Array associated with GCAP
+        // B-event 被附加到与 GCAP 关联的延迟数组中
+        // 将 job_item 加入到当前事务组的延迟数组（curr_group_da）中。延迟数组用于存储事务组中的事件，直到事务组完成
         rli->curr_group_da.push_back(job_item);
 
         assert(rli->curr_group_da.size() == 1);
 
         if (starts_group()) {
           // mark the current group as started with explicit B-event
+          // 标记当前组以显式 B-event 开始
+          // 设置 mts_end_group_sets_max_dbs 为 true，表示事务组的结束事件需要设置最大数据库数
           rli->mts_end_group_sets_max_dbs = true;
+          // 标记当前事务组为已开始
           rli->curr_group_seen_begin = true;
         }
 
         if (is_gtid_event(this)) {
           // mark the current group as started with explicit Gtid-event
+          // 标记当前组以显式 Gtid-event 开始
           rli->curr_group_seen_gtid = true;
 
           Gtid_log_event *gtid_log_ev = static_cast<Gtid_log_event *>(this);
+          // 处理 GTID 事件
           rli->started_processing(gtid_log_ev);
         }
 
@@ -2709,10 +2787,15 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
        TODO: Make GITD event as B-event that is starts_group() to
        return true.
       */
+      /*
+       该块是由于未将 GTID 事件作为组启动器的结果。
+       TODO：使 GITD 事件作为 B-event，即 starts_group() 返回 true。
+      */
       Slave_job_item job_item = {this, rli->get_event_relay_log_number(),
                                  rli->get_event_relay_log_pos()};
 
       // B-event is appended to the Deferred Array associated with GCAP
+      // B-event 被附加到与 GCAP 关联的延迟数组中
       rli->curr_group_da.push_back(job_item);
       rli->curr_group_seen_begin = true;
       rli->mts_end_group_sets_max_dbs = true;
@@ -2734,10 +2817,13 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
   ptr_group = gaq->get_job_group(rli->gaq->assigned_group_index);
   if (!is_mts_db_partitioned(rli)) {
     /* Get least occupied worker */
+    // 获取最不繁忙的 Worker
     ret_worker = rli->current_mts_submode->get_least_occupied_worker(
         rli, &rli->workers, this);
+    // 分配失败，把它放入到curr_group_da
     if (ret_worker == nullptr) {
       /* get_least_occupied_worker may return NULL if the thread is killed */
+      // 如果线程被杀死，get_least_occupied_worker 可能返回 NULL
       Slave_job_item job_item = {this, rli->get_event_relay_log_number(),
                                  rli->get_event_start_pos()};
       rli->curr_group_da.push_back(job_item);
@@ -2757,6 +2843,11 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
       the partition info.
       The following assert proves there's the only reason
       for such group.
+    */
+    /*
+      Bug 12982188 - MTS: SBR 在 LOAD DATA 时因错误 1742 中止
+      主库上的日志记录可能会创建一个没有事件的分区信息的组。
+      以下断言证明了这种情况的唯一原因。
     */
 #ifndef NDEBUG
     {
@@ -2787,16 +2878,22 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
 #endif
 
     // partitioning info is found which drops the flag
+    // 找到分区信息，该标志被丢弃
     rli->mts_end_group_sets_max_dbs = false;
     ret_worker = rli->last_assigned_worker;
     if (mts_dbs.num == OVER_MAX_DBS_IN_EVENT_MTS) {
       // Worker with id 0 to handle serial execution
+      // 使用 id 为 0 的 Worker 处理串行执行
       if (!ret_worker) ret_worker = rli->workers.at(0);
       // No need to know a possible error out of synchronization call.
+      // 不需要知道同步调用中可能的错误
       (void)rli->current_mts_submode->wait_for_workers_to_finish(rli,
                                                                  ret_worker);
       /*
         this marking is transferred further into T-event of the current group.
+      */
+      /*
+        此标记进一步传递到当前组的 T-event 中。
       */
       rli->curr_group_isolated = true;
     }
@@ -2815,6 +2912,7 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
 #endif
 
     /* One run of the loop in the case of over-max-db:s */
+    // 在 over-max-db 的情况下循环一次
     for (i = 0;
          i < ((mts_dbs.num != OVER_MAX_DBS_IN_EVENT_MTS) ? mts_dbs.num : 1);
          i++) {
@@ -2823,6 +2921,10 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
         such "all" db as encoded as  the "" empty string.
         Note, the empty string is allocated in a large buffer
         to satisfy hashcmp() implementation.
+      */
+      /*
+        通过将“all”数据库编码为空字符串“”传递给 map_db_to_worker 来处理 over max db:s 的情况。
+        注意，空字符串分配在一个大缓冲区中以满足 hashcmp() 的实现。
       */
       const char all_db[NAME_LEN] = {0};
       if (!(ret_worker = map_db_to_worker(
@@ -2833,6 +2935,9 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
                   todo: optimize it. Although pure
                   rows- event load in insensitive to the flag value
                 */
+                /*
+                  todo：优化它。尽管纯行事件加载对标志值不敏感
+                */
                 true, ret_worker))) {
         llstr(rli->get_event_relay_log_pos(), llbuff);
         my_error(ER_MTS_CANT_PARALLEL, MYF(0), get_type_str(),
@@ -2841,6 +2946,7 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
         return ret_worker;
       }
       // all temporary tables are transferred from Coordinator in over-max case
+      // 在 over-max 情况下，所有临时表从协调器转移
       assert(mts_dbs.num != OVER_MAX_DBS_IN_EVENT_MTS ||
              !thd->temporary_tables);
       assert(!strcmp(
@@ -2860,41 +2966,63 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
     assert(i == mts_dbs.num || mts_dbs.num == OVER_MAX_DBS_IN_EVENT_MTS);
   } else {
     // a mini-group internal "regular" event
+    // 迷你组内部“常规”事件
     if (rli->last_assigned_worker) {
       ret_worker = rli->last_assigned_worker;
 
       assert(rli->curr_group_assigned_parts.size() > 0 || ret_worker->id == 0);
     } else  // int_, rand_, user_ var:s, load-data events
     {
-      if (!(get_type_code() == binary_log::INTVAR_EVENT ||
-            get_type_code() == binary_log::RAND_EVENT ||
-            get_type_code() == binary_log::USER_VAR_EVENT ||
-            get_type_code() == binary_log::BEGIN_LOAD_QUERY_EVENT ||
-            get_type_code() == binary_log::APPEND_BLOCK_EVENT ||
-            get_type_code() == binary_log::DELETE_FILE_EVENT ||
-            is_ignorable_event())) {
-        assert(!ret_worker);
+    // int_, rand_, user_ var:s, load-data events
+    // int_, rand_, user_ var:s, load-data 事件
+    /*
+       - 代码检查当前事件的类型是否为以下几种：
+     - `INTVAR_EVENT`：整数变量事件。
+     - `RAND_EVENT`：随机数种子事件。
+     - `USER_VAR_EVENT`：用户变量事件。
+     - `BEGIN_LOAD_QUERY_EVENT`：开始加载数据事件。
+     - `APPEND_BLOCK_EVENT`：追加数据块事件。
+     - `DELETE_FILE_EVENT`：删除文件事件。
+     - 其他可忽略的事件（`is_ignorable_event()`）。
 
-        llstr(rli->get_event_relay_log_pos(), llbuff);
-        my_error(ER_MTS_CANT_PARALLEL, MYF(0), get_type_str(),
-                 rli->get_event_relay_log_name(), llbuff,
-                 "the event is a part of a group that is unsupported in "
-                 "the parallel execution mode");
-
-        return ret_worker;
-      }
-      /*
-        In the logical clock scheduler any internal gets scheduled directly.
-        That is Int_var, @User_var and Rand bypass the deferred array.
-        Their association with relay-log physical coordinates is provided
-        by the same mechanism that applies to a regular event.
-      */
-      Slave_job_item job_item = {this, rli->get_event_relay_log_number(),
-                                 rli->get_event_start_pos()};
-      rli->curr_group_da.push_back(job_item);
-
+     为什么需要放入 `curr_group_da`：
+- **无法并行执行**：这些事件（如 `INTVAR_EVENT`、`RAND_EVENT`、`USER_VAR_EVENT` 等）通常与事务的上下文密切相关，无法在并行模式下独立执行。它们必须与所属的事务组一起执行，以确保数据的一致性。
+- **绕过延迟数组**：在逻辑时钟调度器中，这些事件被视为“内部事件”，它们直接调度，但需要与事务组的其他事件保持同步。因此，它们被放入 `curr_group_da` 队列中，等待事务组的其他事件完成后一起处理。
+    */
+    if (!(get_type_code() == binary_log::INTVAR_EVENT ||
+          get_type_code() == binary_log::RAND_EVENT ||
+          get_type_code() == binary_log::USER_VAR_EVENT ||
+          get_type_code() == binary_log::BEGIN_LOAD_QUERY_EVENT ||
+          get_type_code() == binary_log::APPEND_BLOCK_EVENT ||
+          get_type_code() == binary_log::DELETE_FILE_EVENT ||
+          is_ignorable_event())) {
       assert(!ret_worker);
+
+      llstr(rli->get_event_relay_log_pos(), llbuff);
+      my_error(ER_MTS_CANT_PARALLEL, MYF(0), get_type_str(),
+               rli->get_event_relay_log_name(), llbuff,
+               "the event is a part of a group that is unsupported in "
+               "the parallel execution mode");
+
       return ret_worker;
+    }
+    /*
+      In the logical clock scheduler any internal gets scheduled directly.
+      That is Int_var, @User_var and Rand bypass the deferred array.
+      Their association with relay-log physical coordinates is provided
+      by the same mechanism that applies to a regular event.
+    */
+    /*
+      在逻辑时钟调度器中，任何内部事件都直接调度。
+      即 Int_var、@User_var 和 Rand 绕过延迟数组。
+      它们与中继日志物理坐标的关联由适用于常规事件的相同机制提供。
+    */
+    Slave_job_item job_item = {this, rli->get_event_relay_log_number(),
+                               rli->get_event_start_pos()};
+    rli->curr_group_da.push_back(job_item);
+
+    assert(!ret_worker);
+    return ret_worker;
     }
   }
 
@@ -2905,6 +3033,10 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
     Preparing event physical coordinates info for Worker before any
     event got scheduled so when Worker error-stopped at the first
     event it would be aware of where exactly in the event stream.
+  */
+  /*
+    在任何事件被调度之前，为 Worker 准备事件物理坐标信息，
+    以便当 Worker 在第一个事件处错误停止时，它知道事件流中的确切位置。
   */
   if (!ret_worker->master_log_change_notified) {
     if (!ptr_group)
@@ -2920,6 +3052,7 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
   }
 
   /* Notify the worker about new FD */
+  // 通知 Worker 有关新 FD 的信息
   if (!ret_worker->fd_change_notified) {
     if (!ptr_group)
       ptr_group = gaq->get_job_group(rli->gaq->assigned_group_index);
@@ -2927,6 +3060,10 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
       Increment the usage counter on behalf of Worker.
       This avoids inadvertent FD deletion in a race case where Coordinator
       would install a next new FD before Worker has noticed the previous one.
+    */
+    /*
+      代表 Worker 增加使用计数器。
+      这避免了在竞争情况下无意中删除 FD，即协调器在 Worker 注意到前一个 FD 之前安装下一个新 FD。
     */
     ++rli->get_rli_description_event()->atomic_usage_counter;
     ptr_group->new_fd_event = rli->get_rli_description_event();
@@ -2946,6 +3083,13 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
           cause a problem, since the event and the following Query_log_event
           would both be assigned to dedicated worker 0.
         */
+        /*
+          当应用没有 Gtid_log_event 和 Anonymous_gtid_log_event 的旧二进制日志时，
+          多线程从库的逻辑仍然需要要求出现在 BEGIN...COMMIT 之外的事件
+          （例如 Query_log_event、User_var_log_event、Intvar_log_event 和 Rand_log_event）
+          被视为自己的事务。这只是代码中的一个技术细节，不会导致问题，
+          因为事件和随后的 Query_log_event 都将分配给专用 Worker 0。
+        */
         !rli->curr_group_seen_gtid))) {
     rli->mts_group_status = Relay_log_info::MTS_END_GROUP;
     if (rli->curr_group_isolated) set_mts_isolate_group();
@@ -2955,6 +3099,7 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
     assert(ret_worker != nullptr);
 
     // coordinator has ended buffering this group, update monitoring info
+    // 协调器已结束缓冲此组，更新监控信息
     if (rli->is_processing_trx()) {
       DBUG_EXECUTE_IF("rpl_ps_tables", {
         const char act[] =
@@ -2981,12 +3126,22 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
       However if the worker exits earlier reclaiming for both happens anyway at
       GAQ delete.
     */
+    /*
+      如果 Worker 尚未收到有关新中继日志或新检查点的通知，则执行以下两个块。
+      中继日志字符串由协调器释放，Worker 在检查点块中释放字符串。
+      但是，如果 Worker 提前退出，则在 GAQ 删除时仍会回收两者。
+    */
     if (!ret_worker->relay_log_change_notified) {
       /*
         Prior this event, C rotated the relay log to drop each
         Worker's notified flag. Now group terminating event initiates
         the new relay-log (where the current event is from) name
         delivery to Worker that will receive it in commit_positions().
+      */
+      /*
+        在此事件之前，C 旋转中继日志以删除每个 Worker 的通知标志。
+        现在，组终止事件启动新中继日志（当前事件来自的中继日志）名称的传递，
+        Worker 将在 commit_positions() 中接收它。
       */
       assert(ptr_group->group_relay_log_name == nullptr);
 
@@ -3025,6 +3180,11 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
       That concludes the memroot reset can't harm anything in SQL thread roles
       after Coordinator has finished its current scheduling.
     */
+    /*
+      协调器不应使用主内存根，但它也没有在其他地方重置，因此让我们以安全的方式进行。
+      主内存根也在 SQL 线程应用结束时重置，而协调器在这种情况下不会这样做。
+      这得出结论，在协调器完成当前调度后，内存根重置不会对 SQL 线程角色造成任何损害。
+    */
     thd->mem_root->ClearForReuse();
 
 #ifndef NDEBUG
@@ -3039,28 +3199,43 @@ int Log_event::apply_gtid_event(Relay_log_info *rli) {
   DBUG_TRACE;
 
   int error = 0;
+  // 如果当前事务组中没有事件，返回错误
   if (rli->curr_group_da.size() < 1) return 1;
 
+  // 获取当前事务组的第一个事件
   Log_event *ev = rli->curr_group_da[0].data;
+  // 断言事件类型为 GTID_LOG_EVENT 或 ANONYMOUS_GTID_LOG_EVENT
   assert(ev->get_type_code() == binary_log::GTID_LOG_EVENT ||
          ev->get_type_code() == binary_log::ANONYMOUS_GTID_LOG_EVENT);
 
+  // 应用 GTID 事件
   error = ev->do_apply_event(rli);
   /* Clean up */
+  // 清理事件
   delete ev;
+  // 清空当前事务组
   rli->curr_group_da.clear();
+  // 标记当前事务组未见过 GTID
   rli->curr_group_seen_gtid = false;
   /*
     Removes the job from the (G)lobal (A)ssigned (Q)ueue after
     applying it.
   */
+  /*
+    在应用后从全局分配队列（GAQ）中移除任务。
+  */
   assert(rli->gaq->get_length() > 0);
   Slave_job_group g = Slave_job_group();
+  // 从 GAQ 尾部移除任务
   rli->gaq->de_tail(&g);
   /*
     The rli->mts_groups_assigned is increased when adding the slave job
     generated for the gtid into the (G)lobal (A)ssigned (Q)ueue. So we
     decrease it here.
+  */
+  /*
+    当将生成的从库任务添加到全局分配队列（GAQ）时，rli->mts_groups_assigned 会增加。
+    因此，我们在这里减少它。
   */
   rli->mts_groups_assigned--;
 
@@ -3099,6 +3274,7 @@ int Log_event::apply_event(Relay_log_info *rli) {
 
   // 如果处于 MTS 恢复模式
   if (rli->is_mts_recovery()) {
+    // bitmap_is_set 检查当前事件是否在恢复位图中被标记为已处理。
     bool skip = bitmap_is_set(&rli->recovery_groups, rli->mts_recovery_index) &&
                 (get_mts_execution_mode(rli->mts_group_status ==
                                         Relay_log_info::MTS_IN_GROUP) ==
@@ -3114,6 +3290,11 @@ int Log_event::apply_event(Relay_log_info *rli) {
         if (starts_group() && get_type_code() == binary_log::QUERY_EVENT) {
           rli->curr_group_seen_begin = true;
         }
+        /*
+            如果事件执行成功（error == 0）并且事件是一个事务组的结束（ends_group()），
+            或者是一个 QUERY_EVENT 但没有显式的 BEGIN 语句（!rli->curr_group_seen_begin），
+            则调用 finished_processing() 完成事务处理，并重置 curr_group_seen_begin 为 false。
+        */
         if (error == 0 &&
             (ends_group() || (get_type_code() == binary_log::QUERY_EVENT &&
                               !rli->curr_group_seen_begin))) {
@@ -3126,6 +3307,14 @@ int Log_event::apply_event(Relay_log_info *rli) {
   }
 
   // 检查是否启用了并行执行模式
+  /*
+      如果以下任一条件为 true，则事件将以串行方式执行：
+      1. 全局行为。当前全局没有启用并行执行（!parallel）
+      2. 当前事件。当前事件的执行模式不是并行执行（actual_exec_mode != EVENT_EXEC_PARALLEL）。
+      不一致的原因：
+      1. 全局参数可以动态调整
+      2. 就算全局是并行，但是有些事务必须串行执行，比如DDL
+  */
   if (!(parallel = rli->is_parallel_exec()) ||
       ((actual_exec_mode = get_mts_execution_mode(
             rli->mts_group_status == Relay_log_info::MTS_IN_GROUP)) !=
@@ -3144,10 +3333,21 @@ int Log_event::apply_event(Relay_log_info *rli) {
          for terminal events to finish.
       */
 
+      // 当前事务不是异步事务
       if (actual_exec_mode != EVENT_EXEC_ASYNC) {
         /*
           该事件不会分割当前组，但确实是两个主库 binlog 之间的分隔符，
           因此需要工作线程同步。
+
+          在同步执行的情况下，如果当前事务组中有未完成的事件（rli->curr_group_da.size() > 0），
+          并且数据库是分区模式（is_mts_db_partitioned(rli)），并且事件类型不是 INCIDENT_EVENT，则需要工作线程进行同步。
+
+          在多线程复制中，分区模式允许不同的 Worker 并行处理不同分区（分区表）的事务，从而提高复制的并发性和性能。
+
+          INCIDENT_EVENT 是 MySQL 二进制日志中的一种特殊事件类型，
+          用于表示在主库上发生的某些异常情况（如主库崩溃、数据不一致等）。
+          当主库发生这些异常时，会生成一个 INCIDENT_EVENT 并写入二进制日志，
+          从库在复制过程中遇到这种事件时会采取相应的处理措施（如停止复制、记录错误等）。
         */
         /*
           this  event does not split the current group but is indeed
@@ -3181,6 +3381,7 @@ int Log_event::apply_event(Relay_log_info *rli) {
           goto err;
         }
 
+        // 主库异常，从库的优雅暂停
         if (get_type_code() == binary_log::INCIDENT_EVENT &&
             rli->curr_group_da.size() > 0 &&
             rli->current_mts_submode->get_type() ==
@@ -3196,10 +3397,18 @@ int Log_event::apply_event(Relay_log_info *rli) {
             incident event, it must withdraw delegated_job increased by
             the incident's GTID before waiting for workers to finish.
             So that it can exit from mta_checkpoint_routine.
+
+            在使用 MTS 逻辑时钟模式时，当协调器（coordinator）应用一个 INCIDENT_EVENT 事件时，
+            它必须在等待 Worker 完成之前撤回由该事件的 GTID 增加的 delegated_job。
+            这样，它才能从 mta_checkpoint_routine 中退出。
+
+            delegated_job：在 MTS 中，协调器分配给 Worker 的任务。
           */
           /*
             在 MTS 逻辑时钟模式下，当协调器应用一个事件时，
             必须在等待工作线程完成之前撤回分配的任务。
+            撤回分配任务：在多线程复制中，协调器在应用 INCIDENT_EVENT 事件时，
+            撤销之前分配给 Worker 的任务，以确保系统能够正确处理异常情况并退出检查点例程。
           */
           ((Mts_submode_logical_clock *)rli->current_mts_submode)
               ->withdraw_delegated_job();
@@ -3257,12 +3466,17 @@ int Log_event::apply_event(Relay_log_info *rli) {
     }
 
     int error = do_apply_event(rli); // 执行事件
+    // 检查当前是否正在处理事务。如果是，则进入事务处理逻辑
     if (rli->is_processing_trx()) {
       // needed to identify DDL's; uses the same logic as in get_slave_worker()
       // 检查是否是事务的开始或结束
+      // 如果当前事件是一个事务组的开始（starts_group()）并且是一个 QUERY_EVENT（查询事件），
+      // 则标记 curr_group_seen_begin 为 true，表示事务组已经开始。
       if (starts_group() && get_type_code() == binary_log::QUERY_EVENT) {
         rli->curr_group_seen_begin = true;
       }
+      // 如果事件执行成功（error == 0）并且事件是一个事务组的结束（ends_group()），
+      // 或者是一个 QUERY_EVENT 但没有显式的 BEGIN 语句（!rli->curr_group_seen_begin），则进入以下逻辑
       if (error == 0 &&
           (ends_group() || (get_type_code() == binary_log::QUERY_EVENT &&
                             !rli->curr_group_seen_begin))) {
@@ -3273,6 +3487,8 @@ int Log_event::apply_event(Relay_log_info *rli) {
           assert(opt_debug_sync_timeout > 0);
           assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
         };);
+        // 调用 finished_processing 函数完成事务处理
+        // 只是std::swap(processing_trx, last_processed_trx)交换了两个变量的值
         rli->finished_processing();
         rli->curr_group_seen_begin = false;
         DBUG_EXECUTE_IF("rpl_ps_tables", {
@@ -4456,8 +4672,11 @@ void Query_log_event::detach_temp_tables_worker(THD *thd_arg,
 /*
   Query_log_event::do_apply_event()
 */
+/*
+  Query_log_event::do_apply_event() 函数
+*/
 int Query_log_event::do_apply_event(Relay_log_info const *rli) {
-  return do_apply_event(rli, query, q_len);
+  return do_apply_event(rli, query, q_len);  // 调用另一个重载的 do_apply_event 函数，传入 rli、query 和 q_len 参数
 }
 
 /*
@@ -4520,6 +4739,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
     Query_log_event::do_apply_event()). Same for thd->db().str.  Thank
     you.
   */
+  // 同事：请不要在 MySQL 中释放 thd->catalog。这将导致错误，因为这里的 thd->catalog 是分配块的一部分，而不是整个分配块（参见 Query_log_event::do_apply_event()）。同样适用于 thd->db().str。谢谢。
 
   if (catalog_len) {
     LEX_CSTRING catalog_lex_cstr = {catalog, catalog_len};
@@ -4550,6 +4770,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
   /*
     Setting the character set and collation of the current database thd->db.
    */
+  // 设置当前数据库 thd->db 的字符集和排序规则。
   if (get_default_db_collation(thd, thd->db().str, &thd->db_charset)) {
     assert(thd->is_error() || thd->killed);
     rli->report(ERROR_LEVEL, thd->get_stmt_da()->mysql_errno(),
@@ -4571,6 +4792,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
     todo: such cleanup should not be specific to Query event and therefore
           is preferable at a common with other event pre-execution point
   */
+  // 待办事项：这种清理不应特定于 Query 事件，因此最好在其他事件预执行点进行。
   clear_all_errors(thd, const_cast<Relay_log_info *>(rli));
   thd->get_stmt_da()->reset_diagnostics_area();
   thd->get_stmt_da()->reset_statement_cond_count();
@@ -4581,6 +4803,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
       the terminal event of the current statement flagged with
       STMT_END_F got filtered out in ndb circular replication.
     */
+    // 清理最后一个语句上下文：当前语句的结束事件在 NDB 环形复制中被过滤掉。
     int error;
     char llbuff[22];
     if ((error =
@@ -4600,6 +4823,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
       future-change-proof addon, e.g if COMMIT handling will start checking
       invariants like IN_STMT flag must be off at committing the transaction.
     */
+    // 执行 rli->stmt_done() 逻辑的一部分，该部分不涉及组位置更改。这部分现在是冗余的，但它是未来更改的证明，例如，如果 COMMIT 处理开始检查事务提交时 IN_STMT 标志必须关闭的不变量。
     const_cast<Relay_log_info *>(rli)->inc_event_relay_log_pos();
     const_cast<Relay_log_info *>(rli)->clear_flag(Relay_log_info::IN_STMT);
   } else {
@@ -4644,6 +4868,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
           all bits of thd->variables.option_bits which are 1 in
           OPTIONS_WRITTEN_TO_BIN_LOG must take their value from flags2.
         */
+        // 所有在 OPTIONS_WRITTEN_TO_BIN_LOG 中为 1 的 thd->variables.option_bits 位必须从 flags2 中获取它们的值。
         thd->variables.option_bits =
             flags2 | (thd->variables.option_bits & ~OPTIONS_WRITTEN_TO_BIN_LOG);
       /*
@@ -4651,6 +4876,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
         Rotate_log_event which reset thd->variables.option_bits and sql_mode
         etc, so nothing to do.
       */
+      // 否则，我们在 3.23/4.0 的 binlog 中；我们之前收到了一个 Rotate_log_event，它重置了 thd->variables.option_bits 和 sql_mode 等，所以不需要做任何事情。
       /*
         We do not replicate MODE_NO_DIR_IN_CREATE. That is, if the master is a
         slave which runs with SQL_MODE=MODE_NO_DIR_IN_CREATE, this should not
@@ -4659,6 +4885,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
         MODE_NO_DIR_IN_CREATE on this machine; you don't want it to propagate
         elsewhere (you don't want all slaves to start ignoring the dirs).
       */
+      // 我们不复制 MODE_NO_DIR_IN_CREATE。也就是说，如果主服务器是一个运行 SQL_MODE=MODE_NO_DIR_IN_CREATE 的从服务器，这不应该强迫我们也忽略目录。想象一下，你有一组机器，其中一台有磁盘问题，因此你暂时需要在这台机器上使用 MODE_NO_DIR_IN_CREATE；你不希望它传播到其他地方（你不希望所有从服务器都开始忽略目录）。
       if (sql_mode_inited) {
         /*
           All the SQL_MODEs included in 0x1003ff00 were removed in 8.0.5.
@@ -4670,6 +4897,9 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
           (2) the upgrade-pre-check script warns when the bit is set, so we
           assume users have verified that it is safe to ignore the bit.
         */
+        // 0x1003ff00 中包含的所有 SQL_MODEs 在 8.0.5 中被移除。升级过程会清除这些位。因此，只有在从旧服务器复制时才能设置这些位。我们认为清除这些位是安全的，因为：
+        // (1) 除了 MAXDB 之外，所有这些位对复制的语句没有影响，而 MAXDB 的影响也很小；
+        // (2) 升级预检查脚本在设置该位时会发出警告，因此我们假设用户已经验证了忽略该位是安全的。
         if (sql_mode & ~(MODE_ALLOWED_MASK | MODE_IGNORED_MASK)) {
           my_error(ER_UNSUPPORTED_SQL_MODE, MYF(0),
                    sql_mode & ~(MODE_ALLOWED_MASK | MODE_IGNORED_MASK));
@@ -4684,6 +4914,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
         if (rli->cached_charset_compare(charset)) {
           const char *charset_p = charset;  // Avoid type-punning warning.
           /* Verify that we support the charsets found in the event. */
+          // 验证我们支持事件中找到的字符集。
           if (!(thd->variables.character_set_client =
                     get_charset(uint2korr(charset_p), MYF(MY_WME))) ||
               !(thd->variables.collation_connection =
@@ -4696,6 +4927,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
               stop with EE_UNKNOWN_CHARSET in compare_errors (unless set to
               ignore this error).
             */
+            // 我们用无意义的值（0）更新了 thd->variables。让我们将它们设置为安全的值（即避免崩溃），并且我们将在 compare_errors 中停止并返回 EE_UNKNOWN_CHARSET（除非设置为忽略此错误）。
             set_slave_thread_default_charset(thd, rli);
             goto compare_errors;
           }
@@ -4704,6 +4936,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
             We cannot ask for parsing a statement using a character set
             without state_maps (parser internal data).
           */
+          // 我们不能要求使用没有 state_maps（解析器内部数据）的字符集来解析语句。
           if (!thd->variables.character_set_client->state_maps) {
             rli->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                         ER_THD(thd, ER_SLAVE_FATAL_ERROR),
@@ -4722,6 +4955,8 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
             result. This should be acceptable now. This is a reminder
             to fix this if any refactoring happens here sometime.
           */
+          // 将 thd->query_string.cs 重置为新设置的值。
+          // 注意，这里有一个小缺陷。如果新字符集与旧字符集不同，并且在上述 thd->set_query() 之后和此 thd->set_query() 之前，另一个线程执行 "SHOW PROCESSLIST"，并且当前查询有一些非 ASCII 字符，那么另一个线程可能会在 PROCESSLIST 结果中看到一些 '?' 标记。这现在应该是可以接受的。这是一个提醒，如果将来在这里进行重构，请修复此问题。
           thd->set_query(query_arg, q_len_arg);
           thd->reset_query_for_display();
         }
@@ -4767,6 +5002,7 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
       } else
         // The transaction was replicated from a server with utf8mb4_general_ci
         // as default collation for utf8mb4 (versions 5.7-)
+        // 事务是从一个默认 utf8mb4 排序规则为 utf8mb4_general_ci 的服务器复制的（5.7- 版本）
         thd->variables.default_collation_for_utf8mb4 =
             &my_charset_utf8mb4_general_ci;
 
@@ -5525,10 +5761,18 @@ int Format_description_log_event::do_apply_event(Relay_log_info const *rli) {
     format of its binlog; in other words maybe it is not at its
     original place when it comes to us; we'll know this by checking
     log_pos ("artificial" events have log_pos == 0).
+
+    Format_description_log_event 通常表示一个新的 binlog 文件的开始。
+    如果从服务器在接收到这个事件时，发现当前线程有一个活动的事务，那么可以推断这个事务在主服务器上是不完整的（因为事务不会跨越多个 binlog 文件）。
+    由于主服务器在崩溃时会回滚未完成的事务，因此从服务器也会回滚该事务，并清理相关的上下文。
   */
+  // 由于一个事务永远不会跨越两个或更多的 binlog：
+  // 如果此时我们有一个活动的事务，主服务器在将事务写入二进制日志时死亡，即在将 binlog 缓存刷新到 binlog 时死亡。XA 保证主服务器已经回滚。因此我们回滚。
+  // 注意：此事件可能由主服务器发送，以通知我们其 binlog 的格式；换句话说，当它到达我们时，可能不在其原始位置；我们可以通过检查 log_pos 来知道这一点（“人工”事件的 log_pos == 0）。
   if (!thd->rli_fake && !is_artificial_event() && created &&
       thd->get_transaction()->is_active(Transaction_ctx::SESSION)) {
     /* This is not an error (XA is safe), just an information */
+    // 这不是一个错误（XA 是安全的），只是一个信息。
     rli->report(INFORMATION_LEVEL, 0,
                 "Rolling back unfinished transaction (no COMMIT "
                 "or ROLLBACK in relay log). A probable cause is that "
@@ -5538,6 +5782,8 @@ int Format_description_log_event::do_apply_event(Relay_log_info const *rli) {
   }
 
   /* If this event comes from ourself, there is no cleaning task to perform. */
+  // 如果此事件来自我们自己，则无需执行清理任务。
+  // 不同，表示这个事件是来自其他服务器（通常是主服务器）的事件，而不是当前服务器自己生成的事件。
   if (server_id != (uint32)::server_id) {
     if (created && !thd->variables.require_row_format) {
       ret = close_temporary_tables(thd);
@@ -5548,6 +5794,7 @@ int Format_description_log_event::do_apply_event(Relay_log_info const *rli) {
         as they may point to the "old" SQL slave thread in case of its
         restart.
       */
+      // 将所有临时表的线程引用设置为当前线程，因为它们可能指向“旧”的 SQL 从服务器线程（如果它重新启动）。
       TABLE *table;
       for (table = thd->temporary_tables; table; table = table->next)
         table->in_use = thd;
@@ -5556,6 +5803,7 @@ int Format_description_log_event::do_apply_event(Relay_log_info const *rli) {
 
   if (!ret) {
     /* Save the information describing this binlog */
+    // 保存描述此 binlog 的信息。
     ret = const_cast<Relay_log_info *>(rli)->set_rli_description_event(this);
   }
 
@@ -5987,26 +6235,33 @@ void Intvar_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
 
 /*
   Intvar_log_event::do_apply_event()
+  Intvar_log_event::do_apply_event() 函数
 */
 
 int Intvar_log_event::do_apply_event(Relay_log_info const *rli) {
   /*
     We are now in a statement until the associated query log event has
     been processed.
+    我们现在处于一个语句中，直到相关的查询日志事件被处理完毕。
    */
   const_cast<Relay_log_info *>(rli)->set_flag(Relay_log_info::IN_STMT);
+  // 设置 Relay_log_info 对象的 IN_STMT 标志，表示当前正在处理一个语句
 
   if (rli->deferred_events_collecting) return rli->deferred_events->add(this);
+  // 如果正在收集延迟事件，则将当前事件添加到延迟事件列表中并返回
 
   switch (type) {
     case LAST_INSERT_ID_EVENT:
       thd->first_successful_insert_id_in_prev_stmt = val;
+      // 如果是 LAST_INSERT_ID_EVENT 类型，设置上一个成功插入的 ID
       break;
     case INSERT_ID_EVENT:
       thd->force_one_auto_inc_interval(val);
+      // 如果是 INSERT_ID_EVENT 类型，强制设置一个自增间隔
       break;
   }
   return 0;
+  // 返回 0 表示成功
 }
 
 int Intvar_log_event::do_update_pos(Relay_log_info *rli) {
@@ -6076,18 +6331,29 @@ void Rand_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
 #endif /* !MYSQL_SERVER */
 
 #if defined(MYSQL_SERVER)
+/*
+  Rand_log_event::do_apply_event()
+  Rand_log_event::do_apply_event() 函数
+*/
+
 int Rand_log_event::do_apply_event(Relay_log_info const *rli) {
   /*
     We are now in a statement until the associated query log event has
     been processed.
+    我们现在处于一个语句中，直到相关的查询日志事件被处理完毕。
    */
   const_cast<Relay_log_info *>(rli)->set_flag(Relay_log_info::IN_STMT);
+  // 设置 Relay_log_info 对象的 IN_STMT 标志，表示当前正在处理一个语句
 
   if (rli->deferred_events_collecting) return rli->deferred_events->add(this);
+  // 如果正在收集延迟事件，则将当前事件添加到延迟事件列表中并返回
 
   thd->rand.seed1 = (ulong)seed1;
+  // 设置随机数生成器的第一个种子值
   thd->rand.seed2 = (ulong)seed2;
+  // 设置随机数生成器的第二个种子值
   return 0;
+  // 返回 0 表示成功
 }
 
 int Rand_log_event::do_update_pos(Relay_log_info *rli) {
@@ -6183,17 +6449,23 @@ void Xid_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
    @return false  as success and
            true   as an error
 */
+/**
+   该方法结合了几个提交操作，使其在单线程和多线程情况下都可用。
 
+   @param  thd_arg 指向 THD 句柄的指针
+   @return false 表示成功，
+           true  表示错误
+*/
 bool Xid_log_event::do_commit(THD *thd_arg) {
   DBUG_EXECUTE_IF("dbug.reached_commit",
-                  { DBUG_SET("+d,dbug.enabled_commit"); });
-  bool error = trans_commit(thd_arg); /* Automatically rolls back on error. */
+                  { DBUG_SET("+d,dbug.enabled_commit"); });  // 调试：在提交时启用调试
+  bool error = trans_commit(thd_arg); /* Automatically rolls back on error. */  // 提交事务，出错时自动回滚
   DBUG_EXECUTE_IF("crash_after_apply",
                   sql_print_information("Crashing crash_after_apply.");
-                  DBUG_SUICIDE(););
-  thd_arg->mdl_context.release_transactional_locks();
+                  DBUG_SUICIDE(););  // 调试：在应用后崩溃
+  thd_arg->mdl_context.release_transactional_locks();  // 释放事务锁
 
-  error |= (mysql_bin_log.gtid_end_transaction(thd_arg) != 0);
+  error |= (mysql_bin_log.gtid_end_transaction(thd_arg) != 0);  // 结束 GTID 事务
 
   /*
     The parser executing a SQLCOM_COMMIT or SQLCOM_ROLLBACK will reset the
@@ -6208,14 +6480,24 @@ bool Xid_log_event::do_commit(THD *thd_arg) {
     it needs to be restored to the session default value once the current
     transaction has been committed.
   */
-  trans_reset_one_shot_chistics(thd);
+  /*
+    解析器在执行 SQLCOM_COMMIT 或 SQLCOM_ROLLBACK 时，会在语句完成事务时重置事务隔离级别和访问模式。
+
+    对于复制的工作负载，当处理纯事务工作负载时，不会有 QUERY(COMMIT) 完成事务，而是 Xid_log_event。
+
+    因此，如果从库应用器更改了当前事务隔离级别，则需要在当前事务提交后将其恢复为会话默认值。
+  */
+  trans_reset_one_shot_chistics(thd);  // 重置事务特性
 
   /*
     Increment the global status commit count variable
   */
-  if (!error) thd_arg->status_var.com_stat[SQLCOM_COMMIT]++;
+  /*
+    增加全局状态提交计数变量
+  */
+  if (!error) thd_arg->status_var.com_stat[SQLCOM_COMMIT]++;  // 如果没有错误，增加提交计数
 
-  return error;
+  return error;  // 返回错误状态
 }
 
 /**
@@ -6225,36 +6507,42 @@ bool Xid_log_event::do_commit(THD *thd_arg) {
 
    @return zero as success or non-zero as an error
 */
-int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
-  DBUG_TRACE;
-  int error = 0;
-  bool skipped_commit_pos = true;
+/**
+   Worker 提交 Xid 事务，并在其事务信息表的情况下，将当前组标记为在协调器的 Group Assigned Queue 中完成。
 
-  lex_start(thd);
-  mysql_reset_thd_for_next_command(thd);
-  Slave_committed_queue *coordinator_gaq = w->c_rli->gaq;
+   @return 0 表示成功，非零表示错误
+*/
+int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
+  DBUG_TRACE;  // 调试跟踪
+  int error = 0;  // 错误码，初始化为 0
+  bool skipped_commit_pos = true;  // 是否跳过了提交位置更新
+
+  lex_start(thd);  // 初始化 THD 的 LEX 结构
+  mysql_reset_thd_for_next_command(thd);  // 重置 THD 以准备下一个命令
+  Slave_committed_queue *coordinator_gaq = w->c_rli->gaq;  // 获取协调器的 GAQ
 
   /* For a slave Xid_log_event is COMMIT */
+  /* 对于从库，Xid_log_event 是 COMMIT */
   query_logger.general_log_print(thd, COM_QUERY,
-                                 "COMMIT /* implicit, from Xid_log_event */");
+                                 "COMMIT /* implicit, from Xid_log_event */");  // 在通用日志中打印 COMMIT
 
   DBUG_PRINT(
       "mts",
       ("do_apply group master %s %llu  group relay %s %llu event %s %llu.",
        w->get_group_master_log_name(), w->get_group_master_log_pos(),
        w->get_group_relay_log_name(), w->get_group_relay_log_pos(),
-       w->get_event_relay_log_name(), w->get_event_relay_log_pos()));
+       w->get_event_relay_log_name(), w->get_event_relay_log_pos()));  // 打印调试信息
 
   DBUG_EXECUTE_IF("crash_before_update_pos",
                   sql_print_information("Crashing crash_before_update_pos.");
-                  DBUG_SUICIDE(););
+                  DBUG_SUICIDE(););  // 调试：在更新位置前崩溃
 
   DBUG_EXECUTE_IF("simulate_commit_failure", {
-    thd->get_transaction()->xid_state()->set_state(XID_STATE::XA_IDLE);
+    thd->get_transaction()->xid_state()->set_state(XID_STATE::XA_IDLE);  // 调试：模拟提交失败
   });
 
-  ulong gaq_idx = mts_group_idx;
-  Slave_job_group *ptr_group = coordinator_gaq->get_job_group(gaq_idx);
+  ulong gaq_idx = mts_group_idx;  // 获取 GAQ 索引
+  Slave_job_group *ptr_group = coordinator_gaq->get_job_group(gaq_idx);  // 获取任务组
 
   if (!thd->get_transaction()->xid_state()->check_in_xa(false) &&
       w->is_transactional()) {
@@ -6265,9 +6553,13 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
       todo: the flag won't be need upon the full xa crash-safety bug76233
             gets fixed.
     */
-    skipped_commit_pos = false;
-    if ((error = w->commit_positions(this, ptr_group, w->is_transactional())))
-      goto err;
+    /*
+      常规（非 XA）事务在提交主事务时更新事务信息表。否则，设置本地标志并在 do_commit 后更新信息表。
+      todo: 当完整的 xa 崩溃安全性 bug76233 修复后，此标志将不再需要。
+    */
+    skipped_commit_pos = false;  // 标记未跳过提交位置更新
+    if ((error = w->commit_positions(this, ptr_group, w->is_transactional())))  // 提交位置
+      goto err;  // 如果出错，跳转到错误处理
   }
 
   DBUG_PRINT(
@@ -6275,45 +6567,62 @@ int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
       ("do_apply group master %s %llu  group relay %s %llu event %s %llu.",
        w->get_group_master_log_name(), w->get_group_master_log_pos(),
        w->get_group_relay_log_name(), w->get_group_relay_log_pos(),
-       w->get_event_relay_log_name(), w->get_event_relay_log_pos()));
+       w->get_event_relay_log_name(), w->get_event_relay_log_pos()));  // 打印调试信息
 
   DBUG_EXECUTE_IF(
       "crash_after_update_pos_before_apply",
       sql_print_information("Crashing crash_after_update_pos_before_apply.");
-      DBUG_SUICIDE(););
+      DBUG_SUICIDE(););  // 调试：在更新位置后但在应用前崩溃
 
-  error = do_commit(thd);
+  error = do_commit(thd);  // 执行提交
   if (error) {
-    if (!skipped_commit_pos) w->rollback_positions(ptr_group);
+    if (!skipped_commit_pos) w->rollback_positions(ptr_group);  // 如果提交失败且未跳过提交位置更新，则回滚位置
   } else {
     DBUG_EXECUTE_IF(
         "crash_after_commit_before_update_pos",
         sql_print_information("Crashing "
                               "crash_after_commit_before_update_pos.");
-        DBUG_SUICIDE(););
+        DBUG_SUICIDE(););  // 调试：在提交后但在更新位置前崩溃
     if (skipped_commit_pos)
-      error = w->commit_positions(this, ptr_group, w->is_transactional());
+      error = w->commit_positions(this, ptr_group, w->is_transactional());  // 如果跳过了提交位置更新，则现在提交位置
   }
 err:
-  return error;
+  return error;  // 返回错误码
 }
 
+/**
+   处理XID应用日志事件（事务提交事件）的逻辑。
+   该函数在从库应用XID事件时调用，用于提交事务并更新复制位置。
+   This function applies the Xid log event (transaction commit event) on the slave,
+   committing the transaction and updating replication positions.
+
+   @param rli  Relay_log_info指针，包含复制上下文信息
+               Pointer to Relay_log_info containing replication context.
+
+   @return     返回操作状态：
+               Returns operation status:
+               - 0 成功 (success)
+               - 非零 错误码 (error code)
+*/
 int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪宏
   int error = 0;
-  char saved_group_master_log_name[FN_REFLEN];
-  char saved_group_relay_log_name[FN_REFLEN];
-  volatile my_off_t saved_group_master_log_pos;
-  volatile my_off_t saved_group_relay_log_pos;
+  char saved_group_master_log_name[FN_REFLEN];  // 保存主库日志文件名
+  char saved_group_relay_log_name[FN_REFLEN];   // 保存中继日志文件名
+  volatile my_off_t saved_group_master_log_pos; // 保存主库日志位置
+  volatile my_off_t saved_group_relay_log_pos;  // 保存中继日志位置
 
-  char new_group_master_log_name[FN_REFLEN];
-  char new_group_relay_log_name[FN_REFLEN];
-  volatile my_off_t new_group_master_log_pos;
-  volatile my_off_t new_group_relay_log_pos;
+  char new_group_master_log_name[FN_REFLEN];    // 新主库日志文件名
+  char new_group_relay_log_name[FN_REFLEN];     // 新中继日志文件名
+  volatile my_off_t new_group_master_log_pos;   // 新主库日志位置
+  volatile my_off_t new_group_relay_log_pos;    // 新中继日志位置
 
-  lex_start(thd);
-  mysql_reset_thd_for_next_command(thd);
+  lex_start(thd);  // 初始化THD的LEX结构
+  mysql_reset_thd_for_next_command(thd);  // 重置THD状态
   /*
+    如果最后一个语句更新了非事务表并被作为单独事务写入二进制日志（由于binlog_format=row
+    或binlog_direct_non_transactional_updates=1），可能需要在此释放匿名GTID所有权。
+    因此我们需要重新获取匿名所有权。
     Anonymous GTID ownership may be released here if the last
     statement before XID updated a non-transactional table and was
     written to the binary log as a separate transaction (either
@@ -6321,27 +6630,28 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
     binlog_direct_non_transactional_updates=1).  So we need to
     re-acquire anonymous ownership.
   */
-  gtid_reacquire_ownership_if_anonymous(thd);
-  Relay_log_info *rli_ptr = const_cast<Relay_log_info *>(rli);
+  gtid_reacquire_ownership_if_anonymous(thd);  // 重新获取匿名GTID所有权
+  Relay_log_info *rli_ptr = const_cast<Relay_log_info *>(rli);  // 去除const限定
 
-  /* For a slave Xid_log_event is COMMIT */
+  /* 对于从库，Xid_log_event表示COMMIT */
   query_logger.general_log_print(thd, COM_QUERY,
-                                 "COMMIT /* implicit, from Xid_log_event */");
+                                 "COMMIT /* implicit, from Xid_log_event */");  // 记录通用日志
 
-  mysql_mutex_lock(&rli_ptr->data_lock);
+  mysql_mutex_lock(&rli_ptr->data_lock);  // 加锁保护数据
 
   /*
+    保存rli位置。我们需要在提交前临时重置这些位置。
     Save the rli positions. We need them to temporarily reset the positions
     just before the commit.
    */
   strmake(saved_group_master_log_name, rli_ptr->get_group_master_log_name(),
-          FN_REFLEN - 1);
-  saved_group_master_log_pos = rli_ptr->get_group_master_log_pos();
+          FN_REFLEN - 1);  // 保存主库日志名
+  saved_group_master_log_pos = rli_ptr->get_group_master_log_pos();  // 保存主库位置
   strmake(saved_group_relay_log_name, rli_ptr->get_group_relay_log_name(),
-          FN_REFLEN - 1);
-  saved_group_relay_log_pos = rli_ptr->get_group_relay_log_pos();
+          FN_REFLEN - 1);  // 保存中继日志名
+  saved_group_relay_log_pos = rli_ptr->get_group_relay_log_pos();  // 保存中继位置
 
-  DBUG_PRINT(
+  DBUG_PRINT(  // 调试打印位置信息
       "info",
       ("do_apply group master %s %llu  group relay %s %llu event %s %llu\n",
        rli_ptr->get_group_master_log_name(),
@@ -6349,35 +6659,39 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
        rli_ptr->get_group_relay_log_pos(), rli_ptr->get_event_relay_log_name(),
        rli_ptr->get_event_relay_log_pos()));
 
-  DBUG_EXECUTE_IF("crash_before_update_pos",
+  DBUG_EXECUTE_IF("crash_before_update_pos",  // 调试注入崩溃点
                   sql_print_information("Crashing crash_before_update_pos.");
                   DBUG_SUICIDE(););
 
   /*
+    我们需要在这里更新位置信息以保证事务性。
     We need to update the positions in here to make it transactional.
   */
-  rli_ptr->inc_event_relay_log_pos();
-  rli_ptr->set_group_relay_log_pos(rli_ptr->get_event_relay_log_pos());
-  rli_ptr->set_group_relay_log_name(rli_ptr->get_event_relay_log_name());
+  rli_ptr->inc_event_relay_log_pos();  // 增加事件中继日志位置
+  rli_ptr->set_group_relay_log_pos(rli_ptr->get_event_relay_log_pos());  // 设置组中继位置
+  rli_ptr->set_group_relay_log_name(rli_ptr->get_event_relay_log_name());  // 设置组中继名
 
-  if (common_header->log_pos)  // 3.23 binlogs don't have log_posx
-    rli_ptr->set_group_master_log_pos(common_header->log_pos);
+  if (common_header->log_pos)  // 3.23版本的binlog没有log_pos
+    rli_ptr->set_group_master_log_pos(common_header->log_pos);  // 设置主库位置
 
-  const bool already_logged_transaction = is_already_logged_transaction(thd);
+  const bool already_logged_transaction = is_already_logged_transaction(thd);  // 检查是否已记录
   /*
+    如果rli存储库是事务性的，表示复制是崩溃安全的。
+    位置信息会在提交前写入事务表，并在提交时永久化。
+    XA事务实际上不会提交，因此需要延迟其flush_info()。
     rli repository being transactional means replication is crash safe.
     Positions are written into transactional tables ahead of commit and the
     changes are made permanent during commit.
     XA transactional does not actually commit so has to defer its flush_info().
    */
-  if (!thd->get_transaction()->xid_state()->check_in_xa(false) &&
-      rli_ptr->is_transactional() && !already_logged_transaction) {
+  if (!thd->get_transaction()->xid_state()->check_in_xa(false) &&  // 非XA事务
+      rli_ptr->is_transactional() && !already_logged_transaction) {  // 事务性且未记录
     if ((error =
-             rli_ptr->flush_info(Relay_log_info::RLI_FLUSH_IGNORE_SYNC_OPT)))
+             rli_ptr->flush_info(Relay_log_info::RLI_FLUSH_IGNORE_SYNC_OPT)))  // 刷新信息
       goto err;
   }
 
-  DBUG_PRINT(
+  DBUG_PRINT(  // 再次打印位置信息
       "info",
       ("do_apply group master %s %llu  group relay %s %llu event %s %llu\n",
        rli_ptr->get_group_master_log_name(),
@@ -6385,40 +6699,45 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
        rli_ptr->get_group_relay_log_pos(), rli_ptr->get_event_relay_log_name(),
        rli_ptr->get_event_relay_log_pos()));
 
-  DBUG_EXECUTE_IF(
+  DBUG_EXECUTE_IF(  // 调试注入崩溃点
       "crash_after_update_pos_before_apply",
       sql_print_information("Crashing crash_after_update_pos_before_apply.");
       DBUG_SUICIDE(););
 
   /**
+    提交操作期望全局事务状态变量'xa_state'设置为'XA_NOTR'。
+    为了模拟提交失败，我们将'xa_state'设置为'XA_IDLE'，
+    使提交报告'ER_XAER_RMFAIL'错误。
     Commit operation expects the global transaction state variable 'xa_state'to
     be set to 'XA_NOTR'. In order to simulate commit failure we set
     the 'xa_state' to 'XA_IDLE' so that the commit reports 'ER_XAER_RMFAIL'
     error.
    */
-  DBUG_EXECUTE_IF("simulate_commit_failure", {
+  DBUG_EXECUTE_IF("simulate_commit_failure", {  // 调试模拟提交失败
     thd->get_transaction()->xid_state()->set_state(XID_STATE::XA_IDLE);
   });
 
   /*
+    保存新的rli位置。这些位置将在提交操作成功完成后设置回group*位置。
     Save the new rli positions. These positions will be set back to group*
     positions on successful completion of the commit operation.
    */
   strmake(new_group_master_log_name, rli_ptr->get_group_master_log_name(),
-          FN_REFLEN - 1);
-  new_group_master_log_pos = rli_ptr->get_group_master_log_pos();
+          FN_REFLEN - 1);  // 保存新主库名
+  new_group_master_log_pos = rli_ptr->get_group_master_log_pos();  // 保存新主库位置
   strmake(new_group_relay_log_name, rli_ptr->get_group_relay_log_name(),
-          FN_REFLEN - 1);
-  new_group_relay_log_pos = rli_ptr->get_group_relay_log_pos();
+          FN_REFLEN - 1);  // 保存新中继名
+  new_group_relay_log_pos = rli_ptr->get_group_relay_log_pos();  // 保存新中继位置
   /*
+    在提交前回滚内存中的位置。位置值仅在提交操作成功时重置为新值。
     Rollback positions in memory just before commit. Position values will be
     reset to their new values only on successful commit operation.
    */
-  rli_ptr->set_group_master_log_name(saved_group_master_log_name);
-  rli_ptr->set_group_master_log_pos(saved_group_master_log_pos);
-  rli_ptr->notify_group_master_log_name_update();
-  rli_ptr->set_group_relay_log_name(saved_group_relay_log_name);
-  rli_ptr->set_group_relay_log_pos(saved_group_relay_log_pos);
+  rli_ptr->set_group_master_log_name(saved_group_master_log_name);  // 回滚主库名
+  rli_ptr->set_group_master_log_pos(saved_group_master_log_pos);  // 回滚主库位置
+  rli_ptr->notify_group_master_log_name_update();  // 通知主库名更新
+  rli_ptr->set_group_relay_log_name(saved_group_relay_log_name);  // 回滚中继名
+  rli_ptr->set_group_relay_log_pos(saved_group_relay_log_pos);  // 回滚中继位置
 
   DBUG_PRINT("info", ("Rolling back to group master %s %llu  group relay %s"
                       " %llu\n",
@@ -6426,25 +6745,25 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
                       rli_ptr->get_group_master_log_pos(),
                       rli_ptr->get_group_relay_log_name(),
                       rli_ptr->get_group_relay_log_pos()));
-  mysql_mutex_unlock(&rli_ptr->data_lock);
-  error = do_commit(thd);
-  mysql_mutex_lock(&rli_ptr->data_lock);
-  if (error) {
+  mysql_mutex_unlock(&rli_ptr->data_lock);  // 解锁
+  error = do_commit(thd);  // 执行提交
+  mysql_mutex_lock(&rli_ptr->data_lock);  // 重新加锁
+  if (error) {  // 提交失败
     rli->report(ERROR_LEVEL, thd->get_stmt_da()->mysql_errno(),
                 "Error in Xid_log_event: Commit could not be completed, '%s'",
-                thd->get_stmt_da()->message_text());
-  } else {
-    DBUG_EXECUTE_IF(
+                thd->get_stmt_da()->message_text());  // 报告错误
+  } else {  // 提交成功
+    DBUG_EXECUTE_IF(  // 调试注入崩溃点
         "crash_after_commit_before_update_pos",
         sql_print_information("Crashing "
                               "crash_after_commit_before_update_pos.");
         DBUG_SUICIDE(););
-    /* Update positions on successful commit */
-    rli_ptr->set_group_master_log_name(new_group_master_log_name);
-    rli_ptr->set_group_master_log_pos(new_group_master_log_pos);
-    rli_ptr->notify_group_master_log_name_update();
-    rli_ptr->set_group_relay_log_name(new_group_relay_log_name);
-    rli_ptr->set_group_relay_log_pos(new_group_relay_log_pos);
+    /* 提交成功后更新位置 */
+    rli_ptr->set_group_master_log_name(new_group_master_log_name);  // 更新主库名
+    rli_ptr->set_group_master_log_pos(new_group_master_log_pos);  // 更新主库位置
+    rli_ptr->notify_group_master_log_name_update();  // 通知主库名更新
+    rli_ptr->set_group_relay_log_name(new_group_relay_log_name);  // 更新中继名
+    rli_ptr->set_group_relay_log_pos(new_group_relay_log_pos);  // 更新中继位置
 
     DBUG_PRINT("info", ("Updating positions on succesful commit to group master"
                         " %s %llu  group relay %s %llu\n",
@@ -6454,21 +6773,23 @@ int Xid_apply_log_event::do_apply_event(Relay_log_info const *rli) {
                         rli_ptr->get_group_relay_log_pos()));
 
     /*
+      对于事务性存储库，位置信息在提交前刷新。
+      而对于非事务性rli存储库，位置信息仅在提交成功时刷新。
       For transactional repository the positions are flushed ahead of commit.
       Where as for non transactional rli repository the positions are flushed
       only on successful commit.
      */
-    if (!rli_ptr->is_transactional() && !already_logged_transaction)
-      rli_ptr->flush_info(Relay_log_info::RLI_FLUSH_NO_OPTION);
+    if (!rli_ptr->is_transactional() && !already_logged_transaction)  // 非事务性且未记录
+      rli_ptr->flush_info(Relay_log_info::RLI_FLUSH_NO_OPTION);  // 刷新信息
   }
 err:
-  // This is Bug#24588741 fix:
-  if (rli_ptr->is_group_master_log_pos_invalid)
-    rli_ptr->is_group_master_log_pos_invalid = false;
-  mysql_cond_broadcast(&rli_ptr->data_cond);
-  mysql_mutex_unlock(&rli_ptr->data_lock);
+  // 这是Bug#24588741的修复：
+  if (rli_ptr->is_group_master_log_pos_invalid)  // 检查位置是否无效
+    rli_ptr->is_group_master_log_pos_invalid = false;  // 重置无效标志
+  mysql_cond_broadcast(&rli_ptr->data_cond);  // 广播条件变量
+  mysql_mutex_unlock(&rli_ptr->data_lock);  // 解锁
 
-  return error;
+  return error;  // 返回错误状态
 }
 
 Log_event::enum_skip_reason Xid_apply_log_event::do_shall_skip(
@@ -6555,45 +6876,55 @@ void XA_prepare_log_event::print(FILE *,
   @return false  as success and
           true   as an error
 */
+/**
+  与 Xid_log_event::do_commit 不同，它执行 XA prepare（而不是提交）。
+  当事件的成员 @c one_phase 设置为 true 时，它还可以在一阶段提交。
 
+  @param  thd_arg  指向 THD 句柄的指针
+  @return false 表示成功，
+          true  表示错误
+*/
 bool XA_prepare_log_event::do_commit(THD *thd_arg) {
-  enum_gtid_statement_status state = gtid_pre_statement_checks(thd_arg);
+  enum_gtid_statement_status state = gtid_pre_statement_checks(thd_arg);  // 执行 GTID 预语句检查
   if (state == GTID_STATEMENT_EXECUTE) {
-    if (gtid_pre_statement_post_implicit_commit_checks(thd_arg))
-      state = GTID_STATEMENT_CANCEL;
+    if (gtid_pre_statement_post_implicit_commit_checks(thd_arg))  // 执行 GTID 预语句后隐式提交检查
+      state = GTID_STATEMENT_CANCEL;  // 如果检查失败，设置为取消状态
   }
   if (state == GTID_STATEMENT_CANCEL) {
-    uint error = thd_arg->get_stmt_da()->mysql_errno();
-    assert(error != 0);
+    uint error = thd_arg->get_stmt_da()->mysql_errno();  // 获取错误码
+    assert(error != 0);  // 断言错误码不为 0
     thd_arg->rli_slave->report(ERROR_LEVEL, error,
                                "Error executing XA PREPARE event: '%s'",
-                               thd_arg->get_stmt_da()->message_text());
-    thd_arg->is_slave_error = true;
-    return true;
+                               thd_arg->get_stmt_da()->message_text());  // 报告错误
+    thd_arg->is_slave_error = true;  // 标记从库错误
+    return true;  // 返回错误
   } else if (state == GTID_STATEMENT_SKIP)
-    return false;
+    return false;  // 如果状态为跳过，则返回成功
 
-  bool error = false;
+  bool error = false;  // 错误标志
   xid_t xid;
   xid.set(my_xid.formatID, my_xid.data, my_xid.gtrid_length,
-          my_xid.data + my_xid.gtrid_length, my_xid.bqual_length);
+          my_xid.data + my_xid.gtrid_length, my_xid.bqual_length);  // 设置 XID
   if (!one_phase) {
     /*
       This is XA-prepare branch.
     */
-    thd_arg->lex->sql_command = SQLCOM_XA_PREPARE;
-    thd_arg->lex->m_sql_cmd = new (thd_arg->mem_root) Sql_cmd_xa_prepare(&xid);
-    error = thd_arg->lex->m_sql_cmd->execute(thd_arg);
+    /*
+      这是 XA-prepare 分支。
+    */
+    thd_arg->lex->sql_command = SQLCOM_XA_PREPARE;  // 设置 SQL 命令为 XA PREPARE
+    thd_arg->lex->m_sql_cmd = new (thd_arg->mem_root) Sql_cmd_xa_prepare(&xid);  // 创建 XA PREPARE 命令
+    error = thd_arg->lex->m_sql_cmd->execute(thd_arg);  // 执行 XA PREPARE 命令
   } else {
-    thd_arg->lex->sql_command = SQLCOM_XA_COMMIT;
+    thd_arg->lex->sql_command = SQLCOM_XA_COMMIT;  // 设置 SQL 命令为 XA COMMIT
     thd_arg->lex->m_sql_cmd =
-        new (thd_arg->mem_root) Sql_cmd_xa_commit(&xid, XA_ONE_PHASE);
-    error = thd_arg->lex->m_sql_cmd->execute(thd_arg);
+        new (thd_arg->mem_root) Sql_cmd_xa_commit(&xid, XA_ONE_PHASE);  // 创建 XA COMMIT 命令
+    error = thd_arg->lex->m_sql_cmd->execute(thd_arg);  // 执行 XA COMMIT 命令
   }
 
-  if (!error) error = mysql_bin_log.gtid_end_transaction(thd_arg);
+  if (!error) error = mysql_bin_log.gtid_end_transaction(thd_arg);  // 如果没有错误，结束 GTID 事务
 
-  return error;
+  return error;  // 返回错误标志
 }
 
 /**************************************************************************
@@ -11011,27 +11342,44 @@ static enum_tbl_map_status check_table_map(Relay_log_info const *rli,
   return res;
 }
 
+/**
+   处理表映射日志事件（Table_map_log_event）的应用逻辑。
+   该函数在从库应用二进制日志事件时调用，用于映射表结构信息。
+   This function is called to apply a table map event on the slave.
+   It maps the table structure information from the master to the slave.
+
+   @param rli  Relay_log_info指针，包含复制上下文信息
+               Pointer to the Relay_log_info structure containing replication context.
+
+   @return     返回操作状态：
+               Returns operation status:
+               - 0 成功 (success)
+               - 非零 错误码 (error code)
+*/
 int Table_map_log_event::do_apply_event(Relay_log_info const *rli) {
-  RPL_Table_ref *table_list;
-  char *db_mem, *tname_mem;
+  RPL_Table_ref *table_list;  // 表引用结构指针
+  char *db_mem, *tname_mem;   // 数据库名和表名内存缓冲区
   const char *ptr;
   size_t dummy_len;
   void *memory;
-  DBUG_TRACE;
-  assert(rli->info_thd == thd);
+  DBUG_TRACE;  // 调试跟踪宏
+  assert(rli->info_thd == thd);  // 断言线程一致性
 
   /* Step the query id to mark what columns that are actually used. */
   thd->set_query_id(next_query_id());
 
+  // 分配内存用于表引用、数据库名和表名
   if (!(memory =
             my_multi_malloc(key_memory_log_event, MYF(MY_WME), &table_list,
                             sizeof(RPL_Table_ref), &db_mem, (uint)NAME_LEN + 1,
                             &tname_mem, (uint)NAME_LEN + 1, NullS)))
-    return HA_ERR_OUT_OF_MEM;
+    return HA_ERR_OUT_OF_MEM;  // 内存分配失败
 
+  // 复制数据库名和表名到缓冲区
   my_stpcpy(db_mem, m_dbnam.c_str());
   my_stpcpy(tname_mem, m_tblnam.c_str());
 
+  // 如果需要，转换为小写
   if (lower_case_table_names) {
     my_casedn_str(system_charset_info, db_mem);
     my_casedn_str(system_charset_info, tname_mem);
@@ -11041,21 +11389,24 @@ int Table_map_log_event::do_apply_event(Relay_log_info const *rli) {
   if (rli->rpl_filter != nullptr &&
       ((ptr = rli->rpl_filter->get_rewrite_db(db_mem, &dummy_len)) != db_mem)) {
     rli->rpl_filter->get_rewrite_db_statistics()->increase_counter();
-    my_stpcpy(db_mem, ptr);
+    my_stpcpy(db_mem, ptr);  // 使用重写后的数据库名
   }
 
+  // 在分配的内存中构造RPL_Table_ref对象
   new (table_list) RPL_Table_ref(db_mem, strlen(db_mem), tname_mem,
                                  strlen(tname_mem), tname_mem, TL_WRITE);
 
+  // 设置表ID（调试模式下可能注入特殊值）
   table_list->table_id = DBUG_EVALUATE_IF(
       "inject_tblmap_same_id_maps_diff_table", 0, m_table_id.id());
-  table_list->updating = true;
-  table_list->required_type = dd::enum_table_type::BASE_TABLE;
+  table_list->updating = true;  // 标记为更新操作
+  table_list->required_type = dd::enum_table_type::BASE_TABLE;  // 基础表类型
   DBUG_PRINT("debug", ("table: %s is mapped to %llu", table_list->table_name,
-                       table_list->table_id.id()));
+                       table_list->table_id.id()));  // 调试打印表映射信息
 
+  // 检查表映射状态
   enum_tbl_map_status tblmap_status = check_table_map(rli, table_list);
-  if (tblmap_status == OK_TO_PROCESS) {
+  if (tblmap_status == OK_TO_PROCESS) {  // 可以正常处理
     assert(thd->lex->query_tables != table_list);
 
     /*
@@ -11069,11 +11420,11 @@ int Table_map_log_event::do_apply_event(Relay_log_info const *rli) {
     */
     new (&table_list->m_tabledef)
         table_def(m_coltype, m_colcnt, m_field_metadata, m_field_metadata_size,
-                  m_null_bits, m_flags);
+                  m_null_bits, m_flags);  // 初始化表定义
 
-    table_list->m_tabledef_valid = true;
-    table_list->m_conv_table = nullptr;
-    table_list->open_type = OT_BASE_ONLY;
+    table_list->m_tabledef_valid = true;  // 标记表定义有效
+    table_list->m_conv_table = nullptr;   // 转换表指针初始化为空
+    table_list->open_type = OT_BASE_ONLY; // 设置打开类型
 
     /*
       We record in the slave's information that the table should be
@@ -11085,17 +11436,17 @@ int Table_map_log_event::do_apply_event(Relay_log_info const *rli) {
     /* 'memory' is freed in clear_tables_to_lock */
   } else  // FILTERED_OUT, SAME_ID_MAPPING_*
   {
-    if (tblmap_status == FILTERED_WITH_XA_ACTIVE) {
+    if (tblmap_status == FILTERED_WITH_XA_ACTIVE) {  // XA事务过滤情况
       if (thd->slave_thread)
         rli->report(ERROR_LEVEL, ER_XA_REPLICATION_FILTERS, "%s",
-                    ER_THD(thd, ER_XA_REPLICATION_FILTERS));
+                    ER_THD(thd, ER_XA_REPLICATION_FILTERS));  // 从库线程报告错误
       else
         /*
           For the cases in which a 'BINLOG' statement is set to
           execute in a user session
          */
         my_printf_error(ER_XA_REPLICATION_FILTERS, "%s", MYF(0),
-                        ER_THD(thd, ER_XA_REPLICATION_FILTERS));
+                        ER_THD(thd, ER_XA_REPLICATION_FILTERS));  // 用户会话错误
     }
     /*
       If mapped already but with different properties, we raise an
@@ -11105,8 +11456,15 @@ int Table_map_log_event::do_apply_event(Relay_log_info const *rli) {
 
       In all three cases, we need to free the memory previously
       allocated.
+     */    
+    /*
+      如果已映射但具有不同属性，我们引发错误。
+      如果已映射但具有相同属性，我们跳过该事件。
+      如果被过滤掉，我们跳过该事件。
+
+      在这三种情况下，我们都需要释放先前分配的内存。
      */
-    else if (tblmap_status == SAME_ID_MAPPING_DIFFERENT_TABLE) {
+    else if (tblmap_status == SAME_ID_MAPPING_DIFFERENT_TABLE) {  // 相同ID不同表错误
       /*
         Something bad has happened. We need to stop the slave as strange things
         could happen if we proceed: slave crash, wrong table being updated, ...
@@ -11118,24 +11476,25 @@ int Table_map_log_event::do_apply_event(Relay_log_info const *rli) {
       snprintf(buf, sizeof(buf),
                "Found table map event mapping table id %llu which "
                "was already mapped but with different settings.",
-               table_list->table_id.id());
+               table_list->table_id.id());  // 格式化错误信息
 
       if (thd->slave_thread)
         rli->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
-                    ER_THD(thd, ER_SLAVE_FATAL_ERROR), buf);
+                    ER_THD(thd, ER_SLAVE_FATAL_ERROR), buf);  // 从库致命错误
       else
-        /*
+          /*
           For the cases in which a 'BINLOG' statement is set to
           execute in a user session
          */
+        /* 对于在用户会话中执行'BINLOG'语句的情况 */
         my_printf_error(ER_BINLOG_FATAL_ERROR,
-                        ER_THD(thd, ER_BINLOG_FATAL_ERROR), MYF(0), buf);
+                        ER_THD(thd, ER_BINLOG_FATAL_ERROR), MYF(0), buf); // 用户会话致命错误
     }
 
-    my_free(memory);
+    my_free(memory);  // 释放分配的内存
   }
 
-  return tblmap_status == SAME_ID_MAPPING_DIFFERENT_TABLE;
+  return tblmap_status == SAME_ID_MAPPING_DIFFERENT_TABLE;  // 返回是否发生相同ID不同表错误
 }
 
 Log_event::enum_skip_reason Table_map_log_event::do_shall_skip(
@@ -13015,21 +13374,38 @@ bool Rows_query_log_event::write_data_body(Basic_ostream *ostream) {
                                      strlen(m_rows_query));
 }
 
+/**
+   处理Rows_query日志事件的应用逻辑。
+   该事件包含原始SQL查询信息，用于在从库上记录查询。
+   This function applies the Rows_query log event which contains
+   the original SQL query information for logging on the slave.
+
+   @param rli  Relay_log_info指针，包含复制上下文信息
+               Pointer to Relay_log_info containing replication context.
+
+   @return     返回操作状态：
+               Returns operation status:
+               - 0 成功 (success)
+               - 非零 错误码 (error code)
+*/
 int Rows_query_log_event::do_apply_event(Relay_log_info const *rli) {
-  DBUG_TRACE;
-  assert(rli->info_thd == thd);
+  DBUG_TRACE;  // 调试跟踪宏
+  assert(rli->info_thd == thd);  // 断言线程一致性
+
+  /* 设置查询以便后续将Rows_query事件写入binlog */
   /* Set query for writing Rows_query log event into binlog later.*/
-  thd->set_query(m_rows_query, strlen(m_rows_query));
-  thd->set_query_for_display(m_rows_query, strlen(m_rows_query));
+  thd->set_query(m_rows_query, strlen(m_rows_query));  // 设置当前查询
+  thd->set_query_for_display(m_rows_query, strlen(m_rows_query));  // 设置显示用查询
 
-  assert(rli->rows_query_ev == nullptr);
+  assert(rli->rows_query_ev == nullptr);  // 断言rows_query事件指针为空
 
-  const_cast<Relay_log_info *>(rli)->rows_query_ev = this;
+  const_cast<Relay_log_info *>(rli)->rows_query_ev = this;  // 保存当前事件指针
   /* Tell worker not to free the event */
-  worker = nullptr;
+  /* 告知Worker不要释放该事件 */
+  worker = nullptr;  // 清除worker指针避免自动释放
 
-  DBUG_EXECUTE_IF("error_on_rows_query_event_apply", { return 1; };);
-  return 0;
+  DBUG_EXECUTE_IF("error_on_rows_query_event_apply", { return 1; };);  // 调试注入错误
+  return 0;  // 返回成功
 }
 #endif
 
@@ -13383,11 +13759,29 @@ bool Gtid_log_event::write_data_body(Basic_ostream *ostream) {
 
 #endif  // MYSQL_SERVER
 
+/**
+   处理GTID日志事件的应用逻辑。
+   该函数在从库应用GTID事件时调用，用于设置事务的GTID上下文。
+   This function applies the GTID log event on the slave,
+   setting up the GTID context for the transaction.
+
+   @param rli  Relay_log_info指针，包含复制上下文信息
+               Pointer to Relay_log_info containing replication context.
+
+   @return     返回操作状态：
+               Returns operation status:
+               - 0 成功 (success)
+               - 非零 错误码 (error code)
+*/
 int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
-  DBUG_TRACE;
-  assert(rli->info_thd == thd);
+  DBUG_TRACE;  // 调试跟踪宏
+  assert(rli->info_thd == thd);  // 断言线程一致性
 
   /*
+    在极少数情况下，我们可能已经拥有一个GTID（ANONYMOUS或ASSIGNED_GTID）。
+    这可能发生在事务在relay log中间被截断，然后下一个relay log以Gtid_log_events
+    开始而没有关闭前一个relay log的事务上下文时。在这种情况下，唯一合理的做法是
+    丢弃被截断的事务并继续。
     In rare cases it is possible that we already own a GTID (either
     ANONYMOUS or ASSIGNED_GTID). This can happen if a transaction was truncated
     in the middle in the relay log and then next relay log begins with a
@@ -13395,6 +13789,8 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
     relay log. In this case the only sensible thing to do is to discard the
     truncated transaction and move on.
 
+    注意当applier正在"跳过"一个GTID事务时，它不拥有任何GTID，
+    但它的gtid_next->type == ASSIGNED_GTID。
     Note that when the applier is "GTID skipping" a transactions it
     owns nothing, but its gtid_next->type == ASSIGNED_GTID.
   */
@@ -13402,6 +13798,12 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
   if (!thd->owned_gtid_is_empty() ||
       (thd->owned_gtid_is_empty() && gtid_next->type == ASSIGNED_GTID)) {
     /*
+      如果之前的Gtid_log_event已应用但GTID尚未被消耗（事务未提交、回滚或跳过），
+      从库将执行此代码。
+      在客户端会话中，我们不能在没有中间COMMIT或ROLLBACK的情况下连续执行SET GTID_NEXT。
+      不回滚当前事务就应用此事件可能导致问题，因为跟随此GTID的"BEGIN"事件将隐式提交
+      "部分事务"并消耗GTID。如果这个"部分事务"是由于IO线程在事务中间重启而留在
+      relay log中的，你可能会让部分事务与GTID一起记录在从库上，导致复制数据损坏。
       Slave will execute this code if a previous Gtid_log_event was applied
       but the GTID wasn't consumed yet (the transaction was not committed,
       nor rolled back, nor skipped).
@@ -13424,25 +13826,25 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
                   "thread with auto-positioning protocol.");
       const_cast<Relay_log_info *>(rli)->cleanup_context(thd, true);
     }
-    gtid_state->update_on_rollback(thd);
+    gtid_state->update_on_rollback(thd);  // 回滚时更新GTID状态
   }
 
-  global_sid_lock->rdlock();
+  global_sid_lock->rdlock();  // 获取全局SID读锁
 
   // make sure that sid has been converted to sidno
   if (spec.type == ASSIGNED_GTID) {
-    if (get_sidno(false) < 0) {
+    if (get_sidno(false) < 0) {  // 获取SID编号失败（内存不足）
       global_sid_lock->unlock();
-      return 1;  // out of memory
+      return 1;  // 内存不足
     }
   } else if ((spec.type == ANONYMOUS_GTID) &&
              (rli->m_assign_gtids_to_anonymous_transactions_info.get_type() >
               Assign_gtids_to_anonymous_transactions_info::enum_type::
-                  AGAT_OFF)) {
-    assert(global_gtid_mode.get() == Gtid_mode::ON);
-    spec.type = PRE_GENERATE_GTID;
+                  AGAT_OFF)) {  // 匿名GTID且启用了匿名事务分配GTID
+    assert(global_gtid_mode.get() == Gtid_mode::ON);  // 断言GTID模式为ON
+    spec.type = PRE_GENERATE_GTID;  // 设置为预生成GTID类型
     spec.gtid.sidno =
-        rli->m_assign_gtids_to_anonymous_transactions_info.get_sidno();
+        rli->m_assign_gtids_to_anonymous_transactions_info.get_sidno();  // 获取SID编号
   }
 
   // set_gtid_next releases global_sid_lock
@@ -13451,24 +13853,41 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
     return 1;
 
   /*
+    设置original_commit_timestamp。
+    如果此事件不包含此类信息，则使用0。
     Set the original_commit_timestamp.
     0 will be used if this event does not contain such information.
   */
-  enum_gtid_statement_status state = gtid_pre_statement_checks(thd);
-  thd->variables.original_commit_timestamp = original_commit_timestamp;
-  thd->set_original_commit_timestamp_for_slave_thread();
+  enum_gtid_statement_status state = gtid_pre_statement_checks(thd);  // 预检查GTID状态
+  thd->variables.original_commit_timestamp = original_commit_timestamp;  // 设置原始提交时间戳
+  thd->set_original_commit_timestamp_for_slave_thread();  // 为从库线程设置时间戳
   /**
+    设置original/immediate server version。
+    如果事件不包含此类信息，则设置为UNKNOWN_SERVER_VERSION。
     Set the original/immediate server version.
     It will be set to UNKNOWN_SERVER_VERSION if the event does not contain such
     information.
    */
-  thd->variables.original_server_version = original_server_version;
-  thd->variables.immediate_server_version = immediate_server_version;
+  thd->variables.original_server_version = original_server_version;  // 设置原始服务器版本
+  thd->variables.immediate_server_version = immediate_server_version;  // 设置直接服务器版本
   const_cast<Relay_log_info *>(rli)->started_processing(
       thd->variables.gtid_next.gtid, original_commit_timestamp,
-      immediate_commit_timestamp, state == GTID_STATEMENT_SKIP);
+      immediate_commit_timestamp, state == GTID_STATEMENT_SKIP);  // 标记开始处理
 
   /*
+    如果当前事务不包含使用SBR记录的更改，我们可以假设此事务为纯基于行的复制事务。
+
+    基于此假设，我们可以将当前事务的tx_isolation设置为READ COMMITTED，
+    以避免并发事务被InnoDB间隙锁阻塞。
+
+    会话tx_isolation将在以下情况恢复：
+    - 当事务以QUERY(COMMIT|ROLLBACK)结束时，如同MySQL服务器对普通用户会话所做的那样；
+    - 当应用Xid_log_event提交事务后；
+    - 当应用XA_prepare_log_event准备事务后；
+    - 当applier需要中止事务执行时。
+
+    注意当事务正在"跳过"GTID时，其语句实际上不会执行（见mysql_execute_command()）。
+    因此，可能不会调用在事务结束后恢复tx_isolation的函数。
     If the current transaction contains no changes logged with SBR
     we can assume this transaction as a pure row based replicated one.
 
@@ -13491,38 +13910,39 @@ int Gtid_log_event::do_apply_event(Relay_log_info const *rli) {
   if (DBUG_EVALUATE_IF(
           "force_trx_as_rbr_only", true,
           !may_have_sbr_stmts && thd->tx_isolation > ISO_READ_COMMITTED &&
-              gtid_pre_statement_checks(thd) != GTID_STATEMENT_SKIP)) {
-    assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));
-    assert(thd->get_transaction()->is_empty(Transaction_ctx::SESSION));
-    assert(!thd->lock);
+              gtid_pre_statement_checks(thd) != GTID_STATEMENT_SKIP)) {  // 调试或纯RBR事务
+    assert(thd->get_transaction()->is_empty(Transaction_ctx::STMT));  // 断言无语句事务
+    assert(thd->get_transaction()->is_empty(Transaction_ctx::SESSION));  // 断言无会话事务
+    assert(!thd->lock);  // 断言无锁
     DBUG_PRINT("info", ("setting tx_isolation to READ COMMITTED"));
-    set_tx_isolation(thd, ISO_READ_COMMITTED, true /*one_shot*/);
+    set_tx_isolation(thd, ISO_READ_COMMITTED, true /*one_shot*/);  // 设置隔离级别为READ COMMITTED
   }
 
-  binlog::BgcTicket bgc_group_ticket(this->commit_group_ticket);
+  binlog::BgcTicket bgc_group_ticket(this->commit_group_ticket);  // 获取binlog组提交票据
 
-  if (bgc_group_ticket.is_set()) {
+  if (bgc_group_ticket.is_set()) {  // 如果票据已设置
 #ifndef NDEBUG
     if (thd->rpl_thd_ctx.binlog_group_commit_ctx()
             .get_session_ticket()
-            .is_set()) {
+            .is_set()) {  // 调试模式下检查票据一致性
       assert(thd->rpl_thd_ctx.binlog_group_commit_ctx().get_session_ticket() ==
              bgc_group_ticket);
     }
 #endif
     /*
+      如果会话票据已设置，这是事务重试，因此无需再次分配票据。
       If the session ticket is already set, this is a transaction retry,
       as such there is no need to assign the ticket again.
     */
     if (thd->rpl_thd_ctx.binlog_group_commit_ctx()
             .get_session_ticket()
-            .is_set() == false) {
+            .is_set() == false) {  // 如果票据未设置
       thd->rpl_thd_ctx.binlog_group_commit_ctx().set_session_ticket(
-          bgc_group_ticket);
+          bgc_group_ticket);  // 设置会话票据
     }
   }
 
-  return 0;
+  return 0;  // 返回成功
 }
 
 int Gtid_log_event::do_update_pos(Relay_log_info *rli) {

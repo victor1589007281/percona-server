@@ -409,24 +409,36 @@ err:
 
   @retval Pointer to Slave_worker Success
   @retval NULL  Failure
+  创建一个从库工作线程仓库，其类型由参数定义。
+
+  @param[in]  rli_option 仓库类型，例如 FILE TABLE。
+  @param[in]  worker_id  要创建的工作线程的 ID。
+  @param[in]  rli        指向 Relay_log_info 的指针。
+  @param[in]  is_gaps_collecting_phase 参见 Slave_worker::rli_init_info
+
+  如果用户请求的类型与系统中已存在的类型不同，则执行失败。这是为了避免用户意外访问错误的仓库并导致从库不同步。
+
+  @retval 指向 Slave_worker 的指针 成功
+  @retval NULL 失败
 */
 Slave_worker *Rpl_info_factory::create_worker(uint rli_option, uint worker_id,
                                               Relay_log_info *rli,
                                               bool is_gaps_collecting_phase) {
-  Rpl_info_handler *handler_src = nullptr;
-  Rpl_info_handler *handler_dest = nullptr;
-  Slave_worker *worker = nullptr;
+  Rpl_info_handler *handler_src = nullptr;  // 源处理器
+  Rpl_info_handler *handler_dest = nullptr;  // 目标处理器
+  Slave_worker *worker = nullptr;  // 工作线程
   const char *msg =
       "Failed to allocate memory for the worker info "
-      "structure";
+      "structure";  // 错误消息
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
   /*
     Define the name of the worker and its repository.
+    定义工作线程的名称及其仓库。
   */
-  char *pos = my_stpcpy(worker_file_data.name, worker_file_data.pattern);
-  sprintf(pos, "%u", worker_id + 1);
+  char *pos = my_stpcpy(worker_file_data.name, worker_file_data.pattern);  // 复制模式到名称
+  sprintf(pos, "%u", worker_id + 1);  // 格式化工作线程 ID
 
   if (!(worker = new Slave_worker(
             rli,
@@ -436,30 +448,32 @@ Slave_worker *Rpl_info_factory::create_worker(uint rli_option, uint worker_id,
             &key_relay_log_info_data_cond, &key_relay_log_info_start_cond,
             &key_relay_log_info_stop_cond, &key_relay_log_info_sleep_cond,
 #endif
-            worker_id, rli->get_channel())))
-    goto err;
+            worker_id, rli->get_channel())))  // 创建新的 Slave_worker 对象
+    goto err;  // 如果创建失败，跳转到错误处理
 
   if (init_repositories(worker_table_data, worker_file_data, rli_option,
-                        &handler_src, &handler_dest, &msg))
-    goto err;
+                        &handler_src, &handler_dest, &msg))  // 初始化仓库
+    goto err;  // 如果初始化失败，跳转到错误处理
   /*
     Preparing the handler being set up with search keys early.
     The file repo type handler can't be manipulated this way and it does
     not have to.
+    提前为处理器设置搜索键。
+    文件仓库类型的处理器不能以这种方式操作，也不需要。
   */
-  if (handler_dest->get_rpl_info_type() == INFO_REPOSITORY_TABLE)
-    worker->set_info_search_keys(handler_dest);
+  if (handler_dest->get_rpl_info_type() == INFO_REPOSITORY_TABLE)  // 如果目标处理器是表类型
+    worker->set_info_search_keys(handler_dest);  // 设置搜索键
 
   /* get_num_instances() requires channel_map lock */
   /*
   assert(channel_map.get_num_instances() <= 1 ||
               (rli_option == 1 && handler_dest->get_rpl_info_type() == 1));
   */
-  if (decide_repository(worker, rli_option, &handler_src, &handler_dest, &msg))
-    goto err;
+  if (decide_repository(worker, rli_option, &handler_src, &handler_dest, &msg))  // 决定仓库类型
+    goto err;  // 如果决定失败，跳转到错误处理
 
   if (DBUG_EVALUATE_IF("mta_worker_thread_init_fails", 1, 0) ||
-      worker->rli_init_info(is_gaps_collecting_phase)) {
+      worker->rli_init_info(is_gaps_collecting_phase)) {  // 如果工作线程初始化失败
     DBUG_EXECUTE_IF("enable_mta_worker_failure_init", {
       DBUG_SET("-d,mta_worker_thread_init_fails");
       DBUG_SET("-d,enable_mta_worker_failure_init");
@@ -468,29 +482,30 @@ Slave_worker *Rpl_info_factory::create_worker(uint rli_option, uint worker_id,
       DBUG_SET("-d,mta_worker_thread_init_fails");
       DBUG_SET("-d,enable_mta_wokrer_failure_in_recovery_finalize");
     });
-    msg = "Failed to initialize the worker info structure";
-    goto err;
+    msg = "Failed to initialize the worker info structure";  // 设置错误消息
+    goto err;  // 跳转到错误处理
   }
 
-  if (rli->info_thd && rli->info_thd->is_error()) {
-    msg = "Failed to initialize worker info table";
-    goto err;
+  if (rli->info_thd && rli->info_thd->is_error()) {  // 如果信息线程存在且出错
+    msg = "Failed to initialize worker info table";  // 设置错误消息
+    goto err;  // 跳转到错误处理
   }
-  return worker;
+  return worker;  // 返回工作线程
 
 err:
-  delete handler_src;
-  delete handler_dest;
+  delete handler_src;  // 删除源处理器
+  delete handler_dest;  // 删除目标处理器
   if (worker) {
     /*
       The handler was previously deleted so we need to remove
       any reference to it.
+      处理器之前已被删除，因此我们需要删除对它的任何引用。
     */
-    worker->set_rpl_info_handler(nullptr);
-    delete worker;
+    worker->set_rpl_info_handler(nullptr);  // 设置处理器为 nullptr
+    delete worker;  // 删除工作线程
   }
-  LogErr(ERROR_LEVEL, ER_RPL_ERROR_CREATING_RELAY_LOG_INFO, msg);
-  return nullptr;
+  LogErr(ERROR_LEVEL, ER_RPL_ERROR_CREATING_RELAY_LOG_INFO, msg);  // 记录错误日志
+  return nullptr;  // 返回 nullptr 表示失败
 }
 
 static void build_worker_info_name(char *to, const char *path,
@@ -582,28 +597,49 @@ void Rpl_info_factory::init_repository_metadata() {
 
   @retval false No error
   @retval true  Failure
+  在启动时根据以下决策表决定使用哪个仓库：
+
+  \code
+  |--------------+-----------------------+-----------------------|
+  | 存在 \ 选项  |         源            |        目标           |
+  |--------------+-----------------------+-----------------------|
+  | ~is_s, ~is_d |            -          | 创建/更新 D           |
+  | ~is_s,  is_d |            -          | 继续使用 D            |
+  |  is_s, ~is_d | 将 S 复制到 D         | 创建/更新 D           |
+  |  is_s,  is_d | 错误                  | 错误                  |
+  |--------------+-----------------------+-----------------------|
+  \endcode
+
+  @param[in]  info         主库信息或中继日志信息。
+  @param[in]  option       标识将使用的仓库类型，即目标仓库。
+  @param[out] handler_src  源仓库，信息将从该仓库复制到目标仓库。
+  @param[out] handler_dest 目标仓库，信息将复制到该仓库。
+  @param[out] msg          如果出现错误，存储错误消息。
+
+  @retval false 无错误
+  @retval true  失败
 */
 bool Rpl_info_factory::decide_repository(Rpl_info *info, uint option,
                                          Rpl_info_handler **handler_src,
                                          Rpl_info_handler **handler_dest,
                                          const char **msg) {
-  bool error = true;
-  enum_return_check return_check_src = ERROR_CHECKING_REPOSITORY;
-  enum_return_check return_check_dst = ERROR_CHECKING_REPOSITORY;
-  DBUG_TRACE;
+  bool error = true;  // 错误标志，初始化为 true
+  enum_return_check return_check_src = ERROR_CHECKING_REPOSITORY;  // 源仓库检查结果
+  enum_return_check return_check_dst = ERROR_CHECKING_REPOSITORY;  // 目标仓库检查结果
+  DBUG_TRACE;  // 调试跟踪标记
 
-  if (option == INFO_REPOSITORY_DUMMY) {
-    delete (*handler_src);
-    *handler_src = nullptr;
-    info->set_rpl_info_handler(*handler_dest);
-    error = false;
-    goto err;
+  if (option == INFO_REPOSITORY_DUMMY) {  // 如果仓库类型为虚拟仓库
+    delete (*handler_src);  // 删除源仓库
+    *handler_src = nullptr;  // 设置源仓库为 nullptr
+    info->set_rpl_info_handler(*handler_dest);  // 设置目标仓库为信息处理器
+    error = false;  // 设置错误标志为 false，表示成功
+    goto err;  // 跳转到错误处理
   }
 
   assert((*handler_src) != nullptr && (*handler_dest) != nullptr &&
-         (*handler_src) != (*handler_dest));
+         (*handler_src) != (*handler_dest));  // 断言源仓库和目标仓库不为空且不相同
 
-  return_check_src = check_src_repository(info, option, handler_src);
+  return_check_src = check_src_repository(info, option, handler_src);  // 检查源仓库
   return_check_dst =
       (*handler_dest)->do_check_info(info->get_internal_id());  // approx via
                                                                 // scan, not
@@ -616,36 +652,40 @@ bool Rpl_info_factory::decide_repository(Rpl_info *info, uint option,
                                                                 // case
 
   if (return_check_src == ERROR_CHECKING_REPOSITORY ||
-      return_check_dst == ERROR_CHECKING_REPOSITORY) {
+      return_check_dst == ERROR_CHECKING_REPOSITORY) {  // 如果源仓库或目标仓库检查出错
     /*
       If there is a problem with one of the repositories we print out
       more information and exit.
+      如果其中一个仓库有问题，我们打印更多信息并退出。
     */
     return check_error_repository(*handler_src, *handler_dest, return_check_src,
-                                  return_check_dst, msg);
+                                  return_check_dst, msg);  // 检查错误仓库
   } else {
     if ((return_check_src == REPOSITORY_EXISTS &&
-         return_check_dst == REPOSITORY_DOES_NOT_EXIST) ||
+         return_check_dst == REPOSITORY_DOES_NOT_EXIST) ||  // 如果源仓库存在且目标仓库不存在
         (return_check_src == REPOSITORY_EXISTS &&
-         return_check_dst == REPOSITORY_EXISTS)) {
+         return_check_dst == REPOSITORY_EXISTS)) {  // 或者源仓库和目标仓库都存在
       /*
         If there is no error, we can proceed with the normal operation.
         However, if both repositories are set an error will be printed
         out.
+        如果没有错误，我们可以继续正常操作。
+        但是，如果两个仓库都存在，则会打印错误。
       */
       if (return_check_src == REPOSITORY_EXISTS &&
-          return_check_dst == REPOSITORY_EXISTS) {
+          return_check_dst == REPOSITORY_EXISTS) {  // 如果源仓库和目标仓库都存在
         *msg =
             "Multiple replication metadata repository instances "
             "found with data in them. Unable to decide which is "
-            "the correct one to choose";
-        goto err;
+            "the correct one to choose";  // 设置错误消息
+        goto err;  // 跳转到错误处理
       }
 
       /*
         Do a low-level initialization to be able to do a state transfer.
+        进行低级初始化以能够进行状态转移。
       */
-      if (init_repositories(info, handler_src, handler_dest, msg)) goto err;
+      if (init_repositories(info, handler_src, handler_dest, msg)) goto err;  // 初始化仓库
 
       /*
         Transfer information from source to destination and delete the
@@ -654,38 +694,42 @@ bool Rpl_info_factory::decide_repository(Rpl_info *info, uint option,
         be true. Moreover, any failure in removing the source may lead to
         the same.
         /Alfranio
+        将信息从源仓库转移到目标仓库并删除源仓库。
+        注意这不是容错的，删除源仓库之前的崩溃可能导致下次重启失败，因为 is_src 和 is_dest 可能为 true。
+        此外，删除源仓库的任何失败也可能导致相同的问题。
+        /Alfranio
       */
-      if (info->copy_info(*handler_src, *handler_dest) ||
-          (*handler_dest)->flush_info(true)) {
-        *msg = "Error transfering information";
-        goto err;
+      if (info->copy_info(*handler_src, *handler_dest) ||  // 复制信息
+          (*handler_dest)->flush_info(true)) {  // 刷新信息
+        *msg = "Error transfering information";  // 设置错误消息
+        goto err;  // 跳转到错误处理
       }
-      (*handler_src)->end_info();
-      if ((*handler_src)->remove_info()) {
-        *msg = "Error removing old repository";
-        goto err;
+      (*handler_src)->end_info();  // 结束源仓库信息
+      if ((*handler_src)->remove_info()) {  // 删除源仓库信息
+        *msg = "Error removing old repository";  // 设置错误消息
+        goto err;  // 跳转到错误处理
       }
     } else if (return_check_src == REPOSITORY_DOES_NOT_EXIST &&
-               return_check_dst == REPOSITORY_EXISTS) {
-      assert(info->get_rpl_info_handler() == nullptr);
-      if ((*handler_dest)->do_init_info(info->get_internal_id())) {
-        *msg = "Error reading repository";
-        goto err;
+               return_check_dst == REPOSITORY_EXISTS) {  // 如果源仓库不存在且目标仓库存在
+      assert(info->get_rpl_info_handler() == nullptr);  // 断言信息处理器为空
+      if ((*handler_dest)->do_init_info(info->get_internal_id())) {  // 初始化目标仓库
+        *msg = "Error reading repository";  // 设置错误消息
+        goto err;  // 跳转到错误处理
       }
     } else {
       assert(return_check_src == REPOSITORY_DOES_NOT_EXIST &&
-             return_check_dst == REPOSITORY_DOES_NOT_EXIST);
-      info->inited = false;
+             return_check_dst == REPOSITORY_DOES_NOT_EXIST);  // 断言源仓库和目标仓库都不存在
+      info->inited = false;  // 设置信息未初始化
     }
 
-    delete (*handler_src);
-    *handler_src = nullptr;
-    info->set_rpl_info_handler(*handler_dest);
-    error = false;
+    delete (*handler_src);  // 删除源仓库
+    *handler_src = nullptr;  // 设置源仓库为 nullptr
+    info->set_rpl_info_handler(*handler_dest);  // 设置目标仓库为信息处理器
+    error = false;  // 设置错误标志为 false，表示成功
   }
 
 err:
-  return error;
+  return error;  // 返回错误标志
 }
 
 /**
@@ -835,6 +879,17 @@ bool Rpl_info_factory::init_repositories(Rpl_info *info,
 
   @retval false No error
   @retval true  Failure
+  创建将与 Master_info 或 Relay_log_info 关联的仓库。
+
+  @param[in] table_data    定义创建表仓库所需的信息。
+  @param[in] file_data     定义创建文件仓库所需的信息。
+  @param[in] rep_option    标识将使用的仓库类型，即目标仓库。
+  @param[out] handler_src  源仓库，信息将从该仓库复制到目标仓库。
+  @param[out] handler_dest 目标仓库，信息将复制到该仓库。
+  @param[out] msg          如果出现错误，存储错误消息。
+
+  @retval false 无错误
+  @retval true  失败
 */
 bool Rpl_info_factory::init_repositories(const struct_table_data &table_data,
                                          const struct_file_data &file_data,
@@ -842,52 +897,52 @@ bool Rpl_info_factory::init_repositories(const struct_table_data &table_data,
                                          Rpl_info_handler **handler_src,
                                          Rpl_info_handler **handler_dest,
                                          const char **msg) {
-  bool error = true;
-  *msg = "Failed to allocate memory for master info repositories";
+  bool error = true;  // 错误标志，初始化为 true
+  *msg = "Failed to allocate memory for master info repositories";  // 错误消息
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
-  assert(handler_dest != nullptr);
-  switch (rep_option) {
-    case INFO_REPOSITORY_FILE:
+  assert(handler_dest != nullptr);  // 断言目标处理器不为空
+  switch (rep_option) {  // 根据仓库类型进行选择
+    case INFO_REPOSITORY_FILE:  // 如果仓库类型为文件
       if (!(*handler_dest = new Rpl_info_file(
                 file_data.n_fields, file_data.pattern, file_data.name,
-                file_data.name_indexed, &file_data.nullable_fields)))
-        goto err;
+                file_data.name_indexed, &file_data.nullable_fields)))  // 创建文件仓库
+        goto err;  // 如果创建失败，跳转到错误处理
       if (handler_src &&
           !(*handler_src = new Rpl_info_table(
                 table_data.n_fields, table_data.schema, table_data.name,
                 table_data.n_pk_fields, table_data.pk_field_indexes,
-                &table_data.nullable_fields)))
-        goto err;
-      break;
+                &table_data.nullable_fields)))  // 创建表仓库作为源仓库
+        goto err;  // 如果创建失败，跳转到错误处理
+      break;  // 跳出 switch
 
-    case INFO_REPOSITORY_TABLE:
+    case INFO_REPOSITORY_TABLE:  // 如果仓库类型为表
       if (!(*handler_dest = new Rpl_info_table(
                 table_data.n_fields, table_data.schema, table_data.name,
                 table_data.n_pk_fields, table_data.pk_field_indexes,
-                &table_data.nullable_fields)))
-        goto err;
+                &table_data.nullable_fields)))  // 创建表仓库
+        goto err;  // 如果创建失败，跳转到错误处理
       if (handler_src &&
           !(*handler_src = new Rpl_info_file(
                 file_data.n_fields, file_data.pattern, file_data.name,
-                file_data.name_indexed, &file_data.nullable_fields)))
-        goto err;
-      break;
+                file_data.name_indexed, &file_data.nullable_fields)))  // 创建文件仓库作为源仓库
+        goto err;  // 如果创建失败，跳转到错误处理
+      break;  // 跳出 switch
 
-    case INFO_REPOSITORY_DUMMY:
+    case INFO_REPOSITORY_DUMMY:  // 如果仓库类型为虚拟仓库
       if (!(*handler_dest =
-                new Rpl_info_dummy(Master_info::get_number_info_mi_fields())))
-        goto err;
-      break;
+                new Rpl_info_dummy(Master_info::get_number_info_mi_fields())))  // 创建虚拟仓库
+        goto err;  // 如果创建失败，跳转到错误处理
+      break;  // 跳出 switch
 
-    default:
-      assert(0);
+    default:  // 默认情况
+      assert(0);  // 断言失败，表示未知的仓库类型
   }
-  error = false;
+  error = false;  // 设置错误标志为 false，表示成功
 
 err:
-  return error;
+  return error;  // 返回错误标志
 }
 
 bool Rpl_info_factory::scan_and_count_repositories(

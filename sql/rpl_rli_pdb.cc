@@ -84,6 +84,10 @@ using std::max;
 using std::min;
 
 /**
+   该函数由Coordinator和Worker共同调用。
+   当接收到STOP命令时，Worker会识别已执行（或正在执行）的最大组索引。
+   所有索引小于或等于最大组索引的组将在停止前由Worker应用。
+   组索引高于最大组索引的Worker将设置其运行状态为"STOP_ACCEPTED"并退出，不应用这些组。
    This function is called by both coordinator and workers.
 
    Upon receiving the STOP command, the workers will identify a
@@ -96,87 +100,105 @@ using std::min;
    exit without applying these groups by setting their running
    status to "STOP_ACCEPTED".
 
-   @param worker    a pointer to the waiting Worker struct
-   @param job_item  a pointer to struct carrying a reference to an event
+   @param worker    指向等待的Worker结构的指针
+                    a pointer to the waiting Worker struct
+   @param job_item  指向携带事件引用的结构的指针
+                    a pointer to struct carrying a reference to an event
 
-   @return true if STOP command gets accepted otherwise false is returned.
+   @return true     如果STOP命令被接受
+           if STOP command gets accepted
+           false    否则返回false
+           otherwise false is returned.
 */
 bool handle_slave_worker_stop(Slave_worker *worker, Slave_job_item *job_item) {
-  ulonglong group_index = 0;
-  Relay_log_info *rli = worker->c_rli;
-  mysql_mutex_lock(&rli->exit_count_lock);
+  ulonglong group_index = 0;  // 初始化组索引
+  Relay_log_info *rli = worker->c_rli;  // 获取关联的Relay_log_info指针
+  mysql_mutex_lock(&rli->exit_count_lock);  // 加锁保护退出计数器
+
   /*
+    首先，Worker计算一个"当前"组索引，该索引是当前读取的事件组索引，
+    或当队列为空时最后执行的组的索引。
     First, W calculates a group-"at-hands" index which is
     either the currently read ev group index, or the last executed
     group's one when the  queue is empty.
   */
   group_index =
       (job_item->data)
-          ? rli->gaq->get_job_group(job_item->data->mts_group_idx)->total_seqno
-          : worker->last_groups_assigned_index;
+          ? rli->gaq->get_job_group(job_item->data->mts_group_idx)->total_seqno  // 从事件数据获取组序列号
+          : worker->last_groups_assigned_index;  // 使用最后分配的组索引
 
   /*
+    只要exit_counter允许，就会更新max_updated_index。
+    最终由Worker的增量操作停止更新。
     The max updated index is being updated as long as
     exit_counter permits. That's stopped with the final W's
     increment of it.
   */
-  if (!worker->exit_incremented) {
-    if (rli->exit_counter < rli->replica_parallel_workers)
-      rli->max_updated_index = max(rli->max_updated_index, group_index);
+  if (!worker->exit_incremented) {  // 检查是否已增加退出计数器
+    if (rli->exit_counter < rli->replica_parallel_workers)  // 检查计数器是否未达上限
+      rli->max_updated_index = max(rli->max_updated_index, group_index);  // 更新最大索引
 
-    ++rli->exit_counter;
-    worker->exit_incremented = true;
-    assert(!is_mts_worker(current_thd));
+    ++rli->exit_counter;  // 增加退出计数器
+    worker->exit_incremented = true;  // 标记Worker已增加计数器
+    assert(!is_mts_worker(current_thd));  // 断言当前线程不是MTS Worker（调试模式）
   }
 #ifndef NDEBUG
   else
-    assert(is_mts_worker(current_thd));
+    assert(is_mts_worker(current_thd));  // 否则断言当前线程是MTS Worker（调试模式）
 #endif
 
   /*
+    现在决定延迟退出，考虑空队列和计数器达到replica_parallel_workers的情况。
     Now let's decide about the deferred exit to consider
     the empty queue and the counter value reached
     replica_parallel_workers.
   */
-  if (!job_item->data) {
-    worker->running_status = Slave_worker::STOP_ACCEPTED;
-    mysql_cond_signal(&worker->jobs_cond);
-    mysql_mutex_unlock(&rli->exit_count_lock);
-    return (true);
-  } else if (rli->exit_counter == rli->replica_parallel_workers) {
-    // over steppers should exit with accepting STOP
+  if (!job_item->data) {  // 如果任务队列为空
+    worker->running_status = Slave_worker::STOP_ACCEPTED;  // 设置Worker状态为"停止已接受"
+    mysql_cond_signal(&worker->jobs_cond);  // 发送条件信号唤醒等待线程
+    mysql_mutex_unlock(&rli->exit_count_lock);  // 解锁
+    return (true);  // 返回STOP已接受
+  } else if (rli->exit_counter == rli->replica_parallel_workers) {  // 如果所有Worker都已处理
+    // 组索引超过最大索引的Worker应接受STOP并退出
     if (group_index > rli->max_updated_index) {
-      worker->running_status = Slave_worker::STOP_ACCEPTED;
-      mysql_cond_signal(&worker->jobs_cond);
-      mysql_mutex_unlock(&rli->exit_count_lock);
-      return (true);
+      worker->running_status = Slave_worker::STOP_ACCEPTED;  // 设置状态
+      mysql_cond_signal(&worker->jobs_cond);  // 发送信号
+      mysql_mutex_unlock(&rli->exit_count_lock);  // 解锁
+      return (true);  // 返回STOP已接受
     }
   }
-  mysql_mutex_unlock(&rli->exit_count_lock);
-  return (false);
+  mysql_mutex_unlock(&rli->exit_count_lock);  // 解锁
+  return (false);  // 默认返回STOP未接受
 }
 
 /**
+   该函数由Coordinator和Worker共同调用。
+   Coordinator和Worker都会更新max_updated_index。
    This function is called by both coordinator and workers.
    Both coordinator and workers contribute to max_updated_index.
 
-   @param worker    a pointer to the waiting Worker struct
-   @param job_item  a pointer to struct carrying a reference to an event
+   @param worker    指向等待的Worker结构的指针
+                    a pointer to the waiting Worker struct
+   @param job_item  指向携带事件引用的结构的指针
+                    a pointer to struct carrying a reference to an event
 
-   @return true if STOP command gets accepted otherwise false is returned.
+   @return true     如果STOP命令被接受
+           if STOP command gets accepted
+           false    否则返回false
+           otherwise false is returned.
 */
 bool set_max_updated_index_on_stop(Slave_worker *worker,
                                    Slave_job_item *job_item) {
-  const auto head = worker->jobs.head_queue();
-  if (head != nullptr) {
-    *job_item = *head;
+  const auto head = worker->jobs.head_queue();  // 获取任务队列头部元素
+  if (head != nullptr) {  // 如果队列不为空
+    *job_item = *head;  // 将头部元素复制到job_item
   } else {
-    job_item->data = nullptr;
+    job_item->data = nullptr;  // 否则设置job_item数据为空
   }
-  if (worker->running_status == Slave_worker::STOP) {
-    if (handle_slave_worker_stop(worker, job_item)) return true;
+  if (worker->running_status == Slave_worker::STOP) {  // 检查Worker是否处于STOP状态
+    if (handle_slave_worker_stop(worker, job_item)) return true;  // 处理Worker停止逻辑
   }
-  return false;
+  return false;  // 默认返回false
 }
 
 /*
@@ -302,89 +324,94 @@ Slave_worker::~Slave_worker() {
 }
 
 /**
+   该方法在Worker启动时由Coordinator执行，用于初始化成员部分值，这些值由Coordinator通过rli提供。
    Method is executed by Coordinator at Worker startup time to initialize
    members parly with values supplied by Coordinator through rli.
 
-   @param  rli  Coordinator's Relay_log_info pointer
-   @param  i    identifier of the Worker
+   @param  rli  Coordinator的Relay_log_info指针
+                Coordinator's Relay_log_info pointer
+   @param  i    Worker的标识符
+                identifier of the Worker
 
-   @return 0          success
-           non-zero   failure
+   @return 0          成功
+           success
+           non-zero   失败
+           failure
 */
 int Slave_worker::init_worker(Relay_log_info *rli, ulong i) {
-  DBUG_TRACE;
-  assert(!rli->info_thd->is_error());
+  DBUG_TRACE;  // 调试跟踪宏
+  assert(!rli->info_thd->is_error());  // 断言确保当前线程没有错误
 
-  Slave_job_item empty = Slave_job_item();
+  Slave_job_item empty = Slave_job_item();  // 创建一个空的Slave_job_item对象
 
-  c_rli = rli;
-  this->set_require_row_format(rli->is_row_format_required());
+  c_rli = rli;  // 设置当前Worker的Coordinator Relay_log_info指针
+  this->set_require_row_format(rli->is_row_format_required());  // 设置是否需要行格式
 
-  set_commit_order_manager(c_rli->get_commit_order_manager());
+  set_commit_order_manager(c_rli->get_commit_order_manager());  // 设置提交顺序管理器
 
-  if (rli_init_info(false) ||
-      DBUG_EVALUATE_IF("inject_init_worker_init_info_fault", true, false))
+  if (rli_init_info(false) ||  // 初始化Worker的relay log信息
+      DBUG_EVALUATE_IF("inject_init_worker_init_info_fault", true, false))  // 调试注入故障
     return 1;
 
-  if (!rli->is_privilege_checks_user_null()) {
-    this->set_privilege_checks_user(
+  if (!rli->is_privilege_checks_user_null()) {  // 检查权限检查用户是否为空
+    this->set_privilege_checks_user(  // 设置权限检查用户
         rli->get_privilege_checks_username().c_str(),
         rli->get_privilege_checks_hostname().c_str());
   }
 
-  if (this->m_assign_gtids_to_anonymous_transactions_info.set_info(
+  if (this->m_assign_gtids_to_anonymous_transactions_info.set_info(  // 设置匿名事务的GTID分配信息
           rli->m_assign_gtids_to_anonymous_transactions_info.get_type(),
           (rli->m_assign_gtids_to_anonymous_transactions_info.get_value()
                .c_str())))
     return 1;
-  id = i;
-  curr_group_exec_parts.clear();
-  relay_log_change_notified = false;  // the 1st group to contain relaylog name
-  checkpoint_notified = false;        // the same as above
+  id = i;  // 设置Worker的ID
+  curr_group_exec_parts.clear();  // 清空当前组执行分区
+  relay_log_change_notified = false;  // 第一个组包含relay log名称
+  checkpoint_notified = false;        // 同上
   master_log_change_notified =
-      false;                   // W learns master log during 1st group exec
-  fd_change_notified = false;  // W is to learn master FD version same as above
-  server_version = version_product(rli->slave_version_split);
-  bitmap_shifted = 0;
-  workers = c_rli->workers;  // shallow copying is sufficient
+      false;                   // Worker在第一个组执行期间学习master log
+  fd_change_notified = false;  // Worker学习master FD版本同上
+  server_version = version_product(rli->slave_version_split);  // 设置服务器版本
+  bitmap_shifted = 0;  // 位图偏移量清零
+  workers = c_rli->workers;  // 浅拷贝workers列表
   wq_empty_waits = wq_size_waits_cnt = groups_done = events_done = curr_jobs =
-      0;
-  usage_partition = 0;
-  end_group_sets_max_dbs = false;
-  gaq_index = last_group_done_index = c_rli->gaq->capacity;  // out of range
-  last_groups_assigned_index = 0;
-  assert(!jobs.inited_queue);
-  jobs.avail = 0;
-  jobs.entry = 0;
-  jobs.len = 0;
-  jobs.overfill = false;  //  todo: move into Slave_jobs_queue constructor
-  jobs.waited_overfill = 0;
-  jobs.capacity = c_rli->mts_slave_worker_queue_len_max;
-  jobs.inited_queue = true;
-  curr_group_seen_gtid = false;
+      0;  // 初始化计数器
+  usage_partition = 0;  // 使用分区清零
+  end_group_sets_max_dbs = false;  // 结束组设置最大数据库标志
+  gaq_index = last_group_done_index = c_rli->gaq->capacity;  // 超出范围
+  last_groups_assigned_index = 0;  // 最后分配的组索引
+  assert(!jobs.inited_queue);  // 断言jobs队列未初始化
+  jobs.avail = 0;  // 可用jobs数
+  jobs.entry = 0;  // jobs入口
+  jobs.len = 0;  // jobs长度
+  jobs.overfill = false;  // 队列是否溢出（TODO：移动到Slave_jobs_queue构造函数）
+  jobs.waited_overfill = 0;  // 等待溢出计数
+  jobs.capacity = c_rli->mts_slave_worker_queue_len_max;  // 设置队列容量
+  jobs.inited_queue = true;  // 标记队列已初始化
+  curr_group_seen_gtid = false;  // 当前组是否看到GTID
 #ifndef NDEBUG
-  curr_group_seen_sequence_number = false;
+  curr_group_seen_sequence_number = false;  // 当前组是否看到序列号（调试模式）
 #endif
-  jobs.m_Q.resize(jobs.capacity, empty);
-  assert(jobs.m_Q.size() == jobs.capacity);
+  jobs.m_Q.resize(jobs.capacity, empty);  // 调整队列大小并填充空对象
+  assert(jobs.m_Q.size() == jobs.capacity);  // 断言队列大小正确
 
-  wq_overrun_cnt = excess_cnt = 0;
+  wq_overrun_cnt = excess_cnt = 0;  // 溢出计数清零
   underrun_level =
       (ulong)((rli->mts_worker_underrun_level * jobs.capacity) / 100.0);
   // overrun level is symmetric to underrun (as underrun to the full queue)
   overrun_level = jobs.capacity - underrun_level;
 
-  /* create mts submode for each of the the workers. */
+  /* 为每个Worker创建MTS子模式 */
   current_mts_submode = (rli->channel_mts_submode == MTS_PARALLEL_TYPE_DB_NAME)
-                            ? (Mts_submode *)new Mts_submode_database()
-                            : (Mts_submode *)new Mts_submode_logical_clock();
+                            ? (Mts_submode *)new Mts_submode_database()  // 数据库并行模式
+                            : (Mts_submode *)new Mts_submode_logical_clock();  // 逻辑时钟模式
 
-  // workers and coordinator must be of the same type
+  // Worker和Coordinator必须是同一类型
   assert(rli->current_mts_submode->get_type() ==
          current_mts_submode->get_type());
 
-  reset_commit_order_deadlock();
-  return 0;
+  reset_commit_order_deadlock();  // 重置提交顺序死锁检测
+  return 0;  // 返回成功
 }
 
 /**
@@ -405,52 +432,76 @@ int Slave_worker::init_worker(Relay_log_info *rli, ulong i) {
           to finish off recovery.
 
    @return 0 on success, non-zero for a failure
+   从库工作线程初始化的一部分，为 MTS 恢复提供最小上下文。
+
+   @param is_gaps_collecting_phase
+          说明调用者执行此方法时的状态。当为 @c true 时，
+          表示在 @c mts_recovery_groups() 中，工作线程应恢复
+          上次会话时间信息，用于收集未执行的事务（组）的间隙。
+          此类恢复的 Slave_worker 实例在 @c mts_recovery_groups() 结束时销毁。
+          当为 @c false 时，Slave_worker 为运行时初始化，
+          不应读取上次会话时间的陈旧信息。
+          一旦所有间隙执行完毕以完成恢复，其信息将最终重置。
+
+   @return 0 表示成功，非零表示失败
 */
 int Slave_worker::rli_init_info(bool is_gaps_collecting_phase) {
-  enum_return_check return_check = ERROR_CHECKING_REPOSITORY;
+  enum_return_check return_check = ERROR_CHECKING_REPOSITORY;  // 仓库检查返回值
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
-  if (inited) return 0;
+  if (inited) return 0;  // 如果已初始化，直接返回 0
 
   /*
     Worker bitmap size depends on recovery mode.
     If it is gaps collecting the bitmaps must be capable to accept
     up to MTS_MAX_BITS_IN_GROUP of bits.
+    工作线程位图大小取决于恢复模式。
+    如果是间隙收集阶段，位图必须能够接受最多 MTS_MAX_BITS_IN_GROUP 位的位。
+
+    恢复模式判断：
+    通过 is_gaps_collecting_phase 区分当前是间隙收集阶段（true）还是正常运行阶段（false）。
+    间隙收集阶段：位图需支持最大位数（MTS_MAX_BITS_IN_GROUP），并读取历史信息以补全未执行的事务组。
+        1. 识别未执行的事务组：从库崩溃后，某些事务组可能已部分应用但未完全提交，形成"间隙"（Gaps）。
+        2. 重建事务组状态：通过读取持久化的位图信息（group_executed），确定哪些事务组需要重新执行。
+        3. 确保数据一致性：补全缺失的事务组，使从库最终与主库数据一致。
+    正常运行阶段：位图大小由 checkpoint_group 决定，不读取陈旧信息。
   */
   size_t num_bits = is_gaps_collecting_phase ? MTS_MAX_BITS_IN_GROUP
-                                             : c_rli->checkpoint_group;
+                                             : c_rli->checkpoint_group;  // 根据恢复模式设置位图大小
   /*
     This checks if the repository was created before and thus there
     will be values to be read. Please, do not move this call after
     the handler->init_info().
+    检查仓库是否已创建，从而确定是否有值可读。
+    请不要将此调用移到 handler->init_info() 之后。
   */
-  return_check = check_info();
+  return_check = check_info();  // 检查仓库信息
   if (return_check == ERROR_CHECKING_REPOSITORY ||
-      (return_check == REPOSITORY_DOES_NOT_EXIST && is_gaps_collecting_phase))
-    goto err;
+      (return_check == REPOSITORY_DOES_NOT_EXIST && is_gaps_collecting_phase))  // 如果检查出错或仓库不存在且处于间隙收集阶段
+    goto err;  // 跳转到错误处理
 
-  if (handler->init_info()) goto err;
+  if (handler->init_info()) goto err;  // 初始化处理器信息，失败则跳转到错误处理
 
-  bitmap_init(&group_executed, nullptr, num_bits);
-  bitmap_init(&group_shifted, nullptr, num_bits);
+  bitmap_init(&group_executed, nullptr, num_bits);  // 初始化已执行组位图
+  bitmap_init(&group_shifted, nullptr, num_bits);  // 初始化已移位组位图
 
   if (is_gaps_collecting_phase &&
       (DBUG_EVALUATE_IF("mta_replica_worker_init_at_gaps_fails", true, false) ||
-       read_info(handler))) {
-    bitmap_free(&group_executed);
-    bitmap_free(&group_shifted);
-    goto err;
+       read_info(handler))) {  // 如果是间隙收集阶段且初始化失败或读取信息失败
+    bitmap_free(&group_executed);  // 释放已执行组位图
+    bitmap_free(&group_shifted);  // 释放已移位组位图
+    goto err;  // 跳转到错误处理
   }
-  inited = true;
+  inited = true;  // 设置初始化标志为 true
 
-  return 0;
+  return 0;  // 返回 0 表示成功
 
 err:
   // todo: handler->end_info(uidx, nidx);
-  inited = false;
-  LogErr(ERROR_LEVEL, ER_RPL_ERROR_READING_SLAVE_WORKER_CONFIGURATION);
-  return 1;
+  inited = false;  // 设置初始化标志为 false
+  LogErr(ERROR_LEVEL, ER_RPL_ERROR_READING_SLAVE_WORKER_CONFIGURATION);  // 记录错误日志
+  return 1;  // 返回 1 表示失败
 }
 
 void Slave_worker::end_info() {
@@ -467,11 +518,28 @@ void Slave_worker::end_info() {
   inited = false;
 }
 
+/**
+   Flush the worker's information to the repository.
+
+   @param force  If true, force the flush even if the sync period has not been
+                 reached.
+
+   @return 0 on success, 1 on failure.
+*/
+/**
+   将 worker 的信息刷新到存储库中。
+
+   @param force  如果为 true，即使未达到同步周期也强制刷新。
+
+   @return 0 表示成功，1 表示失败。
+*/
 int Slave_worker::flush_info(const bool force) {
   DBUG_TRACE;
 
+  // 如果 worker 未初始化，直接返回 0
   if (!inited) return 0;
 
+  // 如果主库是 GTID-only 模式，直接返回 0
   if (c_rli->mi->is_gtid_only_mode()) return 0;
 
   /*
@@ -480,11 +548,18 @@ int Slave_worker::flush_info(const bool force) {
     update every time we call flush because the option may be
     dynamically set.
   */
+  /*
+    我们在此处更新 sync_period，因为只有在这里我们才知道正在处理一个 Slave_worker。
+    每次调用 flush 时都需要更新，因为该选项可能是动态设置的。
+  */
   handler->set_sync_period(sync_relayloginfo_period);
 
   /*
     This only fails on out-of-memory errors, which are reported (using
     the MY_WME flag to my_malloc).
+  */
+  /*
+    这仅在内存不足时失败，错误会通过 MY_WME 标志报告给 my_malloc。
   */
   if (write_info(handler)) return 1;
 
@@ -492,6 +567,10 @@ int Slave_worker::flush_info(const bool force) {
     This fails on errors committing the info, or when
     replica_preserve_commit_order is enabled and a previous transaction
     has failed.  In both cases, the error is reported already.
+  */
+  /*
+    这会在提交信息时失败，或者在启用 replica_preserve_commit_order 且前一个事务失败时失败。
+    在这两种情况下，错误已经被报告。
   */
   if (handler->flush_info(force)) return 1;
 
@@ -563,15 +642,30 @@ void Slave_worker::copy_values_for_PFS(ulong worker_id,
   monitoring_info->copy_info_to(get_gtid_monitoring_info());
 }
 
+/**
+  Sets the search keys for the worker info repository.
+
+  @param[in] to The handler to set the search keys for.
+
+  @retval true  Failure
+  @retval false Success
+  设置工作线程信息仓库的搜索键。
+
+  @param[in] to 要设置搜索键的处理器。
+
+  @retval true  失败
+  @retval false 成功
+*/
 bool Slave_worker::set_info_search_keys(Rpl_info_handler *to) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
   /* primary keys are Id and channel_name */
-  if (to->set_info(0, (int)internal_id) ||
-      to->set_info(LINE_FOR_CHANNEL, channel))
-    return true;
+  /* 主键是 Id 和 channel_name */
+  if (to->set_info(0, (int)internal_id) ||  // 设置第一个搜索键为内部 ID
+      to->set_info(LINE_FOR_CHANNEL, channel))  // 设置第二个搜索键为通道名称
+    return true;  // 如果设置失败，返回 true
 
-  return false;
+  return false;  // 如果设置成功，返回 false
 }
 
 bool Slave_worker::write_info(Rpl_info_handler *to) {
@@ -605,12 +699,21 @@ bool Slave_worker::write_info(Rpl_info_handler *to) {
 
    @return false as success true as failure
 */
+/**
+   清理 Worker 信息表中与恢复过程中收集的间隙相关的部分。
+   该 Worker 在未来的 slave 重启时将不会贡献给恢复位图（参见 @c mts_recovery_groups）。
+
+   @return false 表示成功，true 表示失败
+*/
 bool Slave_worker::reset_recovery_info() {
   DBUG_TRACE;
 
+  // 清空 group_master_log_name
   set_group_master_log_name("");
+  // 清空 group_master_log_pos
   set_group_master_log_pos(0);
 
+  // 刷新信息并返回结果
   return flush_info(true);
 }
 
@@ -738,14 +841,14 @@ static void free_entry(db_worker_hash_entry *entry) {
 }
 
 bool init_hash_workers(Relay_log_info *rli) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
-  rli->inited_hash_workers = true;
+  rli->inited_hash_workers = true;  // 设置哈希工作线程初始化标志为 true
   mysql_mutex_init(key_mutex_replica_worker_hash, &rli->slave_worker_hash_lock,
-                   MY_MUTEX_INIT_FAST);
-  mysql_cond_init(key_cond_slave_worker_hash, &rli->slave_worker_hash_cond);
+                   MY_MUTEX_INIT_FAST);  // 初始化从库工作线程哈希表的互斥锁
+  mysql_cond_init(key_cond_slave_worker_hash, &rli->slave_worker_hash_cond);  // 初始化从库工作线程哈希表的条件变量
 
-  return false;
+  return false;  // 返回 false 表示初始化成功
 }
 
 void destroy_hash_workers(Relay_log_info *rli) {
@@ -1303,20 +1406,20 @@ void Slave_worker::slave_worker_ends_group(Log_event *ev, int error) {
 }
 
 Slave_committed_queue::Slave_committed_queue(size_t max, uint n)
-    : circular_buffer_queue<Slave_job_group>(max),
-      inited(false),
-      last_done(key_memory_Replica_job_group_group_relay_log_name) {
-  if (max >= (ulong)-1 || !inited_queue)
-    return;
+    : circular_buffer_queue<Slave_job_group>(max),  // 初始化循环缓冲区队列，最大容量为 max
+      inited(false),  // 初始化标志为 false
+      last_done(key_memory_Replica_job_group_group_relay_log_name) {  // 初始化 last_done，使用指定的内存键
+  if (max >= (ulong)-1 || !inited_queue)  // 如果 max 超过最大值或队列未初始化
+    return;  // 直接返回
   else
-    inited = true;
+    inited = true;  // 否则设置初始化标志为 true
 
-  last_done.resize(n);
+  last_done.resize(n);  // 调整 last_done 的大小为 n
 
   lwm.group_relay_log_name = (char *)my_malloc(
-      key_memory_Replica_job_group_group_relay_log_name, FN_REFLEN + 1, MYF(0));
-  lwm.group_relay_log_name[0] = 0;
-  lwm.sequence_number = SEQ_UNINIT;
+      key_memory_Replica_job_group_group_relay_log_name, FN_REFLEN + 1, MYF(0));  // 为 group_relay_log_name 分配内存
+  lwm.group_relay_log_name[0] = 0;  // 初始化 group_relay_log_name 为空字符串
+  lwm.sequence_number = SEQ_UNINIT;  // 初始化 sequence_number 为未初始化状态
 }
 
 #ifndef NDEBUG
@@ -1364,6 +1467,20 @@ bool Slave_committed_queue::count_done(Relay_log_info *rli) {
 
    @return number of discarded items
 */
+/**
+   队列从头开始逐项处理，以清除表示已提交组的项。
+   GAQ 中的进度通过 GAQ 索引值与 Worker 的 @c last_group_done_index 进行比较来评估。
+   清除操作在发现第一个间隙时停止，即分配给 item->w_id'th Worker 的项尚未完成。
+
+   调用者应该是检查点处理程序。
+
+   包含已提交低水位标记的刷新值的最后丢弃项的副本存储在 @c lwm 容器成员中，以供调用者进一步处理。
+   @c last_done 使用在 GAQ 解析期间遇到的每个 Worker 的最新 total_seqno 进行更新。
+
+   @note Slave_job_group 的动态分配成员（如 group_relay_log_name）在此处释放。
+
+   @return 丢弃的项的数量
+*/
 size_t Slave_committed_queue::move_queue_head(Slave_worker_array *ws) {
   DBUG_TRACE;
   size_t cnt = 0;
@@ -1386,6 +1503,9 @@ size_t Slave_committed_queue::move_queue_head(Slave_worker_array *ws) {
       The current job has not been processed or it was not
       even assigned, this means there is a gap.
     */
+    /*
+      当前任务尚未处理或甚至未分配，这意味着存在间隙。
+    */
     if (ptr_g->worker_id == MTS_WORKER_UNDEF || ptr_g->done.load() == 0)
       break; /* gap at entry'th */
 
@@ -1397,17 +1517,26 @@ size_t Slave_committed_queue::move_queue_head(Slave_worker_array *ws) {
     /*
       Memorizes the latest valid group_relay_log_name.
     */
+    /*
+      记住最新的有效 group_relay_log_name。
+    */
     if (ptr_g->group_relay_log_name) {
       strcpy(grl_name, ptr_g->group_relay_log_name);
       my_free(ptr_g->group_relay_log_name);
       /*
         It is important to mark the field as freed.
       */
+      /*
+        标记该字段为已释放是很重要的。
+      */
       ptr_g->group_relay_log_name = nullptr;
     }
 
     /*
       Removes the job from the (G)lobal (A)ssigned (Q)ueue.
+    */
+    /*
+      从全局分配队列（GAQ）中移除任务。
     */
     Slave_job_group g = Slave_job_group();
     (void)de_queue(&g);
@@ -1416,6 +1545,9 @@ size_t Slave_committed_queue::move_queue_head(Slave_worker_array *ws) {
       Stores the memorized name into the result struct. Note that we
       take care of the pointer first and then copy the other elements
       by assigning the structures.
+    */
+    /*
+      将记住的名称存储到结果结构中。注意，我们首先处理指针，然后通过结构赋值复制其他元素。
     */
     if (grl_name[0] != 0) {
       strcpy(lwm.group_relay_log_name, grl_name);
@@ -1432,12 +1564,18 @@ size_t Slave_committed_queue::move_queue_head(Slave_worker_array *ws) {
         There must be some progress otherwise we should have
         exit the loop earlier.
       */
+      /*
+        必须有一些进展，否则我们应该更早退出循环。
+      */
       assert(l < ptr_g->total_seqno);
     }
 #endif
     /*
       This is used to calculate the last time each worker has
       processed events.
+    */
+    /*
+      这用于计算每个 Worker 最后一次处理事件的时间。
     */
     last_done[w_i->id] = ptr_g->total_seqno;
     cnt++;
@@ -1661,32 +1799,40 @@ static int64 get_sequence_number(Log_event *ev) {
   @return 0 success
          -1 got killed or an error happened during applying
 */
+/**
+  MTS Worker 主例程。
+  Worker 线程循环等待事件，执行事件并修复统计计数器。
+
+  @return 0 表示成功
+         -1 表示线程被杀死或在应用过程中发生错误
+*/
 int Slave_worker::slave_worker_exec_event(Log_event *ev) {
-  Relay_log_info *rli = c_rli;
-  THD *thd = info_thd;
-  int ret = 0;
+  Relay_log_info *rli = c_rli;  // 获取 Relay_log_info 对象
+  THD *thd = info_thd;  // 获取 THD 对象
+  int ret = 0;  // 返回值，初始化为 0
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
-  thd->server_id = ev->server_id;
-  thd->unmasked_server_id = ev->common_header->unmasked_server_id;
-  thd->set_time();
-  thd->lex->set_current_query_block(nullptr);
+  thd->server_id = ev->server_id;  // 设置 THD 的 server_id 为事件的 server_id
+  thd->unmasked_server_id = ev->common_header->unmasked_server_id;  // 设置 THD 的 unmasked_server_id
+  thd->set_time();  // 设置 THD 的时间
+  thd->lex->set_current_query_block(nullptr);  // 设置当前查询块为 nullptr
   if (!ev->common_header->when.tv_sec)
     ev->common_header->when.tv_sec = static_cast<long>(time(nullptr));
   ev->thd = thd;  // todo: assert because up to this point, ev->thd == 0
   ev->worker = this;
 
 #ifndef NDEBUG
+  // 在调试模式下，检查逻辑时钟调度器的时间戳条件
   if (!is_mts_db_partitioned(rli) && may_have_timestamp(ev) &&
       !curr_group_seen_sequence_number) {
-    curr_group_seen_sequence_number = true;
+    curr_group_seen_sequence_number = true;  // 标记当前组已看到序列号
 
     longlong lwm_estimate =
         static_cast<Mts_submode_logical_clock *>(rli->current_mts_submode)
-            ->estimate_lwm_timestamp();
-    int64 last_committed = get_last_committed(ev);
-    int64 sequence_number = get_sequence_number(ev);
+            ->estimate_lwm_timestamp();  // 估计最低水位线时间戳
+    int64 last_committed = get_last_committed(ev);  // 获取事件的最后提交时间
+    int64 sequence_number = get_sequence_number(ev);  // 获取事件的序列号
     /*
       The commit timestamp waiting condition:
 
@@ -1695,32 +1841,45 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
       must have been satisfied by Coordinator.
       The first scheduled transaction does not have to wait for anybody.
     */
+    /*
+      提交时间戳等待条件：
+
+        lwm_estimate < last_committed  <=>  last_committed  \not <= lwm_estimate
+
+      必须由协调器满足。
+      第一个调度的事务不必等待任何人。
+    */
     assert(rli->gaq->entry == ev->mts_group_idx ||
-           Mts_submode_logical_clock::clock_leq(last_committed, lwm_estimate));
-    assert(lwm_estimate != SEQ_UNINIT || rli->gaq->entry == ev->mts_group_idx);
+           Mts_submode_logical_clock::clock_leq(last_committed, lwm_estimate));  // 断言条件
+    assert(lwm_estimate != SEQ_UNINIT || rli->gaq->entry == ev->mts_group_idx);  // 断言条件
     /*
       The current transaction's timestamp can't be less that lwm.
+    */
+    /*
+      当前事务的时间戳不能小于 lwm。
     */
     assert(sequence_number == SEQ_UNINIT ||
            !Mts_submode_logical_clock::clock_leq(
                sequence_number, static_cast<Mts_submode_logical_clock *>(
                                     rli->current_mts_submode)
-                                    ->estimate_lwm_timestamp()));
+                                    ->estimate_lwm_timestamp()));  // 断言条件
   }
 #endif
 
   // Address partitioning only in database mode
+  // 仅在数据库模式下处理分区
   if (!is_gtid_event(ev) && is_mts_db_partitioned(rli)) {
     if (ev->contains_partition_info(end_group_sets_max_dbs)) {
-      uint num_dbs = ev->mts_number_dbs();
+      uint num_dbs = ev->mts_number_dbs();  // 获取事件中的数据库数量
 
-      if (num_dbs == OVER_MAX_DBS_IN_EVENT_MTS) num_dbs = 1;
+      if (num_dbs == OVER_MAX_DBS_IN_EVENT_MTS) num_dbs = 1;  // 如果超过最大数据库数量，则设置为 1
 
-      assert(num_dbs > 0);
+      assert(num_dbs > 0);  // 断言数据库数量大于 0
 
       for (uint k = 0; k < num_dbs; k++) {
         bool found = false;
 
+        // 检查当前组执行分区是否已包含该分区
         for (size_t i = 0; i < curr_group_exec_parts.size() && !found; i++) {
           found = curr_group_exec_parts[i] == ev->mts_assigned_partitions[k];
         }
@@ -1730,27 +1889,32 @@ int Slave_worker::slave_worker_exec_event(Log_event *ev) {
             assert(ev->mts_assigned_partitions[k]->worker == worker);
             since entry could be marked as wanted by other worker.
           */
-          curr_group_exec_parts.push_back(ev->mts_assigned_partitions[k]);
+          /*
+            注意，不能断言：
+            assert(ev->mts_assigned_partitions[k]->worker == worker);
+            因为该条目可能被其他 Worker 标记为需要。
+          */
+          curr_group_exec_parts.push_back(ev->mts_assigned_partitions[k]);  // 将分区添加到当前组执行分区
         }
       }
-      end_group_sets_max_dbs = false;
+      end_group_sets_max_dbs = false;  // 重置 end_group_sets_max_dbs
     }
   }
 
-  set_future_event_relay_log_pos(ev->future_event_relay_log_pos);
-  set_master_log_pos(static_cast<ulong>(ev->common_header->log_pos));
-  set_gaq_index(ev->mts_group_idx);
-  ret = ev->do_apply_event_worker(this);
+  set_future_event_relay_log_pos(ev->future_event_relay_log_pos);  // 设置未来事件的中继日志位置
+  set_master_log_pos(static_cast<ulong>(ev->common_header->log_pos));  // 设置主日志位置
+  set_gaq_index(ev->mts_group_idx);  // 设置 GAQ 索引
+  ret = ev->do_apply_event_worker(this);  // 执行事件
 
   DBUG_EXECUTE_IF("after_executed_write_rows_event", {
     if (ev->get_type_code() == binary_log::WRITE_ROWS_EVENT) {
       static constexpr char act[] = "now signal executed";
       assert(opt_debug_sync_timeout > 0);
-      assert(!debug_sync_set_action(thd, STRING_WITH_LEN(act)));
+      assert(!debug_sync_set_action(thd, STRING_WITH_LEN(act)));  // 调试同步
     }
   };);
 
-  return ret;
+  return ret;  // 返回执行结果
 }
 
 /**
@@ -2305,45 +2469,50 @@ static void remove_item_from_jobs(slave_job_item *job_item,
   worker->events_done++;
 }
 /**
+   Worker的例程，用于等待通过@c append_item_to_jobs()分配的新任务
    Worker's routine to wait for a new assignment through
    @c append_item_to_jobs()
 
-   @param worker    a pointer to the waiting Worker struct
-   @param job_item  a pointer to struct carrying a reference to an event
+   @param worker    指向等待的Worker结构的指针
+                    a pointer to the waiting Worker struct
+   @param job_item  指向携带事件引用的结构的指针
+                    a pointer to struct carrying a reference to an event
 
-   @return NULL failure or
-           a-pointer to an item.
+   @return NULL     失败
+           failure or
+           a-pointer 指向一个item
+           to an item.
 */
 static struct slave_job_item *pop_jobs_item(Slave_worker *worker,
                                             Slave_job_item *job_item) {
-  THD *thd = worker->info_thd;
+  THD *thd = worker->info_thd;  // 获取Worker关联的线程对象
 
-  mysql_mutex_lock(&worker->jobs_lock);
+  mysql_mutex_lock(&worker->jobs_lock);  // 加锁保护任务队列
 
-  job_item->data = nullptr;
-  while (!job_item->data && !thd->killed &&
+  job_item->data = nullptr;  // 初始化job_item的数据为空
+  while (!job_item->data && !thd->killed &&  // 当没有数据且线程未被终止时循环
          (worker->running_status == Slave_worker::RUNNING ||
           worker->running_status == Slave_worker::STOP)) {
-    PSI_stage_info old_stage;
+    PSI_stage_info old_stage;  // 保存当前线程状态
 
-    if (set_max_updated_index_on_stop(worker, job_item)) break;
-    if (job_item->data == nullptr) {
-      worker->wq_empty_waits++;
-      thd->ENTER_COND(&worker->jobs_cond, &worker->jobs_lock,
+    if (set_max_updated_index_on_stop(worker, job_item)) break;  // 检查停止条件
+    if (job_item->data == nullptr) {  // 如果仍无数据
+      worker->wq_empty_waits++;  // 增加空等待计数器
+      thd->ENTER_COND(&worker->jobs_cond, &worker->jobs_lock,  // 进入条件等待
                       &stage_replica_waiting_event_from_coordinator,
                       &old_stage);
-      mysql_cond_wait(&worker->jobs_cond, &worker->jobs_lock);
-      mysql_mutex_unlock(&worker->jobs_lock);
-      thd->EXIT_COND(&old_stage);
-      mysql_mutex_lock(&worker->jobs_lock);
+      mysql_cond_wait(&worker->jobs_cond, &worker->jobs_lock);  // 等待条件信号
+      mysql_mutex_unlock(&worker->jobs_lock);  // 临时解锁
+      thd->EXIT_COND(&old_stage);  // 退出条件等待状态
+      mysql_mutex_lock(&worker->jobs_lock);  // 重新加锁
     }
   }
-  if (job_item->data) worker->curr_jobs--;
+  if (job_item->data) worker->curr_jobs--;  // 如果获取到数据，减少当前任务计数
 
-  mysql_mutex_unlock(&worker->jobs_lock);
+  mysql_mutex_unlock(&worker->jobs_lock);  // 释放锁
 
-  thd_proc_info(worker->info_thd, "Executing event");
-  return job_item;
+  thd_proc_info(worker->info_thd, "Executing event");  // 更新线程状态为"执行事件"
+  return job_item;  // 返回获取到的job_item（可能为NULL或有效数据）
 }
 
 /**
@@ -2414,31 +2583,45 @@ void report_error_to_coordinator(Slave_worker *worker) {
   return returns 0 if the group of jobs are applied successfully, otherwise
          returns an error code.
  */
+/**
+  应用一个任务组。
+
+  @note 该函数维护 Worker 的 CGEP 并修改 APH，通过 @c slave_worker_ends_group() 更新 GAQ 中的当前组项。
+
+  param[in] worker 调用该函数的 Worker。
+  param[in] rli    从库的中继日志信息对象。
+
+  return 如果任务组成功应用，则返回 0，否则返回错误代码。
+ */
 int slave_worker_exec_job_group(Slave_worker *worker, Relay_log_info *rli) {
-  struct slave_job_item item = {nullptr, 0, 0};
-  struct slave_job_item *job_item = &item;
-  THD *thd = worker->info_thd;
-  bool seen_gtid = false;
-  bool seen_begin = false;
-  int error = 0;
-  Log_event *ev = nullptr;
-  uint start_relay_number;
-  my_off_t start_relay_pos;
+  struct slave_job_item item = {nullptr, 0, 0};  // 任务项结构体
+  struct slave_job_item *job_item = &item;  // 任务项指针
+  THD *thd = worker->info_thd;  // 获取 Worker 的 THD 对象
+  bool seen_gtid = false;  // 是否看到 GTID 事件
+  bool seen_begin = false;  // 是否看到事务开始事件
+  int error = 0;  // 错误码
+  Log_event *ev = nullptr;  // 事件指针
+  uint start_relay_number;  // 起始中继日志编号
+  my_off_t start_relay_pos;  // 起始中继日志位置
 
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪
 
+  // 如果 Worker 有事务重试次数，则重置
   if (unlikely(worker->trans_retries > 0)) worker->trans_retries = 0;
 
+  // 从任务队列中弹出任务项
   job_item = pop_jobs_item(worker, job_item);
-  start_relay_number = job_item->relay_number;
-  start_relay_pos = job_item->relay_pos;
+  start_relay_number = job_item->relay_number;  // 获取起始中继日志编号
+  start_relay_pos = job_item->relay_pos;  // 获取起始中继日志位置
 
   /* Current event with Worker associator. */
-  RLI_current_event_raii worker_curr_ev(worker, ev);
+  /* 当前事件与 Worker 关联。 */
+  RLI_current_event_raii worker_curr_ev(worker, ev);  // 当前事件的 RAII 对象
 
   while (true) {
-    Slave_job_group *ptr_g;
+    Slave_job_group *ptr_g;  // 任务组指针
 
+    // 如果 Worker 被杀死或停止接受任务，则退出
     if (unlikely(thd->killed ||
                  worker->running_status == Slave_worker::STOP_ACCEPTED)) {
       assert(worker->running_status != Slave_worker::ERROR_LEAVING);
@@ -2447,10 +2630,10 @@ int slave_worker_exec_job_group(Slave_worker *worker, Relay_log_info *rli) {
       goto err;
     }
 
-    ev = job_item->data;
-    assert(ev != nullptr);
+    ev = job_item->data;  // 获取任务项中的事件
+    assert(ev != nullptr);  // 断言事件不为空
     DBUG_PRINT("info", ("W_%lu <- job item: %p data: %p thd: %p", worker->id,
-                        job_item, ev, thd));
+                        job_item, ev, thd));  // 打印调试信息
     /*
       Associate the freshly read event with worker.
       The binding also remains when the loop breaks at the group end event
@@ -2458,35 +2641,46 @@ int slave_worker_exec_job_group(Slave_worker *worker, Relay_log_info *rli) {
       the Worker by the slave info table update and commit time,
       see slave_worker_ends_group().
     */
-    worker_curr_ev.set_current_event(ev);
+    /*
+      将刚刚读取的事件与 Worker 关联。
+      当循环在组结束事件处中断时，绑定仍然存在，因此 DDL Query_log_event 作为中断器将通过从库信息表更新和提交时间保持与 Worker 的绑定，
+      参见 slave_worker_ends_group()。
+    */
+    worker_curr_ev.set_current_event(ev);  // 绑定事件到 Worker
 
+    // 如果事件是 GTID 事件，则标记为已看到 GTID
     if (is_gtid_event(ev)) seen_gtid = true;
+    // 如果未看到事务开始事件且事件是事务开始事件，则标记为已看到事务开始
     if (!seen_begin && ev->starts_group()) {
       seen_begin = true;  // The current group is started with B-event
       worker->end_group_sets_max_dbs = true;
     }
     set_timespec_nsec(&worker->ts_exec[0], 0);  // pre-exec
     worker->stats_read_time +=
-        diff_timespec(&worker->ts_exec[0], &worker->ts_exec[1]);
+        diff_timespec(&worker->ts_exec[0], &worker->ts_exec[1]);  // 更新读取时间
     /* Adapting to possible new Format_description_log_event */
-    ptr_g = rli->gaq->get_job_group(ev->mts_group_idx);
+    /* 适应可能的新的 Format_description_log_event */
+    ptr_g = rli->gaq->get_job_group(ev->mts_group_idx);  // 获取任务组
     if (ptr_g->new_fd_event) {
+      // 如果任务组中有新的 Format_description_log_event，则设置 Worker 的描述事件
       error = worker->set_rli_description_event(ptr_g->new_fd_event);
-      if (unlikely(error)) goto err;
-      ptr_g->new_fd_event = nullptr;
+      if (unlikely(error)) goto err;  // 如果出错，跳转到错误处理
+      ptr_g->new_fd_event = nullptr;  // 清空新的 Format_description_log_event
     }
 
+    // 执行事件
     error = worker->slave_worker_exec_event(ev);
 
     set_timespec_nsec(&worker->ts_exec[1], 0);  // pre-exec
     worker->stats_exec_time +=
-        diff_timespec(&worker->ts_exec[1], &worker->ts_exec[0]);
+        diff_timespec(&worker->ts_exec[1], &worker->ts_exec[0]);  // 更新执行时间
+    // 如果出错或发现提交顺序死锁，则准备重试
     if (error || worker->found_commit_order_deadlock()) {
-      worker->prepare_for_retry(*ev);
+      worker->prepare_for_retry(*ev);  // 准备重试
       error = worker->retry_transaction(start_relay_number, start_relay_pos,
                                         job_item->relay_number,
-                                        job_item->relay_pos);
-      if (error) goto err;
+                                        job_item->relay_pos);  // 重试事务
+      if (error) goto err;  // 如果重试失败，跳转到错误处理
     }
     /*
       p-event or any other event of B-free (malformed) group can
@@ -2496,31 +2690,44 @@ int slave_worker_exec_job_group(Slave_worker *worker, Relay_log_info *rli) {
       WL#7592 refines the original assert disjunction formula
       with the final disjunct.
     */
+    /*
+      p-event 或任何其他 B-free（格式错误）组的事件可以使用逻辑时钟调度器“提交”。
+      在这种情况下，Worker id 指向唯一活动的“独占” Worker，该 Worker 逐个处理此类格式错误的组事件。
+      WL#7592 使用最终析取项改进了原始断言析取公式。
+    */
     assert(seen_begin || is_gtid_event(ev) ||
            ev->get_type_code() == binary_log::QUERY_EVENT ||
-           is_mts_db_partitioned(rli) || worker->id == 0 || seen_gtid);
+           is_mts_db_partitioned(rli) || worker->id == 0 || seen_gtid);  // 断言条件
 
+    // 如果事件是组结束事件，或者未看到事务开始且事件不是 GTID 事件且是 QUERY_EVENT 或未分区且未看到 GTID，则退出循环
     if (ev->ends_group() || (!seen_begin && !is_gtid_event(ev) &&
                              (ev->get_type_code() == binary_log::QUERY_EVENT ||
                               /* break through by LC only in GTID off */
                               (!seen_gtid && !is_mts_db_partitioned(rli)))))
       break;
 
+    // 从任务队列中移除任务项
     remove_item_from_jobs(job_item, worker, rli);
     /* The event will be used later if worker is NULL, so it is not freed */
-    if (ev->worker != nullptr) delete ev;
+    /* 如果 Worker 为 NULL，则事件稍后仍会使用，因此不释放 */
+    if (ev->worker != nullptr) delete ev;  // 如果事件有 Worker，则删除事件
 
+    // 弹出下一个任务项
     job_item = pop_jobs_item(worker, job_item);
   }
 
   DBUG_PRINT("info", (" commits GAQ index %lu, last committed  %lu",
-                      ev->mts_group_idx, worker->last_group_done_index));
+                      ev->mts_group_idx, worker->last_group_done_index));  // 打印调试信息
   /* The group is applied successfully, so error should be 0 */
-  worker->slave_worker_ends_group(ev, 0);
+  /* 组成功应用，因此错误应为 0 */
+  worker->slave_worker_ends_group(ev, 0);  // 结束组
 
   /*
     Check if the finished group started with a Gtid_log_event to update the
     monitoring information
+  */
+  /*
+    检查完成的组是否以 Gtid_log_event 开始，以更新监控信息
   */
   if (current_thd->rli_slave->is_processing_trx()) {
     DBUG_EXECUTE_IF("rpl_ps_tables", {
@@ -2537,9 +2744,12 @@ int slave_worker_exec_job_group(Slave_worker *worker, Relay_log_info *rli) {
         partial transaction in the relay log, we must not consider this
         transaction completed and, instead, clear the monitoring info.
       */
-      current_thd->rli_slave->clear_processing_trx();
+      /*
+        如果这是由协调器注入的回滚事件，因为中继日志中存在部分事务，则我们不得认为此事务已完成，而是清除监控信息。
+      */
+      current_thd->rli_slave->clear_processing_trx();  // 清除处理中的事务
     } else {
-      current_thd->rli_slave->finished_processing();
+      current_thd->rli_slave->finished_processing();  // 标记事务处理完成
     }
     DBUG_EXECUTE_IF("rpl_ps_tables", {
       const char act[] =
@@ -2554,31 +2764,32 @@ int slave_worker_exec_job_group(Slave_worker *worker, Relay_log_info *rli) {
   DBUG_PRINT("mts", ("Check_slave_debug_group worker %lu mta_checkpoint_group"
                      " %u processed %lu debug %d\n",
                      worker->id, opt_mta_checkpoint_group, worker->groups_done,
-                     DBUG_EVALUATE_IF("check_replica_debug_group", 1, 0)));
+                     DBUG_EVALUATE_IF("check_replica_debug_group", 1, 0)));  // 打印调试信息
 
   if (DBUG_EVALUATE_IF("check_replica_debug_group", 1, 0) &&
       opt_mta_checkpoint_group == worker->groups_done) {
-    DBUG_PRINT("mts", ("Putting worker %lu in busy wait.", worker->id));
-    while (true) my_sleep(6000000);
+    DBUG_PRINT("mts", ("Putting worker %lu in busy wait.", worker->id));  // 打印调试信息
+    while (true) my_sleep(6000000);  // 进入忙等待
   }
 #endif
 
+  // 从任务队列中移除任务项
   remove_item_from_jobs(job_item, worker, rli);
-  delete ev;
+  delete ev;  // 删除事件
 
-  return 0;
+  return 0;  // 返回成功
 err:
   if (error) {
-    Commit_stage_manager::get_instance().finish_session_ticket(thd);
+    Commit_stage_manager::get_instance().finish_session_ticket(thd);  // 完成会话票证
 
-    report_error_to_coordinator(worker);
+    report_error_to_coordinator(worker);  // 向协调器报告错误
     DBUG_PRINT("info", ("Worker %lu is exiting: killed %i, error %i, "
                         "running_status %d",
                         worker->id, thd->killed.load(), thd->is_error(),
-                        worker->running_status));
-    worker->slave_worker_ends_group(ev, error); /* last done sets post exec */
+                        worker->running_status));  // 打印调试信息
+    worker->slave_worker_ends_group(ev, error); /* last done sets post exec */  // 结束组
   }
-  return error;
+  return error;  // 返回错误
 }
 
 const char *Slave_worker::get_for_channel_str(bool upper_case) const {

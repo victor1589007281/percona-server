@@ -450,8 +450,12 @@ void Gtid_monitoring_info::start(Gtid gtid_arg, ulonglong original_ts_arg,
     the previous processing_trx and fetch the current timestamp as the new
     start_time.
   */
+  /**
+    当新事务开始处理时，我们重置之前 processing_trx 的所有信息，并获取当前时间戳作为新的 start_time。
+  */
   if (!processing_trx->gtid.equals(gtid_arg) || !processing_trx->is_retrying) {
     /* Collect current timestamp before the atomic operation */
+    /* 在原子操作之前收集当前时间戳 */
     ulonglong start_time = gtid_monitoring_getsystime();
 
     atomic_lock();
@@ -477,6 +481,9 @@ void Gtid_monitoring_info::start(Gtid gtid_arg, ulonglong original_ts_arg,
       because it determines if the information will be kept after it finishes
       executing.
     */
+    /**
+      如果事务正在重试，则仅更新 skipped 字段，因为它决定了事务执行完成后信息是否会被保留。
+    */
     atomic_lock();
     processing_trx->skipped = skipped_arg;
     atomic_unlock();
@@ -485,6 +492,7 @@ void Gtid_monitoring_info::start(Gtid gtid_arg, ulonglong original_ts_arg,
 
 void Gtid_monitoring_info::finish() {
   /* Collect current timestamp before the atomic operation */
+  /* 在原子操作之前收集当前时间戳 */
   ulonglong end_time = gtid_monitoring_getsystime();
 
   atomic_lock();
@@ -493,6 +501,11 @@ void Gtid_monitoring_info::finish() {
     We only swap if the transaction was not skipped.
 
     Notice that only applier thread set the skipped variable to true.
+  */
+  /*
+    只有在事务未被跳过时才会进行交换。
+
+    注意，只有应用线程会将 skipped 变量设置为 true。
   */
   if (!processing_trx->skipped) std::swap(processing_trx, last_processed_trx);
 

@@ -1205,36 +1205,52 @@ struct Gtid {
 };
 
 /// Structure to store the GTID and timing information.
+/// 用于存储 GTID 和时间信息的结构体。
 struct Trx_monitoring_info {
   /// GTID being monitored.
+  /// 正在监控的 GTID。
   Gtid gtid;
   /// OCT of the GTID being monitored.
+  /// 正在监控的 GTID 的原始提交时间戳（OCT）。
   ulonglong original_commit_timestamp;
   /// ICT of the GTID being monitored.
+  /// 正在监控的 GTID 的立即提交时间戳（ICT）。
   ulonglong immediate_commit_timestamp;
   /// When the GTID transaction started to be processed.
+  /// GTID 事务开始处理的时间。
   ulonglong start_time;
   /// When the GTID transaction finished to be processed.
+  /// GTID 事务完成处理的时间。
   ulonglong end_time;
   /// True if the GTID is being applied but will be skipped.
+  /// 如果 GTID 正在应用但将被跳过，则为 true。
   bool skipped;
   /// True when this information contains useful data.
+  /// 当此信息包含有用数据时为 true。
   bool is_info_set;
   /// Number of the last transient error of this transaction
+  /// 此事务的最后一次瞬时错误的编号。
   uint last_transient_error_number;
   /// Message of the last transient error of this transaction
+  /// 此事务的最后一次瞬时错误的消息。
   char last_transient_error_message[MAX_SLAVE_ERRMSG];
   /// Timestamp in microseconds of the last transient error of this transaction
+  /// 此事务的最后一次瞬时错误的时间戳（以微秒为单位）。
   ulonglong last_transient_error_timestamp;
   /// Number of times this transaction was retried
+  /// 此事务重试的次数。
   ulong transaction_retries;
   /// True when the transaction is retrying
+  /// 当事务正在重试时为 true。
   bool is_retrying;
   /// The compression type
+  /// 压缩类型。
   binary_log::transaction::compression::type compression_type;
   /// The compressed bytes
+  /// 压缩后的字节数。
   ulonglong compressed_bytes;
   /// The uncompressed bytes
+  /// 未压缩的字节数。
   ulonglong uncompressed_bytes;
 
   /// Constructor
