@@ -497,10 +497,36 @@ void Log_files_capacity::update_exposed(lsn_t hard_logical_capacity) {
       OS_FILE_LOG_BLOCK_SIZE));
 }
 
+/**
+ * 获取重做日志的硬逻辑容量限制
+ * 
+ * 功能说明：
+ * - 返回日志写入线程(log_writer)可见的日志容量限制
+ * - 该值包含额外的写入器边距(LOG_EXTRA_WRITER_MARGIN_PCT)
+ * - 用于确保日志写入线程有足够的空间执行"紧急救援"操作
+ * 
+ * 线程安全：
+ * - 通过原子操作保证多线程访问安全
+ * 
+ * @return 当前硬逻辑容量限制值(以LSN表示)
+ */
 lsn_t Log_files_capacity::hard_logical_capacity() const {
   return m_exposed.m_hard_logical_capacity.load();
 }
 
+/**
+ * 获取重做日志的软逻辑容量限制
+ * 
+ * 功能说明：
+ * - 返回用户线程可见的日志容量限制
+ * - 该值不包含写入器边距(LOG_EXTRA_WRITER_MARGIN_PCT)
+ * - 用于控制用户线程的写入行为
+ * 
+ * 线程安全：
+ * - 通过原子操作保证多线程访问安全
+ * 
+ * @return 当前软逻辑容量限制值(以LSN表示)
+ */
 lsn_t Log_files_capacity::soft_logical_capacity() const {
   return m_exposed.m_soft_logical_capacity.load();
 }

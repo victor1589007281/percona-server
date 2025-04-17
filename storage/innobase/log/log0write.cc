@@ -1586,26 +1586,36 @@ static inline void prepare_full_blocks(const log_t &log, byte *buffer,
   }
 }
 
+// 将日志块写入磁盘文件
 static inline dberr_t write_blocks(log_t &log, byte *write_buf,
                                    size_t write_size, os_offset_t real_offset) {
+  // 断言检查：写入大小必须至少为一个日志块大小
   ut_a(write_size >= OS_FILE_LOG_BLOCK_SIZE);
+  // 断言检查：写入大小必须是日志块大小的整数倍
   ut_a(write_size % OS_FILE_LOG_BLOCK_SIZE == 0);
+  // 断言检查：实际偏移量除以页大小不能超过最大页号
   ut_a(real_offset / UNIV_PAGE_SIZE <= PAGE_NO_MAX);
 
+  // 断言检查：预写入结束偏移量必须是预写入大小的整数倍
   ut_a(log.write_ahead_end_offset % srv_log_write_ahead_size == 0);
 
+  // 断言检查：写入范围必须在预写入区域内或对齐预写入大小
   ut_a(real_offset + write_size <= log.write_ahead_end_offset ||
        (real_offset + write_size) % srv_log_write_ahead_size == 0);
 
+  // 执行实际的日志块写入操作
   const dberr_t err = log_data_blocks_write(log.m_current_file_handle,
                                             real_offset, write_size, write_buf);
 
+  // 检查写入是否成功
   if (err != DB_SUCCESS) {
     return err;
   }
 
+  // 将写入的数据提供给redo日志归档系统
   meb::redo_log_archive_produce(write_buf, write_size);
 
+  // 返回成功状态
   return DB_SUCCESS;
 }
 
@@ -1740,76 +1750,107 @@ static inline void update_current_write_ahead(log_t &log,
 
 }  // namespace Log_files_write_impl
 
+// 将日志缓冲区数据写入磁盘
 static dberr_t log_write_buffer(log_t &log, byte *buffer, size_t buffer_size,
                                 lsn_t start_lsn) {
+  // 确保当前线程持有写入器互斥锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 使用日志文件写入实现命名空间
   using namespace Log_files_write_impl;
 
+  // 验证缓冲区范围是否有效
   validate_buffer(log, buffer, buffer_size);
 
+  // 验证起始LSN是否有效
   validate_start_lsn(log, start_lsn, buffer_size);
 
+  // 计算在日志文件中的实际偏移量
   const auto real_offset = log.m_current_file.offset(start_lsn);
 
+  // 标记是否直接从日志缓冲区写入
   bool write_from_log_buffer;
 
+  // 计算实际要写入的大小
   auto write_size = compute_how_much_to_write(log, real_offset, buffer_size,
                                               write_from_log_buffer);
 
+  // 如果写入大小为0，表示需要切换到下一个日志文件
   if (write_size == 0) {
     return start_next_file(log, start_lsn);
   }
 
+  // 准备完整的日志块（填充头部信息等）
   prepare_full_blocks(log, buffer, write_size, start_lsn);
 
+  // 写入缓冲区指针
   byte *write_buf;
+  // 预写入的字节数
   os_offset_t written_ahead = 0;
+  // LSN前进量
   lsn_t lsn_advance = write_size;
 
+  // 如果可以直接从日志缓冲区写入
   if (write_from_log_buffer) {
     /* We have at least one completed log block to write.
     We write completed blocks from the log buffer. Note,
     that possibly we do not write all completed blocks,
     because of write-ahead strategy (described earlier). */
+    // 我们至少有一个完整的日志块可以写入，直接从日志缓冲区写入完整块
+    
+    // 调试打印日志写入信息
     DBUG_PRINT("ib_log",
                ("write from log buffer start_lsn=" LSN_PF " write_lsn=" LSN_PF
                 " -> " LSN_PF,
                 start_lsn, log.write_lsn.load(), start_lsn + lsn_advance));
 
+    // 使用原始缓冲区作为写入缓冲区
     write_buf = buffer;
 
+    // 调试同步点
     log_sync_point("log_writer_before_write_from_log_buffer");
 
   } else {
+    // 处理不完整块写入的情况
     DBUG_PRINT("ib_log",
                ("incomplete write start_lsn=" LSN_PF " write_lsn=" LSN_PF
                 " -> " LSN_PF,
                 start_lsn, log.write_lsn.load(), start_lsn + lsn_advance));
 
 #ifdef UNIV_DEBUG
+    // 调试模式下检查是否是新不完整块的第一次写入
     if (start_lsn == log.write_lsn.load()) {
       log_sync_point("log_writer_before_write_new_incomplete_block");
     }
     /* Else: we are doing yet another incomplete block write within the
     same block as the one in which we did the previous write. */
+    // 否则：我们正在同一个块中进行又一次的不完整块写入
 #endif /* UNIV_DEBUG */
 
+    // 使用预写入缓冲区
     write_buf = log.write_ahead_buf;
 
     /* We write all the data directly from the write-ahead buffer,
     where we first need to copy the data. */
+    // 我们将所有数据直接从预写入缓冲区写入，首先需要将数据复制到该缓冲区
+    
+    // 将数据复制到预写入缓冲区并完成块准备
     copy_to_write_ahead_buffer(log, buffer, write_size, start_lsn);
 
+    // 如果当前预写入空间不足，准备额外的预写入空间
     if (!current_write_ahead_enough(log, real_offset, 1)) {
       written_ahead = prepare_for_write_ahead(log, real_offset, write_size);
     }
   }
 
+  // 增加操作系统日志待写入计数器
   srv_stats.os_log_pending_writes.inc();
 
   /* Now, we know, that we are going to write completed
   blocks only (originally or copied and completed). */
+  // 现在我们知道我们将只写入完整的块（原始或复制并完成的）
+  
+  // 执行实际的块写入操作
   const dberr_t err = write_blocks(log, write_buf, write_size, real_offset);
   if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
     return err;
@@ -1822,37 +1863,53 @@ static dberr_t log_write_buffer(log_t &log, byte *buffer, size_t buffer_size,
   const lsn_t new_write_lsn = start_lsn + lsn_advance;
   ut_a(new_write_lsn > log.write_lsn.load());
 
+  // 更新写入LSN
   log.write_lsn.store(new_write_lsn);
 
+  // 通知其他线程LSN已更新
   notify_about_advanced_write_lsn(log, old_write_lsn, new_write_lsn);
 
+  // 调试同步点：缓冲区限制更新前
   log_sync_point("log_writer_before_buf_limit_update");
 
+  // 更新日志缓冲区限制
   log_update_buf_limit(log, new_write_lsn);
 
+  // 减少待写入计数器，增加写入计数器
   srv_stats.os_log_pending_writes.dec();
   srv_stats.log_writes.inc();
 
   /* Write ahead is included in write_size. */
+  // 预写入大小包含在总写入大小中
   ut_a(write_size >= written_ahead);
+  // 统计实际写入量（扣除预写入部分）
   srv_stats.os_log_written.add(write_size - written_ahead);
+  // 监控预写入填充量
   MONITOR_INC_VALUE(MONITOR_LOG_PADDED, written_ahead);
 
+  // 计算当前日志文件剩余空间
   int64_t free_space = log.m_capacity.soft_logical_capacity();
 
   /* The free space may be negative (up to -extra_margin),
   in which case we are in the emergency mode, eating the
   extra margin and asking to pause next user threads. */
+  // 剩余空间可能为负值（最大到-extra_margin），
+  // 这种情况下表示处于紧急模式，消耗额外空间并暂停后续用户线程
   free_space -= new_write_lsn - log.last_checkpoint_lsn.load();
 
+  // 设置监控指标：日志剩余空间
   MONITOR_SET(MONITOR_LOG_FREE_SPACE, free_space);
 
+  // 增加日志IO计数器
   log.n_log_ios++;
 
+  // 更新当前预写入区域
   update_current_write_ahead(log, real_offset, write_size);
 
+  // 返回成功状态
   return DB_SUCCESS;
 }
+
 
 static void log_writer_enter_extra_margin(log_t &log) {
   ut_ad(log_writer_mutex_own(log));
@@ -1874,24 +1931,39 @@ static void log_writer_exit_extra_margin(log_t &log) {
   log_sync_point("log_writer_exited_extra_margin");
 }
 
+/**
+ * 检查日志写入器是否进入或退出额外边距区域
+ * 
+ * @param log 日志系统引用
+ * @param checkpoint_lsn 当前检查点LSN
+ * @param next_write_lsn 计划写入的下一个LSN
+ * @return 返回true表示需要进入额外边距区域，false表示不需要
+ */
 static inline bool log_writer_extra_margin_check(log_t &log,
                                                  lsn_t checkpoint_lsn,
                                                  lsn_t next_write_lsn) {
+  // 确保当前线程持有写入器互斥锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 计算软限制LSN = 检查点LSN对齐块大小 + 日志软逻辑容量
   const lsn_t soft_limited_lsn =
       ut_uint64_align_down(checkpoint_lsn, OS_FILE_LOG_BLOCK_SIZE) +
       log.m_capacity.soft_logical_capacity();
 
+  // 如果计划写入LSN小于等于软限制LSN
   if (next_write_lsn <= soft_limited_lsn) {
+    // 如果当前在额外边距区域内，则退出该区域
     if (log.m_writer_inside_extra_margin) {
       log_writer_exit_extra_margin(log);
     }
+    // 返回false表示不需要额外边距
     return false;
   } else {
+    // 如果当前不在额外边距区域内，则进入该区域
     if (!log.m_writer_inside_extra_margin) {
       log_writer_enter_extra_margin(log);
     }
+    // 返回true表示需要额外边距
     return true;
   }
 }
@@ -1915,66 +1987,104 @@ void log_writer_check_if_exited_extra_margin(log_t &log) {
   log_writer_extra_margin_check(log, checkpoint_lsn, log_get_lsn(log));
 }
 
+/**
+ * 乐观检查检查点位置是否允许继续写入日志
+ * 
+ * @param log 日志系统引用
+ * @param last_write_lsn 上次写入的LSN位置
+ * @param next_write_lsn 计划写入的下一个LSN位置
+ * @return 返回pair<允许写入的最大LSN, 是否允许继续写入>
+ */
 static inline std::pair<lsn_t, bool> log_writer_wait_on_checkpoint_optimistic(
     log_t &log, lsn_t last_write_lsn, lsn_t next_write_lsn) {
+  // 确保当前线程持有写入器互斥锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 获取当前检查点LSN
   const lsn_t checkpoint_lsn = log.last_checkpoint_lsn.load();
 
+  // 计算硬限制LSN = 检查点LSN对齐块大小 + 日志文件硬容量
   const lsn_t hard_limited_lsn =
       ut_uint64_align_down(checkpoint_lsn, OS_FILE_LOG_BLOCK_SIZE) +
       log.m_capacity.hard_logical_capacity();
 
+  // 断言检查：上次写入LSN不能超过硬限制
   ut_a(last_write_lsn <= hard_limited_lsn);
+  // 断言检查：检查点LSN必须小于计划写入LSN
   ut_a(checkpoint_lsn < next_write_lsn);
 
+  // 返回硬限制LSN和是否允许写入(取反extra_margin检查结果)
   return {hard_limited_lsn,
           !log_writer_extra_margin_check(log, checkpoint_lsn, next_write_lsn)};
 }
 
+/**
+ * 悲观模式下等待检查点推进以释放日志空间
+ * 
+ * @param log 日志系统引用
+ * @param last_write_lsn 上次写入的LSN位置
+ * @param next_write_lsn 计划写入的下一个LSN位置
+ * @return 返回允许写入的最大LSN限制值
+ */
 static lsn_t log_writer_wait_on_checkpoint_pessimistic(log_t &log,
                                                        lsn_t last_write_lsn,
                                                        lsn_t next_write_lsn) {
+  // 确保当前线程持有写入器互斥锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 记录开始等待时间
   auto missing_space_started = Log_clock::now();
 
+  // 进入等待循环
   while (true) {
+    // 重置检查点事件信号计数器
     const int64_t next_checkpoint_sig_count =
         os_event_reset(log.next_checkpoint_event);
 
+    // 获取当前检查点LSN
     const lsn_t checkpoint_lsn = log.last_checkpoint_lsn.load();
 
+    // 乐观检查当前是否允许写入
     auto [hard_limited_lsn, write_allowed] =
         log_writer_wait_on_checkpoint_optimistic(log, last_write_lsn,
                                                  next_write_lsn);
 
+    // 如果允许写入，返回硬限制LSN
     if (write_allowed) {
       return hard_limited_lsn;
     }
 
+    // 通知检查点线程推进检查点
     os_event_set(log.checkpointer_event);
 
+    // 如果还有至少一个完整块的空间可写
     if (last_write_lsn + OS_FILE_LOG_BLOCK_SIZE <= hard_limited_lsn) {
       /* Write what we have - adjust the speed to speed of checkpoints
       going forward (to speed of page-cleaners). */
+      // 写入已有数据，调整速度与检查点推进速度匹配
       return hard_limited_lsn;
     }
 
+    // 如果写入线程未被暂停，推进可写入LSN
     if (!log.writer_threads_paused.load(std::memory_order_acquire)) {
       log_advance_ready_for_write_lsn(log);
     }
 
+    // 如果等待超过5秒仍未获得空间
     if (Log_clock::now() - missing_space_started >= std::chrono::seconds(5)) {
       /* We could not reclaim even single redo block for 5sec */
+      // 记录错误日志：无法回收重做日志块
       ib::error(ER_IB_MSG_LOG_WRITER_OUT_OF_SPACE, ulonglong{checkpoint_lsn});
       missing_space_started = Log_clock::now();
       log_sync_point("log_writer_ran_out_space");
     }
 
+    // 释放写入器互斥锁
     log_writer_mutex_exit(log);
 
+    // 检查是否允许创建检查点
     if (!log.m_allow_checkpoints.load()) {
+      // 根据恢复级别处理不同错误情况
       if (srv_force_recovery < 4) {
         ib::fatal(UT_LOCATION_HERE,
                   ER_IB_MSG_RECOVERY_NO_SPACE_IN_REDO_LOG__SKIP_IBUF_MERGES);
@@ -1991,51 +2101,81 @@ static lsn_t log_writer_wait_on_checkpoint_pessimistic(log_t &log,
     case it would be deadlock (we can't flush the latched
     page and advance the checkpoint). We only ask for the
     checkpoint, and wait for some time. */
+    // 不请求同步检查点以避免死锁，仅请求普通检查点
     log_request_checkpoint(log, false);
 
+    // 等待检查点事件，最多100微秒
     os_event_wait_time_low(log.next_checkpoint_event,
                            std::chrono::microseconds(100),
                            next_checkpoint_sig_count);
 
+    // 增加监控计数器：等待空闲空间的次数
     MONITOR_INC(MONITOR_LOG_WRITER_ON_FREE_SPACE_WAITS);
 
+    // 重新获取写入器互斥锁
     log_writer_mutex_enter(log);
   }
 }
 
+/**
+ * 等待检查点推进以确保有足够的日志空间
+ * 
+ * @param log 日志系统引用
+ * @param last_write_lsn 上次写入的LSN位置
+ * @param next_write_lsn 计划下次写入的LSN位置
+ * @return 返回允许写入的最大LSN限制值
+ */
 static lsn_t log_writer_wait_on_checkpoint(log_t &log, lsn_t last_write_lsn,
                                            lsn_t next_write_lsn) {
+  // 首先尝试乐观检查：获取当前检查点限制的LSN和是否允许写入
   auto [hard_limited_lsn, write_allowed] =
       log_writer_wait_on_checkpoint_optimistic(log, last_write_lsn,
                                                next_write_lsn);
+  
+  // 如果允许直接写入，返回硬限制LSN
   if (write_allowed) {
     return hard_limited_lsn;
   }
+  
+  // 否则进入悲观等待模式，等待检查点推进
   return log_writer_wait_on_checkpoint_pessimistic(log, last_write_lsn,
                                                    next_write_lsn);
 }
 
+/**
+ * 等待日志归档器(archiver)推进归档位置
+ * 
+ * @param log 日志系统引用
+ * @param next_write_lsn 计划写入的下一个LSN位置
+ */
 static void log_writer_wait_on_archiver(log_t &log, lsn_t next_write_lsn) {
+  // 定义重试间隔时间(100微秒)
   const int32_t SLEEP_BETWEEN_RETRIES_IN_US = 100; /* 100us */
-
+  // 定义警告间隔时间(100毫秒)
   const int32_t TIME_BETWEEN_WARNINGS_IN_US = 100000; /* 100ms */
-
+  // 定义错误超时时间(1秒)
   const int32_t TIME_UNTIL_ERROR_IN_US = 1000000; /* 1s */
 
+  // 确保当前线程持有写入器互斥锁
   ut_ad(log_writer_mutex_own(log));
 
-  int32_t count = 0;
+  int32_t count = 0; // 重试计数器
 
+  // 当归档系统存在且处于活动状态时循环
   while (arch_log_sys != nullptr && arch_log_sys->is_active()) {
+    // 获取当前已归档的LSN位置
     lsn_t archiver_lsn = arch_log_sys->get_archived_lsn();
-
+    // 对齐到日志块边界
     archiver_lsn = ut_uint64_align_down(archiver_lsn, OS_FILE_LOG_BLOCK_SIZE);
 
+    // 计算归档限制LSN = 归档LSN + 日志硬容量
     const lsn_t archiver_limited_lsn =
         archiver_lsn + log.m_capacity.hard_logical_capacity();
 
+    // 断言检查：计划写入LSN必须大于归档LSN
     ut_a(next_write_lsn > archiver_lsn);
 
+    // 如果计划写入LSN在归档限制范围内，无需等待
     if (next_write_lsn <= archiver_limited_lsn) {
       /* Between archive_lsn and next_write_lsn there is less bytes than
       logical capacity provided by the redo log. There is no need to wait
@@ -2043,48 +2183,53 @@ static void log_writer_wait_on_archiver(log_t &log, lsn_t next_write_lsn) {
       break;
     }
 
+    // 如果写入线程未被暂停，推进可写入LSN
     if (!log.writer_threads_paused.load(std::memory_order_acquire)) {
       log_advance_ready_for_write_lsn(log);
     }
 
+    // 计算错误超时前的最大重试次数
     const int32_t ATTEMPTS_UNTIL_ERROR =
         TIME_UNTIL_ERROR_IN_US / SLEEP_BETWEEN_RETRIES_IN_US;
 
+    // 如果超过最大重试次数，强制中止归档器
     if (count >= ATTEMPTS_UNTIL_ERROR) {
-      log_writer_mutex_exit(log);
+      log_writer_mutex_exit(log); // 释放锁
+      arch_log_sys->force_abort(); // 强制中止归档器
 
-      arch_log_sys->force_abort();
-
+      // 计算并记录错误日志
       const lsn_t lag = next_write_lsn - archiver_limited_lsn;
-
       ib::error(ER_IB_MSG_LOG_WRITER_ABORTS_LOG_ARCHIVER, ulonglong{lag},
                 ulonglong{archiver_lsn});
 
-      log_writer_mutex_enter(log);
+      log_writer_mutex_enter(log); // 重新获取锁
       break;
     }
 
+    // 通知归档器线程
     os_event_set(log_archiver_thread_event);
 
+    // 释放锁并短暂休眠
     log_writer_mutex_exit(log);
 
+    // 计算警告间隔的重试次数
     const int32_t ATTEMPTS_BETWEEN_WARNINGS =
         TIME_BETWEEN_WARNINGS_IN_US / SLEEP_BETWEEN_RETRIES_IN_US;
 
+    // 定期记录警告日志
     if (count % ATTEMPTS_BETWEEN_WARNINGS == 0) {
       const lsn_t lag = next_write_lsn - archiver_limited_lsn;
-
       ib::warn(ER_IB_MSG_LOG_WRITER_WAITING_FOR_ARCHIVER, ulonglong{lag},
                ulonglong{archiver_lsn});
     }
 
-    count++;
+    count++; // 增加重试计数器
     std::this_thread::sleep_for(
-        std::chrono::microseconds(SLEEP_BETWEEN_RETRIES_IN_US));
+        std::chrono::microseconds(SLEEP_BETWEEN_RETRIES_IN_US)); // 短暂休眠
 
-    MONITOR_INC(MONITOR_LOG_WRITER_ON_ARCHIVER_WAITS);
+    MONITOR_INC(MONITOR_LOG_WRITER_ON_ARCHIVER_WAITS); // 更新监控计数器
 
-    log_writer_mutex_enter(log);
+    log_writer_mutex_enter(log); // 重新获取锁
   }
 }
 
@@ -2142,60 +2287,88 @@ static void log_writer_write_failed(log_t &log, dberr_t err) {
   }
 }
 
+// 将日志缓冲区中的数据写入日志文件
 static void log_writer_write_buffer(log_t &log, lsn_t next_write_lsn) {
+  // 确保当前线程持有log_writer_mutex锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 调试同步点
   log_sync_point("log_writer_write_begin");
 
+  // 获取上次写入的LSN
   const lsn_t last_write_lsn = log.write_lsn.load();
 
+  // 断言检查：last_write_lsn必须是数据LSN或对齐到日志块大小
   ut_a(log_is_data_lsn(last_write_lsn) ||
        last_write_lsn % OS_FILE_LOG_BLOCK_SIZE == 0);
 
+  // 断言检查：next_write_lsn必须是数据LSN或对齐到日志块大小
   ut_a(log_is_data_lsn(next_write_lsn) ||
        next_write_lsn % OS_FILE_LOG_BLOCK_SIZE == 0);
 
+  // 断言检查：写入范围不能超过缓冲区大小
   ut_a(next_write_lsn - last_write_lsn <= log.buf_size);
+  // 断言检查：新LSN必须大于旧LSN
   ut_a(next_write_lsn > last_write_lsn);
 
+  // 计算在缓冲区中的起始和结束偏移量
   size_t start_offset = last_write_lsn % log.buf_size;
   size_t end_offset = next_write_lsn % log.buf_size;
 
+  // 处理缓冲区环绕情况
   if (start_offset >= end_offset) {
+    // 断言检查：确保跨越缓冲区末尾时有足够数据
     ut_a(next_write_lsn - last_write_lsn >= log.buf_size - start_offset);
 
+    // 调整结束偏移量为缓冲区末尾
     end_offset = log.buf_size;
+    // 计算新的next_write_lsn
     next_write_lsn = last_write_lsn + (end_offset - start_offset);
   }
+  // 断言检查：起始偏移必须小于结束偏移
   ut_a(start_offset < end_offset);
 
+  // 断言检查：结束偏移必须对齐块大小或至少包含块头
   ut_a(end_offset % OS_FILE_LOG_BLOCK_SIZE == 0 ||
        end_offset % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE);
 
   /* Wait until there is free space in log files.*/
+  // 等待直到日志文件中有空闲空间
 
+  // 获取检查点限制的LSN
   const lsn_t checkpoint_limited_lsn =
       log_writer_wait_on_checkpoint(log, last_write_lsn, next_write_lsn);
 
+  // 确保仍然持有锁
   ut_ad(log_writer_mutex_own(log));
+  // 断言检查：限制LSN必须大于上次写入LSN
   ut_a(checkpoint_limited_lsn > last_write_lsn);
 
+  // 调试同步点
   log_sync_point("log_writer_after_checkpoint_check");
 
+  // 如果归档系统存在，等待归档器
   if (arch_log_sys != nullptr) {
     log_writer_wait_on_archiver(log, next_write_lsn);
   }
 
+  // 确保仍然持有锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 调试同步点
   log_sync_point("log_writer_after_archiver_check");
 
+  // 设置写入限制LSN
   const lsn_t limit_for_next_write_lsn = checkpoint_limited_lsn;
 
+  // 如果需要限制写入范围
   if (limit_for_next_write_lsn < next_write_lsn) {
+    // 调整结束偏移量
     end_offset -= next_write_lsn - limit_for_next_write_lsn;
+    // 调整next_write_lsn
     next_write_lsn = limit_for_next_write_lsn;
 
+    // 断言检查：调整后偏移必须有效
     ut_a(end_offset > start_offset);
     ut_a(end_offset % OS_FILE_LOG_BLOCK_SIZE == 0 ||
          end_offset % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE);
@@ -2204,28 +2377,39 @@ static void log_writer_write_buffer(log_t &log, lsn_t next_write_lsn) {
          next_write_lsn % OS_FILE_LOG_BLOCK_SIZE == 0);
   }
 
+  // 等待消费者
   log_writer_wait_on_consumers(log, next_write_lsn);
+  // 确保仍然持有锁
   ut_ad(log_writer_mutex_own(log));
 
+  // 调试打印
   DBUG_PRINT("ib_log",
              ("write " LSN_PF " to " LSN_PF, last_write_lsn, next_write_lsn));
 
+  // 计算缓冲区起始指针（对齐到块边界）
   byte *buf_begin =
       log.buf + ut_uint64_align_down(start_offset, OS_FILE_LOG_BLOCK_SIZE);
 
+  // 计算缓冲区结束指针
   byte *buf_end = log.buf + end_offset;
 
   /* Do the write to the log files */
+  // 执行实际的日志文件写入
 
+  // 调用底层写入函数
   const dberr_t err = log_write_buffer(
       log, buf_begin, buf_end - buf_begin,
       ut_uint64_align_down(last_write_lsn, OS_FILE_LOG_BLOCK_SIZE));
 
+  // 处理写入失败情况
   if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
+    // 断言检查：写入LSN不应改变
     ut_a(log.write_lsn.load() == last_write_lsn);
+    // 处理写入失败
     log_writer_write_failed(log, err);
   }
 
+  // 调试同步点
   log_sync_point("log_writer_write_end");
 }
 
@@ -2245,49 +2429,67 @@ static bool log_writer_is_allowed_to_stop(log_t &log) {
   return log.write_lsn.load() == log_buffer_ready_for_write_lsn(log);
 }
 
+// 日志写入器线程的主函数
 void log_writer(log_t *log_ptr) {
+  // 确保传入的log_ptr不为空
   ut_a(log_ptr != nullptr);
 
+  // 获取日志系统引用
   log_t &log = *log_ptr;
+  // 初始化准备写入的LSN为0
   lsn_t ready_lsn = 0;
 
+  // 调试模式下创建内部线程
   ut_d(log.m_writer_thd = create_internal_thd());
 
+  // 获取日志写入器互斥锁
   log_writer_mutex_enter(log);
 
+  // 初始化线程等待对象，用于控制写入线程的等待行为
   Log_thread_waiting waiting{log, log.writer_event, srv_log_writer_spin_delay,
                              get_srv_log_writer_timeout()};
 
+  // 初始化文件写入请求监控器
   Log_write_to_file_requests_monitor write_to_file_requests_monitor{log};
 
+  // 主循环，step用于计数
   for (uint64_t step = 0;; ++step) {
+    // 标记是否已释放锁
     bool released = false;
 
+    // 定义停止条件lambda函数
     auto stop_condition = [&ready_lsn, &log, &released,
                            &write_to_file_requests_monitor](bool wait) {
+      // 如果之前释放了锁，现在重新获取
       if (released) {
         log_writer_mutex_enter(log);
         released = false;
       }
 
       /* Advance lsn up to which data is ready in log buffer. */
+      // 推进日志缓冲区中已准备好数据的LSN
       log_advance_ready_for_write_lsn(log);
 
+      // 获取当前可写入的LSN
       ready_lsn = log_buffer_ready_for_write_lsn(log);
 
       /* Wait until any of following conditions holds:
               1) There is some unwritten data in log buffer
               2) We should close threads. */
-
+      // 等待直到以下任一条件成立：
+      // 1) 日志缓冲区中有未写入的数据
+      // 2) 应该关闭线程
       if (log.write_lsn.load() < ready_lsn || log.should_stop_threads.load()) {
         return true;
       }
 
+      // 检查线程是否被暂停
       if (UNIV_UNLIKELY(
               log.writer_threads_paused.load(std::memory_order_acquire))) {
         return true;
       }
 
+      // 如果需要等待，则更新监控器并释放锁
       if (wait) {
         write_to_file_requests_monitor.update();
         log_writer_mutex_exit(log);
@@ -2297,28 +2499,38 @@ void log_writer(log_t *log_ptr) {
       return false;
     };
 
+    // 等待满足停止条件，并获取等待统计
     const auto wait_stats = waiting.wait(stop_condition);
 
+    // 更新监控器统计
     MONITOR_INC_WAIT_STATS(MONITOR_LOG_WRITER_, wait_stats);
 
+    // 处理线程暂停情况
     if (UNIV_UNLIKELY(
             log.writer_threads_paused.load(std::memory_order_acquire) &&
             !log.should_stop_threads.load())) {
       log_writer_mutex_exit(log);
 
+      // 等待恢复事件
       os_event_wait(log.writer_threads_resume_event);
 
       log_writer_mutex_enter(log);
+      // 重新获取可写入的LSN
       ready_lsn = log_buffer_ready_for_write_lsn(log);
     }
 
     /* Do the actual work. */
+    // 执行实际工作：如果有数据需要写入
     if (log.write_lsn.load() < ready_lsn) {
+      // 写入缓冲区
       log_writer_write_buffer(log, ready_lsn);
 
+      // 每1024步执行一次额外操作
       if (step % 1024 == 0) {
+        // 更新文件写入请求监控器
         write_to_file_requests_monitor.update();
 
+        // 短暂释放锁并休眠
         log_writer_mutex_exit(log);
 
         std::this_thread::sleep_for(std::chrono::seconds(0));
@@ -2328,12 +2540,15 @@ void log_writer(log_t *log_ptr) {
 
     } else if (log.should_stop_threads.load() &&
                log_writer_is_allowed_to_stop(log)) {
+      // 如果应该停止线程且允许停止，则退出循环
       break;
     }
   }
 
+  // 释放日志写入器互斥锁
   log_writer_mutex_exit(log);
 
+  // 调试模式下销毁内部线程
   ut_d(destroy_internal_thd(log.m_writer_thd));
 }
 

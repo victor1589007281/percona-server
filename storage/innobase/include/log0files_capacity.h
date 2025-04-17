@@ -228,20 +228,29 @@ class Log_files_capacity {
 
  private:
   /** @see m_exposed */
+  /** 
+   * 暴露给外部的原子化容量限制值结构体
+   * 包含所有需要原子访问的日志容量限制值
+   */
   struct Exposed {
     /** Value returned by @see soft_logical_capacity */
+    // 用户线程可见的软逻辑容量限制
     atomic_lsn_t m_soft_logical_capacity{0};
 
     /** Value returned by @see hard_logical_capacity */
+    // 写入线程使用的硬逻辑容量限制(包含额外边距)
     atomic_lsn_t m_hard_logical_capacity{0};
 
     /** Value returned by @see adaptive_flush_min_age */
+    // 开始自适应刷新的最小脏页年龄
     atomic_lsn_t m_adaptive_flush_min_age{0};
 
     /** Value returned by @see adaptive_flush_max_age */
+    // 最大脏页年龄限制(触发强制刷新)
     atomic_lsn_t m_adaptive_flush_max_age{0};
 
     /** Value returned by @see aggressive_checkpoint_min_age */
+    // 开始强制检查点的最小年龄
     atomic_lsn_t m_agressive_checkpoint_min_age{0};
   };
 

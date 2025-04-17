@@ -64,31 +64,54 @@ static_assert(static_cast<int>(MTR_MEMO_PAGE_SX_FIX) ==
                   static_cast<int>(RW_SX_LATCH),
               "");
 
-/** Iterate over a memo block in reverse. */
+/**
+ * 用于反向遍历memo块的模板类
+ * Template class to iterate over a memo block in reverse.
+ * 
+ * @tparam Functor 函数对象类型，用于处理每个memo slot
+ */
 template <typename Functor>
 struct Iterate {
-  /** Release specific object */
-  explicit Iterate(Functor &functor) : m_functor(functor) { /* Do nothing */
-  }
+  /**
+   * 构造函数，初始化函数对象
+   * Constructor, initializes the functor.
+   * 
+   * @param functor 将被应用于每个slot的函数对象
+   */
+  explicit Iterate(Functor &functor) : m_functor(functor) { /* 无操作 */ }
 
-  /** @return false if the functor returns false. */
+  /**
+   * 重载函数调用运算符，执行反向遍历
+   * Overloaded function call operator to perform reverse iteration.
+   * 
+   * @param block 要遍历的memo块
+   * @return 如果函数对象对任何slot返回false则返回false，否则返回true
+   */
   bool operator()(mtr_buf_t::block_t *block) {
+    // 获取块的起始位置（转换为mtr_memo_slot_t类型）
     const mtr_memo_slot_t *start =
         reinterpret_cast<const mtr_memo_slot_t *>(block->begin());
 
+    // 获取块的结束位置（转换为mtr_memo_slot_t类型）
     mtr_memo_slot_t *slot = reinterpret_cast<mtr_memo_slot_t *>(block->end());
 
+    // 调试断言：检查块使用大小是否是slot大小的整数倍
     ut_ad(!(block->used() % sizeof(*slot)));
 
+    // 从后向前遍历所有slot
     while (slot-- != start) {
+      // 对每个slot应用函数对象
       if (!m_functor(slot)) {
+        // 如果函数对象返回false，则终止遍历
         return false;
       }
     }
 
+    // 所有slot处理完成，返回true
     return true;
   }
 
+  // 存储函数对象的引用
   Functor &m_functor;
 };
 
@@ -528,29 +551,39 @@ bool mtr_t::is_block_dirtied(const buf_block_t *block) {
 
 #ifndef UNIV_HOTBACKUP
 /** Write the block contents to the REDO log */
+// 将块内容写入REDO日志的结构体
 struct mtr_write_log_t {
   /** Append a block to the redo log buffer.
   @return whether the appending should continue */
+  // 将一个块追加到redo日志缓冲区
+  // 返回是否应该继续追加
   bool operator()(const mtr_buf_t::block_t *block) {
-    lsn_t start_lsn;
-    lsn_t end_lsn;
+    lsn_t start_lsn;  // 起始日志序列号
+    lsn_t end_lsn;    // 结束日志序列号
 
+    // 断言检查：块指针不能为空
     ut_ad(block != nullptr);
 
+    // 如果块中没有使用空间，直接返回true
     if (block->used() == 0) {
       return true;
     }
 
+    // 设置起始LSN为当前LSN
     start_lsn = m_lsn;
 
+    // 将块内容写入日志缓冲区，获取结束LSN
     end_lsn =
         log_buffer_write(*log_sys, block->begin(), block->used(), start_lsn);
 
+    // 断言检查：结束LSN必须位于日志块的有效数据区域内
     ut_a(end_lsn % OS_FILE_LOG_BLOCK_SIZE <
          OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE);
 
+    // 减少剩余需要写入的字节数
     m_left_to_write -= block->used();
 
+    // 检查是否已经写完所有数据
     if (m_left_to_write == 0
         /* This write was up to the end of record group,
         the last record in group has been written.
@@ -569,20 +602,41 @@ struct mtr_write_log_t {
 
         Only in case 1), the next group of records is the first group
         of log records in block containing m_lsn. */
+        /* 这次写入已经到达记录组的末尾，
+        组中的最后一条记录已经写入。
+
+        因此下一组记录将从m_lsn开始。
+        我们需要确定下一组是否是第一个组，
+        即从当前日志块开始的组。
+
+        这种情况下我们需要设置first_rec_group。
+
+        现在，我们可能有以下两种情况：
+        1. 这组日志记录开始于包含m_lsn的块的前一个块
+        2. 这组日志记录开始于包含m_lsn的同一个块
+
+        只有在情况1下，下一组记录才是第一个组
+        在包含m_lsn的日志块中的日志记录组。 */        
         && m_handle.start_lsn / OS_FILE_LOG_BLOCK_SIZE !=
                end_lsn / OS_FILE_LOG_BLOCK_SIZE) {
+      // 设置日志块中的第一个记录组
       log_buffer_set_first_record_group(*log_sys, end_lsn);
     }
 
+    // 标记日志写入完成
     log_buffer_write_completed(*log_sys, start_lsn, end_lsn);
 
+    // 更新当前LSN为结束LSN
     m_lsn = end_lsn;
 
     return true;
   }
 
+  // 日志句柄，包含起始和结束LSN
   Log_handle m_handle;
+  // 当前日志序列号
   lsn_t m_lsn;
+  // 剩余需要写入的字节数
   ulint m_left_to_write;
 };
 #endif /* !UNIV_HOTBACKUP */
@@ -930,13 +984,25 @@ void mtr_t::Command::release_all() {
 
 /** Add blocks modified in this mini-transaction to the flush list. */
 //把MTR中修改的块插入到flush list 中
+/**
+ * 将当前mini-transaction中修改的块添加到flush list中
+ * Add blocks modified in this mini-transaction to the flush list.
+ * 
+ * @param start_lsn 该mtr在redo log中的起始LSN
+ * @param end_lsn 该mtr在redo log中的结束LSN 
+ */
 void mtr_t::Command::add_dirty_blocks_to_flush_list(lsn_t start_lsn,
                                                     lsn_t end_lsn) {
+  // 创建Add_dirty_blocks_to_flush_list对象
+  // 传入起始LSN、结束LSN和flush观察者对象
   Add_dirty_blocks_to_flush_list add_to_flush(start_lsn, end_lsn,
                                               m_impl->m_flush_observer);
 
+  // 创建迭代器，用于遍历memo栈中的块
   Iterate<Add_dirty_blocks_to_flush_list> iterator(add_to_flush);
 
+  // 从后向前遍历memo栈的每个block
+  // 将符合条件的脏页添加到flush list中
   m_impl->m_memo.for_each_block_in_reverse(iterator);
 }
 

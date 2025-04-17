@@ -249,6 +249,17 @@ inline lsn_t log_buffer_ready_for_write_lsn(const log_t &log) {
 }
 
 /** @return lsn up to which all dirty pages have been added to flush list */
+/**
+ * 获取已添加到flush列表的脏页对应的最大LSN
+ * 
+ * 功能说明：
+ * 1. 返回recent_closed缓冲区的尾部LSN值
+ * 2. 表示所有小于等于该LSN的脏页都已被添加到flush列表
+ * 3. 用于确定哪些修改已经安全地记录到存储引擎中
+ * 
+ * @param log 重做日志系统引用
+ * @return 已处理脏页的最大LSN值
+ */
 inline lsn_t log_buffer_dirty_pages_added_up_to_lsn(const log_t &log) {
   return log.recent_closed.tail();
 }

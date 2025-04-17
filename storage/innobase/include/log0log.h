@@ -69,21 +69,34 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 /** @{ */
 
-/** Calculates lsn value for given sn value. Sequence of sn values
-enumerate all data bytes in the redo log. Sequence of lsn values
-enumerate all data bytes and bytes used for headers and footers
-of all log blocks in the redo log. For every LOG_BLOCK_DATA_SIZE
-bytes of data we have OS_FILE_LOG_BLOCK_SIZE bytes in the redo log.
-NOTE that LOG_BLOCK_DATA_SIZE + LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE
-== OS_FILE_LOG_BLOCK_SIZE. The calculated lsn value will always point
-to some data byte (will be % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE,
-and < OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE).
+/** 
+  Calculates lsn value for given sn value. Sequence of sn values
+  enumerate all data bytes in the redo log. Sequence of lsn values
+  enumerate all data bytes and bytes used for headers and footers
+  of all log blocks in the redo log. For every LOG_BLOCK_DATA_SIZE
+  bytes of data we have OS_FILE_LOG_BLOCK_SIZE bytes in the redo log.
+  NOTE that LOG_BLOCK_DATA_SIZE + LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE
+  == OS_FILE_LOG_BLOCK_SIZE. The calculated lsn value will always point
+  to some data byte (will be % OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE,
+  and < OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE).
 
-@param[in]      sn      sn value
-@return lsn value for the provided sn value */
+  根据给定的 `sn` 值计算 `lsn` 值。`sn` 值的序列枚举了重做日志中的所有数据字节。
+  `lsn` 值的序列枚举了重做日志中的所有数据字节以及用于日志块头部和尾部的字节。
+  对于每 `LOG_BLOCK_DATA_SIZE` 字节的数据，在重做日志中有 `OS_FILE_LOG_BLOCK_SIZE` 字节。
+  注意：`LOG_BLOCK_DATA_SIZE + LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE == OS_FILE_LOG_BLOCK_SIZE`。
+  计算出的 `lsn` 值将始终指向某个数据字节（`% OS_FILE_LOG_BLOCK_SIZE >= LOG_BLOCK_HDR_SIZE`，
+  且 `< OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE`）。
+
+  @param[in]      sn      sn value
+                          输入的 `sn` 值
+  @return lsn value for the provided sn value
+          返回对应于提供的 `sn` 值的 `lsn` 值
+*/
 constexpr inline lsn_t log_translate_sn_to_lsn(sn_t sn) {
-  return sn / LOG_BLOCK_DATA_SIZE * OS_FILE_LOG_BLOCK_SIZE +
+  return sn / LOG_BLOCK_DATA_SIZE * OS_FILE_LOG_BLOCK_SIZE + 
+         // 计算完整数据块的偏移量，将 `sn` 转换为对应的日志块起始位置
          sn % LOG_BLOCK_DATA_SIZE + LOG_BLOCK_HDR_SIZE;
+         // 计算当前数据块内的偏移量，并加上日志块头部的大小
 }
 
 /** Calculates sn value for given lsn value.

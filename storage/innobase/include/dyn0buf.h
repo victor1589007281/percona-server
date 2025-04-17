@@ -304,17 +304,27 @@ class dyn_buf_t {
   }
 
   /**
-  Iterate over all the blocks in reverse and call the iterator
-  @return       false if iteration was terminated. */
+   * 以反向顺序遍历所有块并调用迭代器
+   * Iterate over all the blocks in reverse and call the iterator
+   * 
+   * @tparam Functor 函数对象类型，用于处理每个块
+   * @param functor 函数对象，将被应用于每个块
+   * @return 如果迭代被终止则返回false，否则返回true
+   * @return false if iteration was terminated.
+   */
   template <typename Functor>
   bool for_each_block_in_reverse(Functor &functor) const {
+    // 从链表末尾开始遍历
     for (block_t *block = UT_LIST_GET_LAST(m_list); block != nullptr;
          block = UT_LIST_GET_PREV(m_node, block)) {
+      // 对当前块应用函数对象
       if (!functor(block)) {
+        // 如果函数对象返回false，则终止迭代
         return (false);
       }
     }
 
+    // 所有块处理完成，返回true
     return (true);
   }
 
@@ -395,15 +405,19 @@ class dyn_buf_t {
   }
 
  private:
+  // 用于内存分配的内存堆指针
   /** Heap to use for memory allocation */
   mem_heap_t *m_heap;
 
+  // 已分配的块链表，使用UT_LIST实现的双向链表
   /** Allocated blocks */
   block_list_t m_list;
 
+  // 所有块中已使用的总字节数
   /** Total size used by all blocks */
   ulint m_size;
 
+  // 默认块，始终作为第一个元素。用于向后兼容并避免小REDO日志记录的额外堆分配
   /** The default block, should always be the first element. This
   is for backwards compatibility and to avoid an extra heap allocation
   for small REDO log records */

@@ -322,36 +322,53 @@ Log_file_id Log_file_handle::file_id() const { return m_file_id; }
 
 os_offset_t Log_file_handle::file_size() const { return m_file_size; }
 
+// 准备IO请求，设置请求类型、偏移量、大小和加密选项
 IORequest Log_file_handle::prepare_io_request(int req_type, os_offset_t offset,
                                               os_offset_t size,
                                               bool can_use_encryption) {
+  // 断言检查：请求大小必须大于0
   ut_a(size > 0);
+  // 断言检查：请求大小必须是日志块大小的整数倍
   ut_a(size % OS_FILE_LOG_BLOCK_SIZE == 0);
+  // 断言检查：偏移量必须是日志块大小的整数倍
   ut_a(offset % OS_FILE_LOG_BLOCK_SIZE == 0);
+  // 断言检查：请求类型必须是读或写
   ut_a(req_type == IORequest::READ || req_type == IORequest::WRITE);
+  // 断言检查：块大小必须大于0
   ut_a(m_block_size > 0);
 
+  // 创建基础IO请求对象，设置日志类型和请求类型
   IORequest io_request{IORequest::LOG | req_type};
+  // 设置块大小
   io_request.block_size(m_block_size);
 
   // Finally, set up encryption related fields, if needed
+  // 最后，如果需要，设置加密相关字段
 
+  // 检查是否可以使用加密且加密元数据可用
   if (!(can_use_encryption && m_encryption_metadata.can_encrypt())) {
     return io_request;  // There is no ecryption involved
+    // 返回基础IO请求对象（不涉及加密）
   }
 
+  // 检查请求范围是否在文件头范围内
   if (offset + size <= LOG_FILE_HDR_SIZE) {
     return io_request;  // Never use encryption in the header
+    // 返回基础IO请求对象（文件头不使用加密）
   }
 
   // Assume the whole encrypted region is in the body, none of it in the header
+  // 假设整个加密区域都在文件体中，不在文件头中
   ut_a(offset >= LOG_FILE_HDR_SIZE);
 
+  // 设置加密密钥和初始化向量
   io_request.encryption_key(m_encryption_metadata.m_key,
                             m_encryption_metadata.m_key_len,
                             m_encryption_metadata.m_iv);
+  // 设置加密算法类型
   io_request.encryption_algorithm(m_encryption_metadata.m_type);
 
+  // 返回配置好的IO请求对象
   return io_request;
 }
 
@@ -372,21 +389,28 @@ dberr_t Log_file_handle::read(os_offset_t read_offset, os_offset_t read_size,
                       read_offset, static_cast<ulint>(read_size)); // 执行文件读取操作
 }
 
+// 执行写入操作到日志文件
 dberr_t Log_file_handle::write(os_offset_t write_offset, os_offset_t write_size,
                                const byte *buf) {
+  // 检查文件是否已打开，未打开则返回错误
   if (!is_open()) return DB_ERROR;
 
+  // 准备IO请求，设置写入参数和加密选项
   auto io_request = prepare_io_request(IORequest::WRITE, write_offset,
                                        write_size, srv_redo_log_encrypt);
 
+  // 断言验证当前不是只读访问模式
   ut_ad(m_access_mode != Log_file_access_mode::READ_ONLY);
 
+  // 如果设置了写入前回调函数，则执行回调
   if (s_on_before_write) {
     s_on_before_write(m_file_id, m_file_type, write_offset, write_size);
   }
 
+  // 标记文件已被修改
   m_is_modified = true;
 
+  // 执行实际的文件写入操作
   return os_file_write(io_request, m_file_path.c_str(), m_raw_handle, buf,
                        write_offset, static_cast<ulint>(write_size));
 }

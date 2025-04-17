@@ -1098,14 +1098,28 @@ class binlog_stmt_cache_data : public binlog_cache_data {
   int finalize(THD *thd);
 };
 
+// 语句缓存数据类的finalize方法实现
 int binlog_stmt_cache_data::finalize(THD *thd) {
+  // 如果设置了immediate标志，表示需要立即提交
   if (flags.immediate) {
+    // 调用基类的finalize方法，不传入结束事件
     if (int error = finalize(thd, nullptr)) return error;
   } else {
+    // 创建一个Query_log_event作为事务结束事件
+    // 参数说明：
+    // thd - 当前线程
+    // "COMMIT" - 提交语句
+    // false - 不是自动提交
+    // false - 不是内部事务
+    // true - 使用事务缓存
+    // 0 - 错误码
+    // true - 需要校验
     Query_log_event end_evt(thd, STRING_WITH_LEN("COMMIT"), false, false, true,
                             0, true);
+    // 调用基类的finalize方法，传入结束事件
     if (int error = finalize(thd, &end_evt)) return error;
   }
+  // 成功返回0
   return 0;
 }
 
@@ -2161,15 +2175,33 @@ end:
     nonzero if an error pops up when flushing the cache.
 */
 int binlog_cache_data::finalize(THD *thd, Log_event *end_event) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
+  
+  // 如果binlog缓存不为空
   if (!is_binlog_empty()) {
+    // 确保缓存尚未被finalized
     assert(!flags.finalized);
-    if (int error = flush_pending_event(thd)) return error;
-    if (int error = write_event(end_event)) return error;
-    if (int error = this->compress(thd)) return error;
+    
+    // 1. 首先刷新pending事件到缓存
+    if (int error = flush_pending_event(thd)) 
+      return error;
+    
+    // 2. 写入结束事件(commit/rollback)到缓存  
+    if (int error = write_event(end_event)) 
+      return error;
+    
+    // 3. 尝试压缩缓存内容
+    if (int error = this->compress(thd)) 
+      return error;
+    
+    // 调试打印finalized标志状态
     DBUG_PRINT("debug", ("flags.finalized: %s", YESNO(flags.finalized)));
+    
+    // 设置finalized标志为true，表示缓存已准备就绪
     flags.finalized = true;
   }
+  
+  // 成功返回0
   return 0;
 }
 
@@ -8486,44 +8518,66 @@ int MYSQL_BIN_LOG::prepare(THD *thd, bool all) {
   @retval RESULT_ABORTED   error, transaction was neither logged nor committed
   @retval RESULT_INCONSISTENT  error, transaction was logged but not committed
 */
+// 在事务协调器中提交事务
+// 该函数将在二进制日志和存储引擎中提交会话事务
+// 如果事务成功记录但引擎提交失败，可能导致引擎和二进制日志不一致
+// 对于二进制日志组提交，提交分为三部分：
+// 1. 填充必要缓存并完成它们
+// 2. 执行有序刷新和提交
+// 3. 检查错误并处理
 TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪宏
   DBUG_PRINT("info",
              ("query='%s'", thd == current_thd ? thd->query().str : nullptr));
+  
+  // 获取事务上下文和XID
   Transaction_ctx *trn_ctx = thd->get_transaction();
   my_xid xid = trn_ctx->xid_state()->get_xid()->get_my_xid();
-  bool stmt_stuff_logged = false;
-  bool trx_stuff_logged = false;
-  bool skip_commit = is_loggable_xa_prepare(thd);
-  bool is_atomic_ddl = false;
+  
+  // 初始化标志变量
+  bool stmt_stuff_logged = false;  // 语句内容是否已记录
+  bool trx_stuff_logged = false;   // 事务内容是否已记录
+  bool skip_commit = is_loggable_xa_prepare(thd);  // 是否跳过提交(XA PREPARE)
+  bool is_atomic_ddl = false;      // 是否是原子DDL
+  
+  // 获取XID状态
   auto xs = thd->get_transaction()->xid_state();
+  
+  // RAII守卫，用于在离开作用域时重置分离的XID状态
   raii::Sentry<> reset_detached_guard{[&]() -> void {
     // XID_STATE may have been used to hold metadata for a detached transaction.
     // In that case, we need to reset it.
+    // XID_STATE可能已被用于保存分离事务的元数据，需要重置它
     if (xs->is_detached()) xs->reset();
   }};
 
-  if (thd->lex->sql_command ==
-      SQLCOM_XA_COMMIT) {  // XA commit must be written to the binary log prior
-                           // to retrieving cache manager
+  // 处理XA COMMIT命令
+  if (thd->lex->sql_command == SQLCOM_XA_COMMIT) {
+    // XA commit must be written to the binary log prior to retrieving cache manager
+    // XA提交必须先写入二进制日志再获取缓存管理器
     if (this->write_xa_to_cache(thd)) return RESULT_ABORTED;
   }
 
+  // 获取binlog缓存管理器
   binlog_cache_mngr *cache_mngr = thd_get_cache_mngr(thd);
   DBUG_PRINT("enter", ("thd: 0x%llx, all: %s, xid: %llu, cache_mngr: 0x%llx",
                        (ulonglong)thd, YESNO(all), (ulonglong)xid,
                        (ulonglong)cache_mngr));
 
+  // 作用域守卫，用于在离开作用域时禁用低级别提交顺序
   Scope_guard guard_applier_wait_enabled(
       [&thd]() { thd->disable_low_level_commit_ordering(); });
 
+  // 如果当前语句启用了binlog且缓存为空，则启用低级别提交顺序
   if (is_current_stmt_binlog_enabled_and_caches_empty(thd)) {
     thd->enable_low_level_commit_ordering();
   }
+  
   /*
     No cache manager means nothing to log, but we still have to commit
     the transaction.
-   */
+    没有缓存管理器意味着不需要记录，但仍需提交事务
+  */
   if (cache_mngr == nullptr) {
     if (!skip_commit && trx_coordinator::commit_in_engines(thd, all))
       return RESULT_ABORTED;
@@ -8534,6 +8588,7 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     Reset binlog_snapshot_% variables for the current connection so that the
     current coordinates are shown after committing a consistent snapshot
     transaction.
+    重置当前连接的binlog_snapshot_%变量，以便在提交一致性快照事务后显示当前坐标
   */
   if (all) {
     mysql_mutex_lock(&thd->LOCK_thd_data);
@@ -8541,9 +8596,11 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
 
+  // 确定事务范围：完整事务还是仅语句事务
   Transaction_ctx::enum_trx_scope trx_scope =
       all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;
 
+  // 打印调试信息
   DBUG_PRINT("debug", ("in_transaction: %s, no_2pc: %s, rw_ha_count: %d",
                        YESNO(thd->in_multi_stmt_transaction_mode()),
                        YESNO(trn_ctx->no_2pc(trx_scope)),
@@ -8570,15 +8627,19 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     Any statement that requires logging will call binlog_query before
     trans_commit_stmt, so an alternative is to use the condition
     "binlog_query called or stmt.ha_list != 0".
-   */
+    如果没有注册handlertons，则无需提交。注意在这种情况下DDL会提前写入(在binlog_query中)
+    TODO: 这可能在没有handlertons注册的情况下成为问题
+  */
   if (!all && !trn_ctx->is_active(trx_scope) &&
       cache_mngr->stmt_cache.is_binlog_empty())
     return RESULT_SUCCESS;
 
+  // 处理语句缓存
   if (!cache_mngr->stmt_cache.is_binlog_empty()) {
     /*
       Commit parent identification of non-transactional query has
       been deferred until now, except for the mixed transaction case.
+      非事务性查询的提交父标识被延迟到现在处理(混合事务情况除外)
     */
     trn_ctx->store_commit_parent(
         m_dependency_tracker.get_max_committed_timestamp());
@@ -8591,6 +8652,10 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
      - We are not in a transaction and committing a statement, or
      - We are in a transaction and a full transaction is committed.
     Otherwise, we accumulate the changes.
+    我们提交事务的条件：
+     - 不在事务中且提交语句，或者
+     - 在事务中且提交完整事务
+    否则我们累积更改
   */
   if (!cache_mngr->trx_cache.is_binlog_empty() && ending_trans(thd, all) &&
       !trx_stuff_logged) {
@@ -8612,6 +8677,9 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
       or are finalizing empty transactions when GTID_NEXT is set to a manual
       GTID, just let the execution flow get into the final 'else' branch and log
       a final 'COMMIT;' statement.
+      对于XA PREPARE/XA COMMIT ONE PHASE，如果满足以下条件之一则记录并完成事务缓存：
+      1. 是可记录的XA事务处于准备状态
+      2. 使用'XA COMMIT ONE PHASE'提交且当GTID_NEXT设置为手动GTID时不是空事务
     */
     if (is_loggable_xa ||  // XA transaction in prepare state
         (thd->lex->sql_command == SQLCOM_XA_COMMIT &&  // Is a 'XA COMMIT
@@ -8625,6 +8693,7 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
                                                  // 'trans_xa_commit'
     {
       /* The prepare phase of XA transaction two phase logging. */
+      // XA事务两阶段日志记录的准备阶段
       int err = 0;
 
       assert(thd->lex->sql_command != SQLCOM_XA_COMMIT || one_phase);
@@ -8642,6 +8711,7 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     }
     /*
       If is atomic DDL, finalize cache for DDL and no further logging is needed.
+      如果是原子DDL，则完成DDL缓存且不需要进一步记录
     */
     else if ((is_atomic_ddl = cache_mngr->trx_cache.has_xid())) {
       if (cache_mngr->trx_cache.finalize(thd, nullptr)) return RESULT_ABORTED;
@@ -8656,6 +8726,8 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
       handlerton will then make the transaction 2PC, which is not really
       true. This occurs for example if a MyISAM statement is executed
       with row-based replication on.
+      如果是"真实"事务且有XID分配(因为注册了handlerton)，则提交2PC事务
+      注意：这有点奇怪，因为注册binlog handlerton会使事务成为2PC
     */
     else if (real_trans && xid && trn_ctx->rw_ha_count(trx_scope) > 1 &&
              !trn_ctx->no_2pc(trx_scope)) {
@@ -8668,7 +8740,8 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
 
       Empty transactions finalized with 'XA COMMIT ONE PHASE' will be covered
       by this branch.
-     */
+      不需要进一步操作且没有特殊情况，记录最终'COMMIT'语句并完成事务缓存
+    */
     else {
       Query_log_event end_evt(thd, STRING_WITH_LEN("COMMIT"), true, false, true,
                               0, true);
@@ -8679,6 +8752,7 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
 
   /*
     This is part of the stmt rollback.
+    这是语句回滚的一部分
   */
   if (!all) cache_mngr->trx_cache.set_prev_position(MY_OFF_T_UNDEF);
 
@@ -8691,6 +8765,8 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     If the commit in the engines fail, we still have something logged
     to the binary log so we have to report this as a "bad" failure
     (failed to commit, but logged something).
+    现在所有事件都已写入缓存，我们将提交引擎中的事务
+    如果引擎提交失败，我们仍有记录到二进制日志的内容，需要报告为"坏"失败
   */
   if (stmt_stuff_logged || trx_stuff_logged) {
     CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_invoke_before_commit_hook");
@@ -8714,6 +8790,7 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     /*
       Check whether the transaction should commit or abort given the
       plugin feedback.
+      根据插件反馈检查事务应提交还是中止
     */
     if (thd->get_transaction()
             ->get_rpl_transaction_ctx()
@@ -8742,12 +8819,14 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
     /*
       Mark the flag m_is_binlogged to true only after we are done
       with checking all the error cases.
+      在所有错误检查完成后才将m_is_binlogged标志设置为true
     */
     if (is_loggable_xa_prepare(thd)) {
       thd->get_transaction()->xid_state()->set_binlogged();
       /*
         Inform hook listeners that a XA PREPARE did commit, that
         is, did log a transaction to the binary log.
+        通知hook监听器XA PREPARE已提交，即已记录事务到二进制日志
       */
       (void)RUN_HOOK(transaction, after_commit, (thd, all));
     }
@@ -8759,10 +8838,16 @@ TC_LOG::enum_result MYSQL_BIN_LOG::commit(THD *thd, bool all) {
       and starting a new one, the new transaction could be "leaking" the
       engine binlog pos. In order to avoid that and accidentally overwrite
       binlog position with previous location, we reset it here.
+      我们只在ordered_commit的flush阶段设置引擎binlog位置，
+      并非所有事务都会经过这些阶段(比如DDL的表拷贝操作)。
+      因此当DDL语句隐式提交前一个事务并开始新事务时，
+      新事务可能会"泄漏"引擎binlog位置。
+      为避免这种情况和意外覆盖binlog位置为之前的位置，
+      我们在这里重置它。
     */
-    thd->set_trans_pos(nullptr, 0);
-    if (trx_coordinator::commit_in_engines(thd, all))
-      return RESULT_INCONSISTENT;
+   thd->set_trans_pos(nullptr, 0);  // 重置事务位置为null和0
+   if (trx_coordinator::commit_in_engines(thd, all))  // 在引擎中提交事务
+     return RESULT_INCONSISTENT;  // 返回不一致错误
   }
 
   return RESULT_SUCCESS;

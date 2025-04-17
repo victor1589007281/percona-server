@@ -377,64 +377,79 @@ struct os_event {
   os_event &operator=(const os_event &);
 };
 
+/**
+ * 带超时的条件变量等待函数
+ * 
+ * @param abstime/time_in_ms 超时时间(非Windows平台为绝对时间，Windows平台为毫秒超时)
+ * @return true表示超时，false表示成功等待到事件
+ */
 bool os_event::timed_wait(
-#ifndef _WIN32
-    const timespec *abstime
-#else
-    DWORD time_in_ms
-#endif /* !_WIN32 */
-) {
-#ifdef _WIN32
-  BOOL ret;
-
-  ret = SleepConditionVariableCS(&cond_var, mutex, time_in_ms);
-
-  if (!ret) {
-    DWORD err = GetLastError();
-
-    /* FQDN=msdn.microsoft.com
-    @see http://$FQDN/en-us/library/ms686301%28VS.85%29.aspx,
-
-    "Condition variables are subject to spurious wakeups
-    (those not associated with an explicit wake) and stolen wakeups
-    (another thread manages to run before the woken thread)."
-    Check for both types of timeouts.
-    Conditions are checked by the caller.*/
-    if (err == WAIT_TIMEOUT || err == ERROR_TIMEOUT) {
-      return (true);
+  #ifndef _WIN32
+      const timespec *abstime  /*!< 绝对超时时间(非Windows平台) */
+  #else
+      DWORD time_in_ms         /*!< 超时毫秒数(Windows平台) */
+  #endif /* !_WIN32 */
+  ) {
+  #ifdef _WIN32
+    // Windows平台实现
+    BOOL ret;
+  
+    // 调用Windows API进行带超时的条件变量等待
+    ret = SleepConditionVariableCS(&cond_var, mutex, time_in_ms);
+  
+    if (!ret) {
+      DWORD err = GetLastError();
+  
+      /* FQDN=msdn.microsoft.com
+      @see http://$FQDN/en-us/library/ms686301%28VS.85%29.aspx,
+  
+      "Condition variables are subject to spurious wakeups
+      (those not associated with an explicit wake) and stolen wakeups
+      (another thread manages to run before the woken thread)."
+      Check for both types of timeouts.
+      Conditions are checked by the caller.*/
+      // 检查是否为超时错误
+      if (err == WAIT_TIMEOUT || err == ERROR_TIMEOUT) {
+        return (true);
+      }
     }
+  
+    // 确保调用成功
+    ut_a(ret);
+  
+    return (false);
+  #else
+    // 非Windows平台实现
+    int ret;
+  
+    // 调用pthread条件变量带超时等待
+    ret = pthread_cond_timedwait(&cond_var, mutex, abstime);
+  
+    // 处理返回结果
+    switch (ret) {
+      case 0:       // 成功等待到事件
+      case ETIMEDOUT: // 超时
+        /* We play it safe by checking for EINTR even though
+        according to the POSIX documentation it can't return EINTR. */
+      case EINTR:   // 被信号中断(尽管POSIX文档说不会返回EINTR)
+        break;
+  
+      default:
+        // 其他错误情况处理
+  #ifdef UNIV_NO_ERR_MSGS
+        ib::error()
+  #else
+        ib::error(ER_IB_MSG_742)
+  #endif /* !UNIV_NO_ERR_MSGS */
+            << "pthread_cond_timedwait() returned: " << ret << ": abstime={"
+            << abstime->tv_sec << "," << abstime->tv_nsec << "}";
+        ut_error;  // 触发断言失败
+    }
+  
+    // 返回是否超时
+    return (ret == ETIMEDOUT);
+  #endif /* _WIN32 */
   }
-
-  ut_a(ret);
-
-  return (false);
-#else
-  int ret;
-
-  ret = pthread_cond_timedwait(&cond_var, mutex, abstime);
-
-  switch (ret) {
-    case 0:
-    case ETIMEDOUT:
-      /* We play it safe by checking for EINTR even though
-      according to the POSIX documentation it can't return EINTR. */
-    case EINTR:
-      break;
-
-    default:
-#ifdef UNIV_NO_ERR_MSGS
-      ib::error()
-#else
-      ib::error(ER_IB_MSG_742)
-#endif /* !UNIV_NO_ERR_MSGS */
-          << "pthread_cond_timedwait() returned: " << ret << ": abstime={"
-          << abstime->tv_sec << "," << abstime->tv_nsec << "}";
-      ut_error;
-  }
-
-  return (ret == ETIMEDOUT);
-#endif /* _WIN32 */
-}
 
 /**
 Waits for an event object until it is in the signaled state.
@@ -545,54 +560,76 @@ struct timespec os_event::get_wait_timelimit(
 
 #endif /* !_WIN32 */
 
+/**
+ * 带超时的事件等待函数
+ * 
+ * @param timeout 超时时间(微秒)，std::chrono::microseconds::max()表示无限等待
+ * @param reset_sig_count 0或前一次os_event_reset()返回的信号计数值
+ * @return 0表示成功，OS_SYNC_TIME_EXCEEDED表示超时
+ */
 ulint os_event::wait_time_low(std::chrono::microseconds timeout,
-                              int64_t reset_sig_count) UNIV_NOTHROW {
-  bool timed_out = false;
+                             int64_t reset_sig_count) UNIV_NOTHROW {
+  bool timed_out = false; // 超时标志
 
 #ifdef _WIN32
+  // Windows平台处理
   DWORD time_in_ms;
 
   if (timeout != std::chrono::microseconds::max()) {
+    // 将微秒转换为毫秒
     time_in_ms = static_cast<DWORD>(
         std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count());
   } else {
+    // 无限等待
     time_in_ms = INFINITE;
   }
 #else
+  // 非Windows平台处理
   struct timespec abstime;
 
   if (timeout != std::chrono::microseconds::max()) {
+    // 获取绝对超时时间
     abstime = os_event::get_wait_timelimit(timeout);
   } else {
+    // 设置最大超时时间
     abstime.tv_nsec = 999999999;
     abstime.tv_sec = std::numeric_limits<time_t>::max();
   }
 
+  // 断言检查纳秒值有效性
   ut_a(abstime.tv_nsec <= 999999999);
 
 #endif /* _WIN32 */
 
+  // 获取互斥锁
   mutex.enter();
 
+  // 如果未提供reset_sig_count，使用当前signal_count
   if (!reset_sig_count) {
     reset_sig_count = signal_count;
   }
 
+  // 循环等待直到事件触发或超时
   do {
+    // 检查事件是否已触发或信号计数已改变
     if (m_set || signal_count != reset_sig_count) {
       break;
     }
 
 #ifndef _WIN32
+    // 非Windows平台执行带超时的等待
     timed_out = timed_wait(&abstime);
 #else
+    // Windows平台执行带超时的等待
     timed_out = timed_wait(time_in_ms);
 #endif /* !_WIN32 */
 
   } while (!timed_out);
 
+  // 释放互斥锁
   mutex.exit();
 
+  // 返回等待结果
   return (timed_out ? OS_SYNC_TIME_EXCEEDED : 0);
 }
 

@@ -1705,76 +1705,89 @@ void os_file_read_string(FILE *file, char *str, ulint size) {
 }
 
 /** Decompress after a read and punch a hole in the file if it was a write
+在读取后解压缩数据，如果是写入操作则在文件中打洞
 @param[in]      type            IO context
+@param[in]      type            IO上下文
 @param[in]      fh              Open file handle
+@param[in]      fh              已打开的文件句柄
 @param[in,out]  buf             Buffer to transform
+@param[in,out]  buf             要转换的缓冲区
 @param[in,out]  scratch         Scratch area for read decompression
+@param[in,out]  scratch         用于读取解压缩的临时区域
 @param[in]      src_len         Length of the buffer before compression
+@param[in]      src_len         压缩前的缓冲区长度
 @param[in]      offset          file offset from the start where to read
+@param[in]      offset         文件起始位置的读取偏移量
 @param[in]      len             Compressed buffer length for write and size
                                 of buf len for read
-@return DB_SUCCESS or error code */
+@param[in]      len            写入时的压缩缓冲区长度或读取时的缓冲区长度
+@return DB_SUCCESS or error code
+@return DB_SUCCESS 表示成功，否则返回错误码 */
 static dberr_t os_file_io_complete(const IORequest &type, os_file_t fh,
                                    byte *buf, byte *scratch, ulint src_len,
                                    os_offset_t offset, ulint len) {
-  dberr_t ret = DB_SUCCESS;
+  dberr_t ret = DB_SUCCESS;  // 初始化返回值为成功
 
   /* We never compress/decompress the first page */
-  ut_a(offset > 0);
-  ut_ad(type.validate());
+  /* 我们从不压缩/解压缩第一页 */
+  ut_a(offset > 0);  // 断言偏移量必须大于0
+  ut_ad(type.validate());  // 验证IO请求类型有效性
 
-  if (!type.is_compression_enabled()) {
-    if (type.is_log() && offset >= LOG_FILE_HDR_SIZE) {
-      Encryption encryption(type.encryption_algorithm());
+  if (!type.is_compression_enabled()) {  // 如果压缩未启用
+    if (type.is_log() && offset >= LOG_FILE_HDR_SIZE) {  // 如果是日志文件且偏移量超过日志头大小
+      Encryption encryption(type.encryption_algorithm());  // 创建加密对象
 
-      ret = encryption.decrypt_log(type, buf, src_len, scratch);
+      ret = encryption.decrypt_log(type, buf, src_len, scratch);  // 解密日志数据
     }
 
-    return (ret);
-  } else if (type.is_read()) {
-    ut_ad(!type.is_row_log());
-    Encryption encryption(type.encryption_algorithm());
+    return (ret);  // 返回解密结果
+  } else if (type.is_read()) {  // 如果是读取操作
+    ut_ad(!type.is_row_log());  // 断言不是行日志
+    Encryption encryption(type.encryption_algorithm());  // 创建加密对象
 
-    ret = encryption.decrypt(type, buf, src_len, scratch, len);
+    ret = encryption.decrypt(type, buf, src_len, scratch, len);  // 解密数据
 
-    if (ret == DB_SUCCESS) {
-      return (os_file_decompress_page(type.is_dblwr(), buf, scratch, len));
+    if (ret == DB_SUCCESS) {  // 如果解密成功
+      return (os_file_decompress_page(type.is_dblwr(), buf, scratch, len));  // 解压缩页面
     } else {
-      return (ret);
+      return (ret);  // 返回解密错误
     }
-  } else if (type.punch_hole()) {
-    ut_ad(len <= src_len);
-    ut_ad(!type.is_log());
-    ut_ad(type.is_write());
-    ut_ad(type.is_compressed());
+  } else if (type.punch_hole()) {  // 如果需要打洞操作
+    ut_ad(len <= src_len);  // 断言压缩后长度不超过原始长度
+    ut_ad(!type.is_log());  // 断言不是日志文件
+    ut_ad(type.is_write());  // 断言是写入操作
+    ut_ad(type.is_compressed());  // 断言是压缩数据
 
     /* Nothing to do. */
-    if (len == src_len) {
-      return (DB_SUCCESS);
+    /* 无需操作 */
+    if (len == src_len) {  // 如果压缩后长度等于原始长度
+      return (DB_SUCCESS);  // 直接返回成功
     }
 
 #ifdef UNIV_DEBUG
-    const ulint block_size = type.block_size();
+    const ulint block_size = type.block_size();  // 获取块大小(仅在调试模式下)
 #endif /* UNIV_DEBUG */
 
     /* We don't support multiple page sizes in the server
     at the moment. */
-    ut_ad(src_len == srv_page_size);
+    /* 目前服务器不支持多页面大小 */
+    ut_ad(src_len == srv_page_size);  // 断言原始长度等于页面大小
 
     /* Must be a multiple of the compression unit size. */
-    ut_ad((len % block_size) == 0);
-    ut_ad((offset % block_size) == 0);
+    /* 必须是压缩单元大小的倍数 */
+    ut_ad((len % block_size) == 0);  // 断言压缩长度是块大小的倍数
+    ut_ad((offset % block_size) == 0);  // 断言偏移量是块大小的倍数
 
-    ut_ad(len + block_size <= src_len);
+    ut_ad(len + block_size <= src_len);  // 断言压缩长度加块大小不超过原始长度
 
-    offset += len;
+    offset += len;  // 调整偏移量
 
-    return (os_file_punch_hole(fh, offset, src_len - len));
+    return (os_file_punch_hole(fh, offset, src_len - len));  // 执行打洞操作
   }
 
-  ut_ad(!type.is_log());
+  ut_ad(!type.is_log());  // 断言不是日志文件
 
-  return (DB_SUCCESS);
+  return (DB_SUCCESS);  // 默认返回成功
 }
 
 /** Check if the path refers to the root of a drive using a pointer
@@ -2102,18 +2115,25 @@ static file::Block *os_file_encrypt_log(const IORequest &type, void *&buf,
 #ifndef _WIN32
 
 /** Do the read/write
+执行读/写操作
 @param[in]      request The IO context and type
-@return the number of bytes read/written or negative value on error */
+@param[in]      request IO上下文和类型
+@return the number of bytes read/written or negative value on error
+@return 读取/写入的字节数，出错时返回负值 */
 ssize_t SyncFileIO::execute(const IORequest &request) {
-  ssize_t n_bytes;
+  ssize_t n_bytes;  // 用于存储读取/写入的字节数
 
-  if (request.is_read()) {
+  if (request.is_read()) {  // 如果是读取操作
+    // 调用pread进行定位读取
     n_bytes = pread(m_fh, m_buf, m_n, m_offset);
-  } else {
+  } else {  // 如果是写入操作
+    // 断言确保是写入操作
     ut_ad(request.is_write());
+    // 调用pwrite进行定位写入
     n_bytes = pwrite(m_fh, m_buf, m_n, m_offset);
   }
 
+  // 返回读取/写入的字节数
   return (n_bytes);
 }
 
@@ -2127,27 +2147,36 @@ static std::string os_file_find_path_for_fd(os_file_t fd) {
 }
 
 /** Free storage space associated with a section of the file.
+释放文件中指定区间占用的存储空间
 @param[in]      fh              Open file handle
+@param[in]      fh              已打开的文件句柄
 @param[in]      off             Starting offset (SEEK_SET)
+@param[in]      off            起始偏移量(从文件开头计算)
 @param[in]      len             Size of the hole
-@return DB_SUCCESS or error code */
+@param[in]      len            要释放的空间大小
+@return DB_SUCCESS or error code
+@return DB_SUCCESS 表示成功，否则返回错误码 */
 static dberr_t os_file_punch_hole_posix(os_file_t fh, os_offset_t off,
                                         os_offset_t len) {
 #ifdef HAVE_FALLOC_PUNCH_HOLE_AND_KEEP_SIZE
+  // 使用FALLOC_FL_PUNCH_HOLE和FALLOC_FL_KEEP_SIZE标志
   const int mode = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
 
+  // 调用fallocate执行打洞操作
   int ret = fallocate(fh, mode, off, len);
 
   if (ret == 0) {
-    return (DB_SUCCESS);
+    return (DB_SUCCESS);  // 操作成功
   }
 
-  ut_a(ret == -1);
+  ut_a(ret == -1);  // 断言返回值必须是-1
 
   if (errno == ENOTSUP) {
+    // 文件系统不支持打洞操作
     return (DB_IO_NO_PUNCH_HOLE);
   }
 
+  // 获取文件路径用于错误信息
   const auto fd_path = os_file_find_path_for_fd(fh);
   if (!fd_path.empty()) {
     ib::warn(ER_IB_MSG_754)
@@ -2161,14 +2190,14 @@ static dberr_t os_file_punch_hole_posix(os_file_t fh, os_offset_t off,
         << len << ") returned errno: " << errno;
   }
 
-  return (DB_IO_ERROR);
+  return (DB_IO_ERROR);  // 返回IO错误
 
 #elif defined(UNIV_SOLARIS)
-
-  // Use F_FREESP
+  // Solaris系统使用F_FREESP实现
 
 #endif /* HAVE_FALLOC_PUNCH_HOLE_AND_KEEP_SIZE */
 
+  // 默认返回不支持打洞操作
   return (DB_IO_NO_PUNCH_HOLE);
 }
 
@@ -5308,36 +5337,56 @@ void Dir_Walker::walk_win32(const Path &basedir, bool recursive, Function &&f) {
 #endif /* !_WIN32*/
 
 /** Does a synchronous read or write depending upon the type specified
+执行同步读写操作，具体类型由参数决定
 In case of partial reads/writes the function tries
 NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
+对于部分读写的情况，函数会尝试NUM_RETRIES_ON_PARTIAL_IO次来完成完整数据的读写
 @param[in]      in_type         IO flags
+@param[in]      in_type         IO标志
 @param[in]      file            handle to an open file
+@param[in]      file            已打开文件的句柄
 @param[out]     buf             buffer where to read
+@param[out]     buf            读取数据的缓冲区
 @param[in]      offset          file offset from the start where to read
+@param[in]      offset         文件起始位置的偏移量
 @param[in]      n               number of bytes to read, starting from offset
+@param[in]      n              从偏移量开始要读取的字节数
 @param[out]     err             DB_SUCCESS or error code
+@param[out]     err            DB_SUCCESS或错误码
 @param[in]      e_block         encrypted block or nullptr.
-@return number of bytes read/written, -1 if error */
+@param[in]      e_block        加密块或nullptr
+@return number of bytes read/written, -1 if error
+@return 读取/写入的字节数，出错返回-1 */
 [[nodiscard]] static ssize_t os_file_io(const IORequest &in_type,
                                         os_file_t file, void *buf, ulint n,
                                         os_offset_t offset, dberr_t *err,
                                         const file::Block *e_block) {
+  // 保存原始请求的字节数
   ulint original_n = n;
+  // 文件块指针初始化为空
   file::Block *block{};
+  // 获取IO请求类型
   IORequest type = in_type;
+  // 已返回的字节数初始化为0
   ssize_t bytes_returned = 0;
+  // 加密日志缓冲区初始化为空
   byte *encrypt_log_buf = nullptr;
 
+  // 处理压缩情况
   if (type.is_compressed()) {
     /* We don't compress the first page of any file. */
+    /* 我们不压缩任何文件的第一页 */
     ut_ad(offset > 0);
     ut_ad(!type.is_log());
     if (e_block == nullptr) {
+      // 压缩页面
       block = os_file_compress_page(type, buf, &n);
     } else {
       /* Since e_block is valid, encryption must have already happened. Since we
       do compression before encryption, we assert here that there is no
       encryption involved. */
+      /* 由于e_block有效，加密必须已经发生。因为我们先压缩后加密，
+      这里断言没有加密参与 */
       ut_ad(!type.is_encrypted());
     }
   } else {
@@ -5347,9 +5396,11 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
   /* We do encryption after compression, since if we do encryption
   before compression, the encrypted data will cause compression fail
   or low compression rate. */
+  /* 我们在压缩后进行加密，因为如果在压缩前加密，加密数据会导致压缩失败或压缩率低 */
   if ((type.is_encrypted() || e_block != nullptr) && type.is_write()) {
     if (!type.is_log()) {
       /* We don't encrypt the first page of any file. */
+      /* 我们不加密任何文件的第一页 */
       auto compressed_block = block;
       ut_ad(offset > 0);
 
@@ -5357,35 +5408,47 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
       encrypt the page at higher layer so that the same encrypted page can be
       written to the dblwr file and the data file. During importing an
       encrypted tablespace, we reach here. */
+      /* 如果涉及dblwr，我们不应该到达这里，因为我们在更高层加密页面，
+      以便相同的加密页面可以写入dblwr文件和数据文件。在导入加密表空间时，我们会到达这里 */
       if (e_block == nullptr) {
+        // 加密页面
         block = os_file_encrypt_page(type, buf, n);
       } else {
         block = const_cast<file::Block *>(e_block);
       }
 
       if (compressed_block != nullptr) {
+        // 释放压缩块
         os_free_block(compressed_block);
       }
     } else {
       /* Skip encrypt log file header */
+      /* 跳过加密日志文件头 */
       if (offset >= LOG_FILE_HDR_SIZE) {
+        // 加密日志
         block = os_file_encrypt_log(type, buf, encrypt_log_buf, n);
       }
     }
   }
 
+  // 初始化同步文件IO对象
   SyncFileIO sync_file_io(file, buf, n, offset);
 
+  // 尝试多次读写操作
   for (ulint i = 0; i < NUM_RETRIES_ON_PARTIAL_IO; ++i) {
+    // 执行IO操作
     ssize_t n_bytes = sync_file_io.execute(type);
 
     /* Check for a hard error. Not much we can do now. */
+    /* 检查硬错误。现在我们能做的不多 */
     if (n_bytes < 0) {
       break;
 
     } else if ((ulint)n_bytes + bytes_returned == n) {
+      // 更新已返回的字节数
       bytes_returned += n_bytes;
 
+      // 处理压缩或读取完成的情况
       if (offset > 0 && (type.is_compressed() || type.is_read())) {
         *err = os_file_io_complete(type, file, reinterpret_cast<byte *>(buf),
                                    nullptr, original_n, offset, n);
@@ -5393,6 +5456,7 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
         *err = DB_SUCCESS;
       }
 
+      // 释放资源
       if (block != nullptr) {
         os_free_block(block);
       }
@@ -5401,15 +5465,19 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
         ut::free(encrypt_log_buf);
       }
 
+      // 返回原始请求的字节数
       return (original_n);
     }
 
     /* Handle partial read/write. */
+    /* 处理部分读写 */
 
     ut_ad((ulint)n_bytes + bytes_returned < n);
 
+    // 更新已返回的字节数
     bytes_returned += (ulint)n_bytes;
 
+    // 打印警告信息（如果未禁用部分IO警告）
     if (!type.is_partial_io_warning_disabled()) {
       const char *op = type.is_read() ? "read" : "written";
 
@@ -5420,9 +5488,11 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
     }
 
     /* Advance the offset and buffer by n_bytes */
+    /* 按n_bytes推进偏移量和缓冲区 */
     sync_file_io.advance(n_bytes);
   }
 
+  // 释放资源
   if (block != nullptr) {
     os_free_block(block);
   }
@@ -5431,81 +5501,119 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
     ut::free(encrypt_log_buf);
   }
 
+  // 设置错误码（如果不是解密失败）
   if (*err != DB_IO_DECRYPT_FAIL) {
     *err = DB_IO_ERROR;
   }
 
+  // 打印重试失败警告（如果未禁用部分IO警告）
   if (!type.is_partial_io_warning_disabled()) {
     ib::warn(ER_IB_MSG_813)
         << "Retry attempts for " << (type.is_read() ? "reading" : "writing")
         << " partial data failed.";
   }
 
+  // 返回已处理的字节数
   return (bytes_returned);
 }
 
 /** Does a synchronous write operation in Posix.
+在Posix系统中执行同步写操作
 @param[in]      type            IO context
+@param[in]      type            IO上下文
 @param[in]      file            handle to an open file
+@param[in]      file            已打开文件的句柄
 @param[out]     buf             buffer from which to write
+@param[out]     buf            要写入数据的缓冲区
 @param[in]      n               number of bytes to read, starting from offset
+@param[in]      n              从偏移量开始要读取的字节数
 @param[in]      offset          file offset from the start where to read
+@param[in]      offset         文件起始位置的偏移量
 @param[out]     err             DB_SUCCESS or error code
+@param[out]     err             DB_SUCCESS或错误码
 @param[in]      e_block         encrypted block or nullptr.
-@return number of bytes written, -1 if error */
+@param[in]      e_block        加密块或nullptr
+@return number of bytes written, -1 if error
+@return 写入的字节数，如果出错返回-1 */
 [[nodiscard]] static ssize_t os_file_pwrite(IORequest &type, os_file_t file,
                                             const byte *buf, ulint n,
                                             os_offset_t offset, dberr_t *err,
                                             const file::Block *e_block) {
 #ifdef UNIV_HOTBACKUP
+  // 在热备份模式下使用静态互斥锁
   static meb::Mutex meb_mutex;
 #endif /* UNIV_HOTBACKUP */
 
+  // 验证IO请求类型是否有效
   ut_ad(type.validate());
 
 #ifdef UNIV_HOTBACKUP
+  // 热备份模式下锁定互斥锁
   meb_mutex.lock();
 #endif /* UNIV_HOTBACKUP */
+  // 增加文件写入计数
   ++os_n_file_writes;
 #ifdef UNIV_HOTBACKUP
+  // 热备份模式下解锁互斥锁
   meb_mutex.unlock();
 #endif /* UNIV_HOTBACKUP */
 
+  // 增加待处理写入计数
   os_n_pending_writes.fetch_add(1);
+  // 监控计数器增加
   MONITOR_ATOMIC_INC(MONITOR_OS_PENDING_WRITES);
 
+  // 执行实际的IO操作
   ssize_t n_bytes =
       os_file_io(type, file, (void *)buf, n, offset, err, e_block);
 
+  // 减少待处理写入计数
   os_n_pending_writes.fetch_sub(1);
+  // 监控计数器减少
   MONITOR_ATOMIC_DEC(MONITOR_OS_PENDING_WRITES);
 
+  // 返回写入的字节数
   return (n_bytes);
 }
 
 /** Requests a synchronous write operation.
+请求同步写操作
 @param[in]      type            IO flags
+@param[in]      type            IO标志
 @param[in]      name            name of the file or path as a null-terminated
                                 string
+@param[in]      name            以null结尾的文件名或路径字符串
 @param[in]      file            handle to an open file
+@param[in]      file            已打开文件的句柄
 @param[out]     buf             buffer from which to write
+@param[out]     buf            要写入数据的缓冲区
 @param[in]      offset          file offset from the start where to read
+@param[in]      offset         文件起始位置的偏移量
 @param[in]      n               number of bytes to read, starting from offset
+@param[in]      n              从偏移量开始要读取的字节数
 @param[in]      e_block         encrypted block or nullptr.
-@return DB_SUCCESS if request was successful, false if fail */
+@param[in]      e_block        加密块或nullptr
+@return DB_SUCCESS if request was successful, false if fail
+@return 如果请求成功返回DB_SUCCESS，否则返回false */
 [[nodiscard]] static dberr_t os_file_write_page(IORequest &type,
                                                 const char *name,
                                                 os_file_t file, const byte *buf,
                                                 os_offset_t offset, ulint n,
                                                 const file::Block *e_block) {
+  // 初始化错误状态为未设置
   dberr_t err(DB_ERROR_UNSET);
 
+  // 验证IO请求类型是否有效
   ut_ad(type.validate());
+  // 确保要写入的字节数大于0
   ut_ad(n > 0);
 
+  // 执行实际的写操作
   ssize_t n_bytes = os_file_pwrite(type, file, buf, n, offset, &err, e_block);
 
+  // 检查是否写入完整，且尚未报告磁盘已满错误
   if ((ulint)n_bytes != n && !os_has_said_disk_full) {
+    // 输出写入失败的错误信息
     ib::error(ER_IB_MSG_814) << "Write to file " << name << " failed at offset "
                              << offset << ", " << n
                              << " bytes should have been written,"
@@ -5520,16 +5628,20 @@ NUM_RETRIES_ON_PARTIAL_IO times to read/write the complete data.
                                 " Check also that the disk is not full"
                                 " or a disk quota exceeded.";
 
+    // 如果系统提供了错误描述，则输出错误描述
     if (strerror(errno) != nullptr) {
       ib::error(ER_IB_MSG_815)
           << "Error number " << errno << " means '" << strerror(errno) << "'";
     }
 
+    // 输出操作系统错误信息
     ib::info(ER_IB_MSG_816) << OPERATING_SYSTEM_ERROR_MSG;
 
+    // 标记已报告磁盘已满错误
     os_has_said_disk_full = true;
   }
 
+  // 返回错误状态
   return (err);
 }
 
@@ -6236,6 +6348,8 @@ dberr_t os_file_read_no_error_handling_func(IORequest &type,
 /** NOTE! Use the corresponding macro os_file_write(), not directly this
 function!
 Requests a synchronous write operation.
+注意！请使用对应的宏 os_file_write()，不要直接调用这个函数！
+请求同步写操作
 @param[in,out]  type            IO request context
 @param[in]      name            name of the file or path as a null-terminated
                                 string
@@ -6246,17 +6360,24 @@ Requests a synchronous write operation.
 @return DB_SUCCESS if request was successful */
 dberr_t os_file_write_func(IORequest &type, const char *name, os_file_t file,
                            const void *buf, os_offset_t offset, ulint n) {
+  // 验证IO请求类型是否有效
   ut_ad(type.validate());
+  // 验证是否为写操作
   ut_ad(type.is_write());
 
   /* We never compress the first page.
   Note: This assumes we always do block IO. */
+  /* 我们从不压缩第一页
+  注意：这里假设我们总是进行块IO */
   if (offset == 0) {
+    // 清除压缩标志
     type.clear_compressed();
   }
 
+  // 将缓冲区指针转换为字节指针
   const byte *ptr = reinterpret_cast<const byte *>(buf);
 
+  // 调用底层写页函数执行实际写操作
   return os_file_write_page(type, name, file, ptr, offset, n,
                             type.get_encrypted_block());
 }
@@ -6278,20 +6399,28 @@ bool os_file_exists(const char *path) {
 }
 
 /** Free storage space associated with a section of the file.
+释放文件中指定区间占用的存储空间
 @param[in]      fh              Open file handle
+@param[in]      fh              已打开的文件句柄
 @param[in]      off             Starting offset (SEEK_SET)
+@param[in]      off            起始偏移量(从文件开头计算)
 @param[in]      len             Size of the hole
-@return DB_SUCCESS or error code */
+@param[in]      len            要释放的空间大小
+@return DB_SUCCESS or error code
+@return DB_SUCCESS 表示成功，否则返回错误码 */
 dberr_t os_file_punch_hole(os_file_t fh, os_offset_t off, os_offset_t len) {
   /* In this debugging mode, we act as if punch hole is supported,
   and then skip any calls to actually punch a hole here.
   In this way, Transparent Page Compression is still being tested. */
+  /* 在调试模式下，我们假装支持打洞操作，
+  然后跳过实际的打洞调用。
+  这样仍然可以测试透明页压缩功能 */
   DBUG_EXECUTE_IF("ignore_punch_hole", return (DB_SUCCESS););
 
 #ifdef _WIN32
-  return (os_file_punch_hole_win32(fh, off, len));
+  return (os_file_punch_hole_win32(fh, off, len));  // Windows平台实现
 #else
-  return (os_file_punch_hole_posix(fh, off, len));
+  return (os_file_punch_hole_posix(fh, off, len));  // POSIX平台实现
 #endif /* _WIN32 */
 }
 

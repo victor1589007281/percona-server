@@ -725,9 +725,11 @@ struct mtr_t {
  private:
   Impl m_impl;
 
+  // 提交时的日志序列号(Log Sequence Number)
   /** LSN at commit time */
   lsn_t m_commit_lsn;
 
+  // 标识是否为同步迷你事务的标志
   /** true if it is synchronous mini-transaction */
   bool m_sync;
 

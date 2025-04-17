@@ -98,12 +98,20 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
   rw_lock_t *sn_lock_inst;
 #endif /* UNIV_DEBUG */
 
-  /** Current sn value. Used to reserve space in the redo log,
-  and used to acquire an exclusive access to the log buffer.
-  Represents number of data bytes that have ever been reserved.
-  Bytes of headers and footers of log blocks are not included.
-  Its highest bit is used for locking the access to the log buffer. */
-  alignas(ut::INNODB_CACHE_LINE_SIZE) atomic_sn_t sn;
+  /** 
+    Current sn value. Used to reserve space in the redo log,
+    and used to acquire an exclusive access to the log buffer.
+    Represents number of data bytes that have ever been reserved.
+    Bytes of headers and footers of log blocks are not included.
+    Its highest bit is used for locking the access to the log buffer.
+  
+    当前的 `sn` 值。用于在重做日志中预留空间，
+    并用于获取对日志缓冲区的独占访问权限。
+    表示曾经预留的所有数据字节数。
+    日志块的头部和尾部字节不包括在内。
+    它的最高位用于锁定对日志缓冲区的访问。
+  */
+  alignas(ut::INNODB_CACHE_LINE_SIZE) atomic_sn_t sn; // 对齐到 InnoDB 缓存行大小的原子序列号
 
   /** Intended sn value while x-locked. */
   atomic_sn_t sn_locked;
@@ -123,7 +131,9 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
   atomic_sn_t buf_size_sn;
 
   /** Size of the log buffer expressed in number of total bytes,
-  that is including bytes for headers and footers of log blocks. */
+  that is including bytes for headers and footers of log blocks. 
+  日志缓冲区的大小，以总字节数表示，
+  包括日志块头部和尾部的字节数。*/
   size_t buf_size;
 
   /** The recent written buffer.
@@ -142,6 +152,23 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
 
   /** The recent closed buffer.
   Protected by: locking sn not to add. */
+  /** 
+   * 最近关闭的缓冲区(recent_closed buffer)
+   * 
+   * 功能说明：
+   * 1. 跟踪已关闭但尚未完成刷脏的页面
+   * 2. 用于确保脏页按正确顺序写入磁盘
+   * 3. 防止因乱序刷盘导致的数据不一致
+   * 
+   * 保护机制：
+   * - 通过锁定sn值来防止并发修改
+   * - 确保在添加新条目时的线程安全
+   * 
+   * 技术细节：
+   * - 使用Link_buf模板类实现，存储lsn_t类型值
+   * - 内存对齐到InnoDB缓存行大小(64字节)以避免伪共享
+   * - 每个槽位对应一个LSN范围，用于跟踪页面关闭顺序
+   */
   alignas(ut::INNODB_CACHE_LINE_SIZE) Link_buf<lsn_t> recent_closed;
 
   /** @} */
@@ -303,6 +330,20 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
   updates of this field. */
   Log_file_handle m_current_file_handle{m_encryption_metadata};
 
+  /** 
+   * 标记日志写入器是否已进入额外写入边距区域且尚未退出
+   * 
+   * 功能说明：
+   * - 当写入器进入该边距区域时，会暂停所有用户线程的log_free_check()调用
+   * - 同时会向日志发出警告信息
+   * - 当写入器退出该边距区域时，会发出通知
+   * 
+   * 保护机制：
+   * - 由log_limits_mutex和writer_mutex共同保护
+   * 
+   * 使用场景：
+   * 当日志空间接近耗尽时，该标志用于触发紧急处理流程
+   */
   /** True iff the log writer has entered extra writer margin and still
   hasn't exited since then. Each time the log_writer enters that margin,
   it pauses all user threads at log_free_check() calls and emits warning
@@ -421,6 +462,17 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
 
   /** Capacity limits for the redo log. Responsible for resize.
   Mutex protection is decided per each Log_files_capacity method. */
+  /** 
+   * 重做日志的容量限制管理器，负责日志文件大小调整
+   * 
+   * 保护机制：
+   * - 每个Log_files_capacity方法自行决定所需的互斥锁保护级别
+   * 
+   * 功能说明：
+   * 1. 管理重做日志的物理和逻辑容量限制
+   * 2. 处理日志文件动态调整大小(resize)操作
+   * 3. 提供容量计算和检查功能
+   */
   Log_files_capacity m_capacity;
 
   /** True iff log_writer is waiting for a next log file available.
@@ -692,6 +744,20 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
   Read by: log_writer (under writer_mutex)
   Updated by: log_checkpointer (under both mutexes)
   Protected by (updates only): checkpointer_mutex + writer_mutex. */
+  /** 
+   * 最新的检查点LSN位置
+   * 
+   * 访问控制：
+   * - 读取方：用户线程和日志打印(无保护)
+   * - 读取方：日志写入线程(持有writer_mutex时)
+   * - 更新方：日志检查点线程(需同时持有checkpointer_mutex和writer_mutex)
+   * 
+   * 保护机制：仅在更新时需要同时持有checkpointer_mutex和writer_mutex
+   * 
+   * 功能说明：
+   * 记录最后一次成功写入检查点的日志序列号位置，
+   * 用于系统崩溃恢复时确定重做起点
+   */
   atomic_lsn_t last_checkpoint_lsn;
 
   /** Next checkpoint header to use.
@@ -699,6 +765,21 @@ struct alignas(ut::INNODB_CACHE_LINE_SIZE) log_t {
   Protected by: checkpointer_mutex */
   Log_checkpoint_header_no next_checkpoint_header_no;
 
+  /**
+   * 当检查点线程推进last_checkpoint_lsn时发出信号的事件
+   * 
+   * 功能说明：
+   * - 用于通知等待检查点推进的其他线程
+   * - 当日志检查点线程更新last_checkpoint_lsn后会触发此事件
+   * 
+   * 使用场景：
+   * 1. 日志写入线程在空间不足时等待检查点推进
+   * 2. 其他需要同步检查点位置的线程
+   * 
+   * 工作机制：
+   * 检查点线程在完成检查点写入后，会通过os_event_set()触发此事件，
+   * 唤醒所有等待的线程
+   */
   /** Event signaled when last_checkpoint_lsn is advanced by
   the log_checkpointer thread. */
   os_event_t next_checkpoint_event;

@@ -1999,9 +1999,13 @@ bool thd_is_replication_slave_thread(THD *thd) /*!< in: thread handle */
 /** Gets information on the durability property requested by thread.
  Used when writing either a prepare or commit record to the log
  buffer. @return the durability property. */
+// 获取线程请求的持久性属性
+// 用于在写入prepare或commit记录到日志缓冲区时
+// 返回持久性属性
 enum durability_properties thd_requested_durability(
     const THD *thd) /*!< in: thread handle */
 {
+  // 调用thd_get_durability_property获取线程的持久性属性
   return (thd_get_durability_property(thd));
 }
 

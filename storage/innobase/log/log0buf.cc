@@ -523,44 +523,53 @@ static inline void log_buffer_s_lock_wait(log_t &log, const sn_t start_sn) {
   }
 }
 
-/** Acquires the log buffer s-lock.
-And reserve space in the log buffer.
-The corresponding unlock operation is adding link to log.recent_closed.
-@param[in,out] log     redo log
-@param[in]     len     number of data bytes to reserve for write
-@return start sn of reserved */
+/** 
+  Acquires the log buffer s-lock.
+  And reserve space in the log buffer.
+  The corresponding unlock operation is adding link to log.recent_closed.
+  @param[in,out] log     redo log
+                         重做日志
+  @param[in]     len     number of data bytes to reserve for write
+                         要预留写入的字节数
+  @return start sn of reserved
+          返回预留的起始序列号
+*/
 static inline sn_t log_buffer_s_lock_enter_reserve(log_t &log, size_t len) {
-#ifdef UNIV_PFS_RWLOCK
-  PSI_rwlock_locker *locker = nullptr;
-  PSI_rwlock_locker_state state;
-  if (log.pfs_psi != nullptr) {
-    if (log.pfs_psi->m_enabled) {
-      /* Instrumented to inform we are acquiring a shared rwlock */
-      locker = PSI_RWLOCK_CALL(start_rwlock_rdwait)(
-          &state, log.pfs_psi, PSI_RWLOCK_SHAREDLOCK, __FILE__,
-          static_cast<uint>(__LINE__));
+  #ifdef UNIV_PFS_RWLOCK
+    PSI_rwlock_locker *locker = nullptr; // 性能模式下的锁记录器
+    PSI_rwlock_locker_state state; // 性能模式下的锁状态
+    if (log.pfs_psi != nullptr) { // 如果性能模式的 PSI 不为空
+      if (log.pfs_psi->m_enabled) { // 如果性能模式启用
+        /* Instrumented to inform we are acquiring a shared rwlock */
+        /* 记录我们正在获取共享读写锁 */
+        locker = PSI_RWLOCK_CALL(start_rwlock_rdwait)(
+            &state, log.pfs_psi, PSI_RWLOCK_SHAREDLOCK, __FILE__,
+            static_cast<uint>(__LINE__));
+      }
     }
+  #endif /* UNIV_PFS_RWLOCK */
+  
+    /* Reserve space in sequence of data bytes: */
+    /* 在数据字节序列中预留空间 */
+    sn_t start_sn = log.sn.fetch_add(len); // 使用原子操作增加日志序列号
+    if (UNIV_UNLIKELY((start_sn & SN_LOCKED) != 0)) { // 如果序列号被锁定
+      start_sn &= ~SN_LOCKED; // 清除锁定标志
+      /* log.sn is locked. Should wait for unlocked. */
+      /* log.sn 被锁定，需要等待解锁 */
+      log_buffer_s_lock_wait(log, start_sn); // 等待解锁
+    }
+  
+    ut_d(
+        rw_lock_add_debug_info(log.sn_lock_inst, 0, RW_LOCK_S, UT_LOCATION_HERE)); 
+        // 添加调试信息，记录共享锁的使用
+  #ifdef UNIV_PFS_RWLOCK
+    if (locker != nullptr) { // 如果性能模式下的锁记录器不为空
+      PSI_RWLOCK_CALL(end_rwlock_rdwait)(locker, 0); // 结束共享锁的等待记录
+    }
+  #endif /* UNIV_PFS_RWLOCK */
+  
+    return start_sn; // 返回预留的起始序列号
   }
-#endif /* UNIV_PFS_RWLOCK */
-
-  /* Reserve space in sequence of data bytes: */
-  sn_t start_sn = log.sn.fetch_add(len);
-  if (UNIV_UNLIKELY((start_sn & SN_LOCKED) != 0)) {
-    start_sn &= ~SN_LOCKED;
-    /* log.sn is locked. Should wait for unlocked. */
-    log_buffer_s_lock_wait(log, start_sn);
-  }
-
-  ut_d(
-      rw_lock_add_debug_info(log.sn_lock_inst, 0, RW_LOCK_S, UT_LOCATION_HERE));
-#ifdef UNIV_PFS_RWLOCK
-  if (locker != nullptr) {
-    PSI_RWLOCK_CALL(end_rwlock_rdwait)(locker, 0);
-  }
-#endif /* UNIV_PFS_RWLOCK */
-
-  return start_sn;
-}
 
 /** Releases the log buffer s-lock.
 @param[in,out] log       redo log
@@ -569,16 +578,20 @@ static inline sn_t log_buffer_s_lock_enter_reserve(log_t &log, size_t len) {
 static inline void log_buffer_s_lock_exit_close(log_t &log, lsn_t start_lsn,
                                                 lsn_t end_lsn) {
 #ifdef UNIV_PFS_RWLOCK
+  // 如果启用了性能模式(performance schema)支持
   if (log.pfs_psi != nullptr) {
     if (log.pfs_psi->m_enabled) {
       /* Inform performance schema we are unlocking the lock */
+      // 通知性能模式我们正在解锁这个锁
       PSI_RWLOCK_CALL(unlock_rwlock)
       (log.pfs_psi, PSI_RWLOCK_SHAREDUNLOCK);
     }
   }
 #endif /* UNIV_PFS_RWLOCK */
+  // 调试模式下移除锁的调试信息
   ut_d(rw_lock_remove_debug_info(log.sn_lock_inst, 0, RW_LOCK_S));
 
+  // 在recent_closed缓冲区中添加链接并推进尾部指针
   log.recent_closed.add_link_advance_tail(start_lsn, end_lsn);
 }
 
@@ -828,31 +841,51 @@ void log_update_buf_limit(log_t &log, lsn_t write_lsn) {
   log.buf_limit_sn.store(limit_for_end);
 }
 
+/**
+  Waits until there is free space in the log buffer. The free space has
+  to be available for range of sn values ending at the provided sn.
+
+  等待日志缓冲区中有足够的空间。该空间必须覆盖以提供的 `sn` 值为结束的 `sn` 范围。
+
+  @param[in]     log     redo log
+                         重做日志
+  @param[in]     end_sn  end of the range of sn values
+                         `sn` 值范围的结束值
+*/
 static void log_wait_for_space_in_log_buf(log_t &log, sn_t end_sn) {
-  lsn_t lsn;
-  Wait_stats wait_stats;
+  lsn_t lsn; // 用于存储转换后的 LSN 值
+  Wait_stats wait_stats; // 等待统计信息
 
   const sn_t write_sn = log_translate_lsn_to_sn(log.write_lsn.load());
+  // 将当前写入的 LSN 转换为对应的 SN 值
 
   log_sync_point("log_wait_for_space_in_buf_middle");
+  // 同步点，用于调试和性能分析
 
   const sn_t buf_size_sn = log.buf_size_sn.load();
+  // 获取日志缓冲区的大小（以 SN 为单位）
 
   if (end_sn + OS_FILE_LOG_BLOCK_SIZE <= write_sn + buf_size_sn) {
-    return;
+    // 如果 `end_sn` 加上日志块大小小于等于当前写入位置加上缓冲区大小
+    return; // 缓冲区中有足够的空间，直接返回
   }
 
   /* We preserve this counter for backward compatibility with 5.7. */
-  srv_stats.log_waits.inc();
+  /* 我们保留此计数器以与 MySQL 5.7 版本向后兼容。 */
+  srv_stats.log_waits.inc(); // 增加日志等待计数器
 
   lsn = log_translate_sn_to_lsn(end_sn + OS_FILE_LOG_BLOCK_SIZE - buf_size_sn);
+  // 计算需要写入的 LSN 值
 
   wait_stats = log_write_up_to(log, lsn, false);
+  // 写入日志直到指定的 LSN 值，并获取等待统计信息
 
   MONITOR_INC_WAIT_STATS(MONITOR_LOG_ON_BUFFER_SPACE_, wait_stats);
+  // 更新监控统计信息，记录等待日志缓冲区空间的次数
 
   ut_a(end_sn + OS_FILE_LOG_BLOCK_SIZE <=
        log_translate_lsn_to_sn(log.write_lsn.load()) + buf_size_sn);
+  // 断言：确保 `end_sn` 加上日志块大小小于等于当前写入位置加上缓冲区大小
 }
 
 /**
@@ -1142,39 +1175,62 @@ void log_buffer_write_completed(log_t &log, lsn_t start_lsn, lsn_t end_lsn) {
   }
 }
 
+/**
+ * 等待日志最近关闭缓冲区(recent_closed)中有足够空间
+ * 
+ * 该函数用于确保在指定的LSN位置之前有足够的空间可以添加链接
+ * 
+ * @param log 重做日志系统引用
+ * @param lsn 需要检查的日志序列号位置
+ */
 void log_wait_for_space_in_log_recent_closed(log_t &log, lsn_t lsn) {
+  // 断言检查：LSN必须是数据LSN
   ut_a(log_is_data_lsn(lsn));
 
+  // 调试断言：LSN必须大于等于已添加脏页的LSN位置
   ut_ad(lsn >= log_buffer_dirty_pages_added_up_to_lsn(log));
 
-  uint64_t wait_loops = 0;
+  uint64_t wait_loops = 0; // 等待循环计数器
 
+  // 循环等待直到recent_closed缓冲区中有足够空间
   while (!log.recent_closed.has_space(lsn)) {
-    ++wait_loops;
-    std::this_thread::sleep_for(std::chrono::microseconds(20));
+    ++wait_loops; // 增加等待计数
+    std::this_thread::sleep_for(std::chrono::microseconds(20)); // 短暂休眠20微秒
   }
 
+  // 如果等待次数不为0，记录监控信息
   if (unlikely(wait_loops != 0)) {
     MONITOR_INC_VALUE(MONITOR_LOG_ON_RECENT_CLOSED_WAIT_LOOPS, wait_loops);
   }
 }
 
+// 关闭日志缓冲区并释放相关资源
 void log_buffer_close(log_t &log, const Log_handle &handle) {
+  // 获取处理句柄中的起始LSN
   const lsn_t start_lsn = handle.start_lsn;
+  // 获取处理句柄中的结束LSN  
   const lsn_t end_lsn = handle.end_lsn;
 
+  // 断言检查：起始LSN必须是数据LSN
   ut_a(log_is_data_lsn(start_lsn));
+  // 断言检查：结束LSN必须是数据LSN
   ut_a(log_is_data_lsn(end_lsn));
+  // 断言检查：结束LSN必须大于起始LSN
   ut_a(end_lsn > start_lsn);
 
+  // 调试断言：起始LSN必须大于等于已添加脏页的LSN位置
   ut_ad(start_lsn >= log_buffer_dirty_pages_added_up_to_lsn(log));
 
+  // 调试断言：当前线程必须持有SN锁的共享锁
   ut_ad(rw_lock_own(log.sn_lock_inst, RW_LOCK_S));
 
+  // 内存屏障：确保之前的写入操作对其他线程可见
   std::atomic_thread_fence(std::memory_order_release);
 
+  // 同步点：用于调试和性能分析
   log_sync_point("log_buffer_write_completed_dpa_before_store");
 
+  // 释放SN锁的共享锁并关闭日志缓冲区
   log_buffer_s_lock_exit_close(log, start_lsn, end_lsn);
 }
 
@@ -1302,49 +1358,70 @@ void log_buffer_get_last_block(log_t &log, lsn_t &last_lsn, byte *last_block,
  *******************************************************/
 
 /** @{ */
-
+/**
+ * 推进可写入LSN(日志序列号)位置
+ * 
+ * 该函数负责更新log.buf_ready_for_write_lsn，表示可以安全写入磁盘的LSN位置
+ * 
+ * @param log 重做日志系统引用
+ */
 void log_advance_ready_for_write_lsn(log_t &log) {
+  // 确保当前线程持有写入器互斥锁
   ut_ad(log_writer_mutex_own(log));
+  // 调试模式下验证写入器线程活动状态
   ut_d(log_writer_thread_active_validate());
 
+  // 获取当前已写入磁盘的LSN位置
   const lsn_t write_lsn = log.write_lsn.load();
-
+  // 获取最大写入大小配置
   const auto write_max_size = srv_log_write_max_size;
-
+  // 断言写入大小必须大于0
   ut_a(write_max_size > 0);
 
+  // 定义停止条件lambda函数
   auto stop_condition = [&](lsn_t prev_lsn, lsn_t next_lsn) {
+    // 断言LSN必须是数据LSN
     ut_a(log_is_data_lsn(prev_lsn));
     ut_a(log_is_data_lsn(next_lsn));
-
+    // 断言LSN必须递增
     ut_a(next_lsn > prev_lsn);
     ut_a(prev_lsn >= write_lsn);
 
+    // 同步点用于调试
     log_sync_point("log_advance_ready_for_write_before_reclaim");
 
+    // 当已处理数据量达到最大写入大小时停止
     return prev_lsn - write_lsn >= write_max_size;
   };
 
+  // 获取当前可写入LSN位置
   const lsn_t previous_lsn = log_buffer_ready_for_write_lsn(log);
-
+  // 断言必须大于等于已写入LSN
   ut_a(previous_lsn >= write_lsn);
 
+  // 尝试推进recent_written缓冲区的尾部
   if (log.recent_written.advance_tail_until(stop_condition)) {
+    // 同步点用于调试
     log_sync_point("log_advance_ready_for_write_before_update");
 
     /* Validation of recent_written is optional because
     it takes significant time (delaying the log writer). */
+    /* 验证recent_written是可选的，因为这会消耗较多时间(可能延迟日志写入器) */    
     if (log_test != nullptr &&
         log_test->enabled(Log_test::Options::VALIDATE_RECENT_WRITTEN)) {
       /* All links between ready_lsn and lsn have
       been traversed. The slots can't be re-used
       before we updated the tail. */
+      /* 所有在ready_lsn和lsn之间的链接都已被遍历。
+         在更新尾部之前，这些槽位不能被重用 */      
       log.recent_written.validate_no_links(previous_lsn,
                                            log_buffer_ready_for_write_lsn(log));
     }
 
+    // 断言新的可写入LSN必须大于之前的
     ut_a(log_buffer_ready_for_write_lsn(log) > previous_lsn);
 
+    // 内存屏障确保更新对其他线程可见
     std::atomic_thread_fence(std::memory_order_acquire);
   }
 }

@@ -291,11 +291,20 @@ bool thd_sqlcom_can_generate_row_events(const THD *thd) {
   return sqlcom_can_generate_row_events(thd->lex->sql_command);
 }
 
+/** Gets information on the durability property requested by thread.
+@param[in]  thd   thread handle
+@return the durability property */
+// 获取线程请求的持久性属性
+// 参数: thd - 线程句柄
+// 返回值: 持久性属性枚举值
 enum durability_properties thd_get_durability_property(const THD *thd) {
+  // 默认返回常规持久性
   enum durability_properties ret = HA_REGULAR_DURABILITY;
 
+  // 如果线程句柄不为空，则获取线程的持久性属性
   if (thd != nullptr) ret = thd->durability_property;
 
+  // 返回持久性属性
   return ret;
 }
 

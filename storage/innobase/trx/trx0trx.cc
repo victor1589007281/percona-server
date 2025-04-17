@@ -3786,10 +3786,14 @@ dberr_t trx_set_prepared_in_tc_for_mysql(trx_t *trx) {
   return (DB_SUCCESS);
 }
 
+// 根据事务的持久性设置刷新日志
 static void trx_flush_logs(trx_t *trx, lsn_t lsn) {
+  // 如果日志序列号为0则直接返回
   if (lsn == 0) {
     return;
   }
+  
+  // 根据事务请求的持久性级别进行处理
   switch (thd_requested_durability(trx->mysql_thd)) {
     case HA_IGNORE_DURABILITY:
       /* We set the HA_IGNORE_DURABILITY during prepare phase of
@@ -3797,7 +3801,11 @@ static void trx_flush_logs(trx_t *trx, lsn_t lsn) {
       here. So that we can flush prepared records of transactions to
       redo log in a group right before writing them to binary log
       during flush stage of binlog group commit. */
+      /* 我们在binlog组提交的准备阶段设置HA_IGNORE_DURABILITY，
+         不在这里为每个事务刷新redo日志。这样我们可以在binlog组提交的flush阶段，
+         将事务的准备记录作为一个组刷新到redo日志中，然后再写入二进制日志。*/
       break;
+      
     case HA_REGULAR_DURABILITY:
       /* Depending on the my.cnf options, we may now write the log
       buffer to the log files, making the prepared state of the
@@ -3814,10 +3822,21 @@ static void trx_flush_logs(trx_t *trx, lsn_t lsn) {
       gather behind one doing the physical log write to disk.
 
       We must not be holding any mutexes or latches here. */
+      /* 根据my.cnf配置选项，我们现在可以将日志缓冲区写入日志文件，
+         使事务的准备状态在操作系统不崩溃时持久化。我们还可以将日志文件刷新到磁盘，
+         使事务的准备状态在操作系统崩溃或断电时也能持久化。
 
+         InnoDB组提交的理念是，一组事务聚集在一个执行物理磁盘写入的事务后面，
+         当物理写入完成后，其中一个事务执行写入操作来准备整个组。
+         注意，这种组提交只有在数据库中有超过2个用户时才会带来好处，
+         这样至少2个用户可以聚集在一个执行物理日志写入的事务后面。
+
+         这里我们不能持有任何互斥锁或闩锁。*/
+      
       /* We should trust trx->ddl_operation instead of
       ddl_must_flush here */
-      trx->ddl_must_flush = false;
-      trx_flush_log_if_needed(lsn, trx);
+      /* 这里我们应该信任trx->ddl_operation而不是ddl_must_flush */
+      trx->ddl_must_flush = false;  // 重置DDL必须刷新标志
+      trx_flush_log_if_needed(lsn, trx);  // 如果需要则刷新日志
   }
 }
