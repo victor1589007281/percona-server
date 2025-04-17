@@ -4387,9 +4387,12 @@ bool is_atomic_ddl(THD *thd, bool using_trans);
    than call ev->write() directly. The caller will not be affected if any
    change happens in serialization process. For example, serializing the
    event in different format.
+   将二进制事件序列化到给定的输出流。这比直接调用ev->write()更通用。
+   调用者不会受到序列化过程中任何变化的影响。例如，可以用不同格式序列化事件。
  */
 template <class EVENT>
 bool binary_event_serialize(EVENT *ev, Basic_ostream *ostream) {
+  // 调用事件对象的write方法将事件写入输出流
   return ev->write(ostream);
 }
 

@@ -962,13 +962,22 @@ class binlog_cache_data {
 
   /**
      Flush pending event to the cache buffer.
+     将挂起的事件刷新到缓存缓冲区
    */
   int flush_pending_event(THD *thd) {
+    // 检查是否有待处理的pending事件
     if (m_pending) {
+      // 设置pending事件的STMT_END_F标志位
       m_pending->set_flags(Rows_log_event::STMT_END_F);
+      
+      // 将pending事件写入缓存，如果出错则返回错误码
       if (int error = write_event(m_pending)) return error;
+      
+      // 清除线程的binlog表映射信息
       thd->clear_binlog_table_maps();
     }
+    
+    // 成功返回0
     return 0;
   }
 
@@ -1575,16 +1584,21 @@ static int binlog_close_connection(handlerton *, THD *thd) {
 }
 
 int binlog_cache_data::write_event(Log_event *ev) {
-  DBUG_TRACE;
+  DBUG_TRACE;  // 调试跟踪标记
 
+  // 如果事件不为空
   if (ev != nullptr) {
+    // 调试模拟磁盘空间不足的情况
     DBUG_EXECUTE_IF("simulate_disk_full_at_flush_pending",
                     { DBUG_SET("+d,simulate_file_write_error"); });
 
+    // 将事件序列化到binlog缓存中
     if (binary_event_serialize(ev, &m_cache)) {
+      // 如果序列化失败，处理调试模拟情况
       DBUG_EXECUTE_IF("simulate_disk_full_at_flush_pending", {
         DBUG_SET("-d,simulate_file_write_error");
         DBUG_SET("-d,simulate_disk_full_at_flush_pending");
+        // 设置第二次模拟以防止断言失败
         /*
            after +d,simulate_file_write_error the local cache
            is in unsane state. Since -d,simulate_file_write_error
@@ -1594,10 +1608,19 @@ int binlog_cache_data::write_event(Log_event *ev) {
         */
         DBUG_SET("+d,simulate_do_write_cache_failure");
       });
-      return 1;
+      return 1;  // 返回错误
     }
+
+    // 根据事件类型设置相应的标志位
     if (ev->get_type_code() == binary_log::XID_EVENT ||
         ev->get_type_code() == binary_log::XA_PREPARE_LOG_EVENT)
+      flags.with_xid = true;  // 设置XID标志
+    
+    if (ev->is_using_immediate_logging()) 
+      flags.immediate = true;  // 设置立即日志标志
+    
+    // 原子DDL事件需要设置XID标志
+    if (is_atomic_ddl_event(ev)) 
       flags.with_xid = true;
     if (ev->is_using_immediate_logging()) flags.immediate = true;
     /* DDL gets marked as xid-requiring at its caching. */
@@ -9379,25 +9402,33 @@ void MYSQL_BIN_LOG::handle_binlog_flush_or_sync_error(THD *thd,
 }
 
 int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
-  DBUG_TRACE;
-  int flush_error = 0, sync_error = 0;
-  my_off_t total_bytes = 0;
-  bool do_rotate = false;
+  DBUG_TRACE;  // 调试跟踪标记
+  int flush_error = 0, sync_error = 0;  // 初始化flush和sync错误码
+  my_off_t total_bytes = 0;  // 总字节数
+  bool do_rotate = false;  // 是否执行日志轮转标志
 
+  // 在分配BGC ticket前设置同步点
   CONDITIONAL_SYNC_POINT_FOR_TIMESTAMP("before_assign_session_to_bgc_ticket");
+  // 为当前线程分配BGC ticket
   thd->rpl_thd_ctx.binlog_group_commit_ctx().assign_ticket();
 
+  // 调试模拟：在等待ticket前添加新ticket
   DBUG_EXECUTE_IF("syncpoint_before_wait_on_ticket_3",
                   binlog::Bgc_ticket_manager::instance().push_new_ticket(););
+  // 调试模拟：开始新的BGC ticket
   DBUG_EXECUTE_IF("begin_new_bgc_ticket",
                   binlog::Bgc_ticket_manager::instance().push_new_ticket(););
 
+  // 调试模拟：在提交前崩溃
   DBUG_EXECUTE_IF("crash_commit_before_log", DBUG_SUICIDE(););
+  // 初始化线程变量
   init_thd_variables(thd, all, skip_commit);
+  // 打印调试信息：提交状态、错误码和线程ID
   DBUG_PRINT("enter", ("commit_pending: %s, commit_error: %d, thread_id: %u",
                        YESNO(thd->tx_commit_pending), thd->commit_error,
                        thd->thread_id()));
 
+  // 在flush阶段前设置同步点
   DEBUG_SYNC(thd, "bgc_before_flush_stage");
 
   /*
@@ -9407,6 +9438,10 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     This will make thread wait until its turn to commit.
     Commit_order_manager maintains it own queue and its own order for the
     commit. So Stage#0 doesn't maintain separate StageID.
+    阶段 #0: 确保slave线程按照它们在slave的relay log中出现的顺序提交事务到二进制日志
+    
+    这将使线程等待直到轮到它提交。
+    Commit_order_manager维护自己的队列和提交顺序。所以阶段#0不需要单独的StageID。
   */
   if (Commit_order_manager::wait_for_its_turn_before_flush_stage(thd) ||
       ending_trans(thd, all) ||
@@ -9423,20 +9458,30 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     them in due time. Once the queue was empty, we cannot reap
     anything more since it is possible that a thread entered and
     appointed itself leader for the flush phase.
+    阶段 #1: 将事务刷新到二进制日志
+    
+    在刷新过程中，我们允许新线程进入并会及时处理它们。
+    一旦队列为空，我们就不能再获取任何内容，因为可能有线程进入并指定自己为flush阶段的leader。
   */
 
+  // 尝试进入flush阶段
   if (change_stage(thd, Commit_stage_manager::BINLOG_FLUSH_STAGE, thd, nullptr,
                    &LOCK_log)) {
+    // 打印返回信息：线程ID和错误码
     DBUG_PRINT("return", ("Thread ID: %u, commit_error: %d", thd->thread_id(),
                           thd->commit_error));
     return finish_commit(thd);
   }
 
+  // 初始化队列和位置变量
   THD *wait_queue = nullptr, *final_queue = nullptr;
   mysql_mutex_t *leave_mutex_before_commit_stage = nullptr;
   my_off_t flush_end_pos = 0;
   bool update_binlog_end_pos_after_sync;
+  
+  // 如果二进制日志未打开
   if (unlikely(!is_open())) {
+    // 获取并处理flush阶段的队列
     final_queue = fetch_and_process_flush_stage_queue(true);
     leave_mutex_before_commit_stage = &LOCK_log;
     /*
@@ -9444,6 +9489,9 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
       ignored. Binlog cache should be cleared, but instead of doing
       it here, do that work in 'finish_commit' function so that
       leader and followers thread caches will be cleared.
+      二进制日志已关闭，应忽略flush和sync阶段。
+      Binlog缓存应该被清除，但不是在这里做，而是在'finish_commit'函数中完成，
+      这样leader和follower线程的缓存都会被清除。
     */
     goto commit_stage;
   }
@@ -9455,6 +9503,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     flush_error = flush_cache_to_file(&flush_end_pos);
   DBUG_EXECUTE_IF("crash_after_flush_binlog", DBUG_SUICIDE(););
 
+  // 更新binlog结束位置是否需要等待同步完成
   update_binlog_end_pos_after_sync = (get_sync_period() == 1);
 
   /*
@@ -9463,6 +9512,11 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     executed before the before/after_send_hooks on the dump thread
     preventing race conditions among these plug-ins.
   */
+  /*
+    如果flush阶段成功完成，调用after_flush钩子
+    在这里调用可以确保钩子在dump线程的before/after_send_hooks之前执行，
+    避免这些插件之间的竞争条件
+  */ 
   if (flush_error == 0) {
     const char *file_name_ptr = log_file_name + dirname_length(log_file_name);
     assert(flush_end_pos != 0);
@@ -9472,22 +9526,25 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
       flush_error = ER_ERROR_ON_WRITE;
     }
 
+    // 如果不需要等待sync阶段完成就更新binlog结束位置
     if (!update_binlog_end_pos_after_sync) update_binlog_end_pos();
 
     DBUG_EXECUTE_IF("crash_commit_after_log", DBUG_SUICIDE(););
   }
 
+  // 处理flush阶段的错误
   if (flush_error) {
     /*
       Handle flush error (if any) after leader finishes it's flush stage.
     */
     handle_binlog_flush_or_sync_error(
-        thd, false /* need_lock_log */,
+        thd, false /* need_lock_log */, /* 不需要LOCK_log */
         (thd->commit_error == THD::CE_FLUSH_GNO_EXHAUSTED_ERROR)
             ? ER_THD(thd, ER_GNO_EXHAUSTED)
             : nullptr);
   }
 
+  // 发布全局状态的binlog坐标
   publish_coordinates_for_global_status();
 
   DEBUG_SYNC(thd, "bgc_after_flush_stage_before_sync_stage");
@@ -9495,7 +9552,11 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
   /*
     Stage #2: Syncing binary log file to disk
   */
+   /*
+    阶段 #2: 将binlog文件同步到磁盘
+  */
 
+  // 进入sync阶段
   if (change_stage(thd, Commit_stage_manager::SYNC_STAGE, wait_queue, &LOCK_log,
                    &LOCK_sync)) {
     DBUG_PRINT("return", ("Thread ID: %u, commit_error: %d", thd->thread_id(),
@@ -9511,25 +9572,35 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     it is considered as a special case and delay will be executed
     for every group just like how it is done when sync_binlog= 1.
   */
+  /*
+    仅在当前SYNC阶段需要执行sync时才引入延迟
+    "+1"用于计算当前正在进行的sync阶段
+    当sync_binlog=0(在BGC组中从不执行sync)时，被视为特殊情况，
+    每个组都会执行延迟，就像sync_binlog=1时一样
+  */ 
   if (!flush_error && (sync_counter + 1 >= get_sync_period()))
     Commit_stage_manager::get_instance().wait_count_or_timeout(
         opt_binlog_group_commit_sync_no_delay_count,
         opt_binlog_group_commit_sync_delay, Commit_stage_manager::SYNC_STAGE);
 
+  // 获取sync阶段的队列
   final_queue = Commit_stage_manager::get_instance().fetch_queue_acquire_lock(
       Commit_stage_manager::SYNC_STAGE);
 
+  // 执行binlog文件同步
   if (flush_error == 0 && total_bytes > 0) {
     DEBUG_SYNC(thd, "before_sync_binlog_file");
     std::pair<bool, bool> result = sync_binlog_file(false);
     sync_error = result.first;
   }
 
+  // 如果需要等待sync完成才更新binlog结束位置
   if (update_binlog_end_pos_after_sync && flush_error == 0 && sync_error == 0) {
     THD *tmp_thd = final_queue;
     const char *binlog_file = nullptr;
     my_off_t pos = 0;
 
+    // 遍历队列获取最新的binlog位置
     while (tmp_thd != nullptr) {
       if (tmp_thd->commit_error == THD::CE_NONE) {
         tmp_thd->get_trans_fixed_pos(&binlog_file, &pos);
@@ -9537,6 +9608,7 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
       tmp_thd = tmp_thd->next_to_commit;
     }
 
+    // 更新binlog结束位置
     if (binlog_file != nullptr && pos > 0) {
       update_binlog_end_pos(binlog_file, pos);
     }
@@ -9562,8 +9634,23 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     all locks are released but we should not enter into
     commit stage if binlog_error_action is ABORT_SERVER.
   */
+  /*
+    阶段 #3: 按顺序提交所有事务
+
+    如果我们不需要排序提交，则跳过此阶段，
+    每个线程必须自己执行handlerton提交
+
+    由于我们保持前一阶段的锁，如果跳过此阶段需要解锁
+
+    我们还必须在ha_commit_low()调用之前step commit_clock，
+    无论是按顺序(由本阶段的leader)还是由线程自己执行
+
+    我们延迟处理sync错误直到所有锁释放，
+    但如果binlog_error_action是ABORT_SERVER则不应进入commit阶段
+  */ 
 commit_stage:
   /* Clone needs binlog commit order. */
+  /* 克隆需要binlog提交顺序 */  
   if ((opt_binlog_order_commits || Clone_handler::need_commit_order()) &&
       (sync_error == 0 || binlog_error_action != ABORT_SERVER)) {
     if (change_stage(thd, Commit_stage_manager::COMMIT_STAGE, final_queue,
@@ -9596,12 +9683,14 @@ commit_stage:
       Gtid_set, and adding and removing intervals requires a mutex,
       which would reduce performance.
     */
+    // 处理提交队列
     process_commit_stage_queue(thd, commit_queue);
     mysql_mutex_unlock(&LOCK_commit);
     /*
       Process after_commit after LOCK_commit is released for avoiding
       3-way deadlock among user thread, rotate thread and dump thread.
     */
+    // 在LOCK_commit释放后处理after_commit以避免死锁   
     process_after_commit_stage_queue(thd, commit_queue);
     final_queue = commit_queue;
   } else {
@@ -9614,11 +9703,13 @@ commit_stage:
   /*
     Handle sync error after we release all locks in order to avoid deadlocks
   */
+  // 处理sync错误 
   if (sync_error)
     handle_binlog_flush_or_sync_error(thd, true /* need_lock_log */, nullptr);
 
   DEBUG_SYNC(thd, "before_signal_done");
   /* Commit done so signal all waiting threads */
+  // 提交完成，通知所有等待线程  
   Commit_stage_manager::get_instance().signal_done(final_queue);
   DBUG_EXECUTE_IF("block_leader_after_delete", {
     const char action[] = "now SIGNAL leader_proceed";
@@ -9630,6 +9721,7 @@ commit_stage:
     deadlock. We don't need the return value here since it is in
     thd->commit_error, which is returned below.
   */
+  // 完成提交 
   (void)finish_commit(thd);
   DEBUG_SYNC(thd, "bgc_after_commit_stage_before_rotation");
 
@@ -9637,6 +9729,7 @@ commit_stage:
     If we need to rotate, we do it without commit error.
     Otherwise the thd->commit_error will be possibly reset.
    */
+  // 如果需要旋转且没有提交错误，执行旋转  
   if (DBUG_EVALUATE_IF("force_rotate", 1, 0) ||
       (do_rotate && thd->commit_error == THD::CE_NONE &&
        !is_rotating_caused_by_incident)) {
@@ -9664,6 +9757,7 @@ commit_stage:
       auto_purge();
   }
 
+  // 检查binlog空间限制
   if (binlog_space_limit && binlog_space_total &&
       binlog_space_total + m_binlog_file->position() > binlog_space_limit)
     purge_logs_by_size(true);
