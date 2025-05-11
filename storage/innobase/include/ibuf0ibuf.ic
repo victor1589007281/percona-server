@@ -58,33 +58,63 @@ static inline void ibuf_mtr_commit(mtr_t *mtr) /*!< in/out: mini-transaction */
 }
 
 /** Insert buffer struct */
+/** 插入缓冲区结构体 */
 struct ibuf_t {
+  // 当前ibuf索引树的大小，以页为单位
   ulint size;          /*!< current size of the ibuf index
                        tree, in pages */
+                       /*!< 当前ibuf索引树的大小，以页为单位 */
+
+  // 推荐的ibuf索引树最大大小，以页为单位
   ulint max_size;      /*!< recommended maximum size of the
                        ibuf index tree, in pages */
+                       /*!< 推荐的ibuf索引树最大大小，以页为单位 */
+
+  // 包含ibuf头和树的文件段分配的页数
   ulint seg_size;      /*!< allocated pages of the file
                        segment containing ibuf header and
                        tree */
+                       /*!< 包含ibuf头和树的文件段分配的页数 */
+
+  // 受插入缓冲区树根页锁存保护，当且仅当插入缓冲区树为空时为true
   bool empty;          /*!< Protected by the page
                        latch of the root page of the
                        insert buffer tree
                        (FSP_IBUF_TREE_ROOT_PAGE_NO). true
                        if and only if the insert
                        buffer tree is empty. */
-  ulint free_list_len; /*!< length of the free list */
-  ulint height;        /*!< tree height */
-  dict_index_t *index; /*!< insert buffer index */
+                       /*!< 受插入缓冲区树根页锁存保护，
+                            当且仅当插入缓冲区树为空时为true */
 
+  // 空闲列表长度
+  ulint free_list_len; /*!< length of the free list */
+                       /*!< 空闲列表长度 */
+
+  // 树的高度
+  ulint height;        /*!< tree height */
+                       /*!< 树的高度 */
+
+  // 插入缓冲区索引
+  dict_index_t *index; /*!< insert buffer index */
+                       /*!< 插入缓冲区索引 */
+
+  // 已合并的页数
   std::atomic<ulint> n_merges; /*!< number of pages merged */
+                                /*!< 已合并的页数 */
+
+  // 每种操作类型合并到索引页的数量
   std::atomic<ulint> n_merged_ops[IBUF_OP_COUNT];
   /*!< number of operations of each type
   merged to index pages */
+  /*!< 每种操作类型合并到索引页的数量 */
+
+  // 每种操作类型因表空间被删除或索引被丢弃而未合并的数量
   std::atomic<ulint> n_discarded_ops[IBUF_OP_COUNT];
   /*!< number of operations of each type
   discarded without merging due to the
   tablespace being deleted or the
   index being dropped */
+  /*!< 每种操作类型因表空间被删除或索引被丢弃而未合并的数量 */
 };
 
 /** Sets the free bit of the page in the ibuf bitmap. This is done in a separate

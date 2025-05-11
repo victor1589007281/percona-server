@@ -116,20 +116,37 @@ ulint rec_get_nth_field_offs(const dict_index_t *index, const ulint *offsets,
   return rec_get_nth_field_offs_low(offsets, n, len);
 }
 
+/**
+ * 获取旧格式记录中第n个字段的偏移量
+ * @param[in]  index  索引对象，可以为NULL
+ * @param[in]  rec    记录指针
+ * @param[in]  n      字段序号
+ * @param[out] len    返回字段长度
+ * @return 字段偏移量
+ */
 ulint rec_get_nth_field_offs_old(const dict_index_t *index, const rec_t *rec,
                                  ulint n, ulint *len) {
+  // 如果提供了索引对象
   if (index) {
+    // 断言：索引表必须是非压缩格式
     ut_ad(!dict_table_is_comp(index->table));
+    
+    // 如果索引有行版本控制
     if (index->has_row_versions()) {
       uint8_t version = UINT8_UNDEFINED;
+      
+      // 如果记录是版本化的
       if (rec_old_is_versioned(rec)) {
+        // 获取记录的版本号
         version = rec_get_instant_row_version_old(rec);
       }
 
+      // 根据版本获取字段的物理位置
       n = index->get_field_phy_pos(n, version);
     }
   }
 
+  // 调用底层函数获取字段偏移量
   return rec_get_nth_field_offs_old_low(rec, n, len);
 }
 

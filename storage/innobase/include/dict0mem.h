@@ -1526,14 +1526,26 @@ struct dict_index_t {
     return get_field(pos)->get_phy_pos();
   }
 
+  /**
+   * 获取字段在指定行版本中的物理位置
+   * Get the physical position of a field in a specific row version
+   * @param[in]  pos     字段的逻辑位置(索引)
+   * @param[in]  version 行版本号
+   * @return 字段在指定版本中的实际物理位置
+   */
   uint16_t get_field_phy_pos(ulint pos, uint8_t version) const {
+    // 首先获取字段在当前版本中的物理位置
     uint16_t phy_pos = get_field(pos)->get_phy_pos();
+    
+    // 如果版本未定义，直接返回当前物理位置
     if (version == UINT8_UNDEFINED) {
       return phy_pos;
     }
 
     uint16_t res = phy_pos;
+    // 遍历该位置之前的所有字段
     for (size_t i = 0; i < phy_pos; i++) {
+      // 如果字段在指定版本或之前已被删除，则调整实际位置
       if (get_field(fields_array[i])->col->is_dropped_in_or_before(version)) {
         res--;
       }
@@ -1633,6 +1645,7 @@ struct dict_index_t {
   @return the space id. */
   space_id_t space_id() const { return space; }
 };
+
 
 /** The status of online index creation */
 enum online_index_status {
@@ -2038,250 +2051,355 @@ struct dict_table_t {
   of row_drop_table_for_mysql() and turned off just before we start to
   update system tables for the drop. It is protected by
   dict_operation_lock. */
-  unsigned to_be_dropped : 1;
+  /** 如果表将被删除但尚未实际删除(可能在后台删除列表中)则为true。
+      在row_drop_table_for_mysql()开始时设置为true，
+      在开始更新系统表进行删除前设置为false。
+      由dict_operation_lock保护 */
+      unsigned to_be_dropped : 1;
 
-  /** Number of non-virtual columns defined so far. */
-  unsigned n_def : 10;
-
-  /** Number of non-virtual columns. */
-  unsigned n_cols : 10;
-
-  /** Number of non-virtual columns before first instant ADD COLUMN,
-  including the system columns like n_cols. This is used only when table has
-  instant ADD clumns in V1. */
-  unsigned n_instant_cols : 10;
-
-  /** Number of total columns (include virtual and non-virtual) */
-  unsigned n_t_cols : 10;
-
-  /** Number of total columns defined so far. */
-  unsigned n_t_def : 10;
-
-  /** Number of virtual columns defined so far. */
-  unsigned n_v_def : 10;
-
-  /** Number of virtual columns. */
-  unsigned n_v_cols : 10;
-
-  /** Number of multi-value virtual columns. */
-  unsigned n_m_v_cols : 10;
-
-  /** true if this table is expected to be kept in memory. This table
-  could be a table that has FK relationships or is undergoing DDL */
-  bool can_be_evicted : 1;
-
-  /** true if this table is not evictable(can_be_evicted) and this is
-  because of DDL operation */
-  unsigned ddl_not_evictable : 1;
-
-  /** true if some indexes should be dropped after ONLINE_INDEX_ABORTED
-  or ONLINE_INDEX_ABORTED_DROPPED. */
-  unsigned drop_aborted : 1;
-
-  /** Array of column descriptions. */
-  dict_col_t *cols;
-
-  /** Array of virtual column descriptions. */
-  dict_v_col_t *v_cols;
-
-  /** List of stored column descriptions. It is used only for foreign key
-  check during create table and copy alter operations.
-  During copy alter, s_cols list is filled during create table operation
-  and need to preserve till rename table operation. That is the
-  reason s_cols is a part of dict_table_t */
-  dict_s_col_list *s_cols;
-
-  /** Column names packed in a character string
-  "name1\0name2\0...nameN\0". Until the string contains n_cols, it will
-  be allocated from a temporary heap. The final string will be allocated
-  from table->heap. */
-  const char *col_names;
-
-  /** Virtual column names */
-  const char *v_col_names;
-
-  /** True if the table belongs to a system database (mysql, information_schema
-  or performance_schema) */
-  bool is_system_table;
-
-  /** Hash chain node. */
-  hash_node_t name_hash;
-
-  /** Hash chain node. */
-  hash_node_t id_hash;
-
-  /** The FTS_DOC_ID_INDEX, or NULL if no fulltext indexes exist */
-  dict_index_t *fts_doc_id_index;
-
-  /** List of indexes of the table. */
-  UT_LIST_BASE_NODE_T(dict_index_t, indexes) indexes;
-
-  /** Node of the LRU list of tables. */
-  UT_LIST_NODE_T(dict_table_t) table_LRU;
-
-  /** metadata version number of dd::Table::se_private_data() */
-  uint64_t version;
-
-  /** Current row version in case columns are added/dropped INSTANTly */
-  uint32_t current_row_version{0};
-
-  /** Initial non-virtual column count */
-  uint32_t initial_col_count{0};
-
-  /** Current non-virtual column count */
-  uint32_t current_col_count{0};
-
-  /** Total non-virtual column count */
-  uint32_t total_col_count{0};
-
-  /** Set if table is upgraded instant table */
-  unsigned m_upgraded_instant : 1;
-
-  /** table dynamic metadata status, protected by dict_persist->mutex */
-  std::atomic<table_dirty_status> dirty_status;
-
-#ifndef UNIV_HOTBACKUP
-  /** Node of the dirty table list of tables, which is protected
-  by dict_persist->mutex */
-  UT_LIST_NODE_T(dict_table_t) dirty_dict_tables;
-#endif /* !UNIV_HOTBACKUP */
-
-#ifdef UNIV_DEBUG
-  /** This field is used to mark if a table is in the
-  dirty_dict_tables_list. if the dirty_status is not of
-  METADATA_CLEAN, the table should be in the list, otherwise not.
-  This field should be protected by dict_persist->mutex too. */
-  bool in_dirty_dict_tables_list;
-#endif /* UNIV_DEBUG */
-
-  /** Maximum recursive level we support when loading tables chained
-  together with FK constraints. If exceeds this level, we will stop
-  loading child table into memory along with its parent table. */
-  unsigned fk_max_recusive_level : 8;
-
-  /** Count of how many foreign key check operations are currently being
-  performed on the table. We cannot drop the table while there are
-  foreign key checks running on it. */
-  std::atomic<ulint> n_foreign_key_checks_running;
-
-  /** Transaction id that last touched the table definition. Either when
-  loading the definition or CREATE TABLE, or ALTER TABLE (prepare,
-  commit, and rollback phases). */
-  trx_id_t def_trx_id;
-
-  /*!< set of foreign key constraints in the table; these refer to
-  columns in other tables */
-  dict_foreign_set foreign_set;
-
-  /*!< set of foreign key constraints which refer to this table */
-  dict_foreign_set referenced_set;
-
-#ifdef UNIV_DEBUG
-  /** This field is used to specify in simulations tables which are so
-  big that disk should be accessed. Disk access is simulated by putting
-  the thread to sleep for a while. NOTE that this flag is not stored to
-  the data dictionary on disk, and the database will forget about value
-  true if it has to reload the table definition from disk. */
-  bool does_not_fit_in_memory;
-#endif /* UNIV_DEBUG */
-
-  /** true if the maximum length of a single row exceeds BIG_ROW_SIZE.
-  Initialized in dict_table_add_to_cache(). */
-  unsigned big_rows : 1;
-
-#ifndef UNIV_HOTBACKUP
-  /** Statistics for query optimization. @{ */
-
-  /** Creation state of 'stats_latch'. */
-  std::atomic<os_once::state_t> stats_latch_created;
-
-  /** This latch protects:
-  "dict_table_t::stat_initialized",
-  "dict_table_t::stat_n_rows (*)",
-  "dict_table_t::stat_clustered_index_size",
-  "dict_table_t::stat_sum_of_other_index_sizes",
-  "dict_table_t::stat_modified_counter (*)",
-  "dict_table_t::indexes*::stat_n_diff_key_vals[]",
-  "dict_table_t::indexes*::stat_index_size",
-  "dict_table_t::indexes*::stat_n_leaf_pages".
-  (*) Those are not always protected for
-  performance reasons. */
-  rw_lock_t *stats_latch;
-
-  /** true if statistics have been calculated the first time after
-  database startup or table creation. */
-  unsigned stat_initialized : 1;
-
-  /** Timestamp of last recalc of the stats. */
-  std::chrono::steady_clock::time_point stats_last_recalc;
-
-/** The two bits below are set in the 'stat_persistent' member. They
-have the following meaning:
-1. _ON=0, _OFF=0, no explicit persistent stats setting for this table,
-the value of the global srv_stats_persistent is used to determine
-whether the table has persistent stats enabled or not
-2. _ON=0, _OFF=1, persistent stats are explicitly disabled for this
-table, regardless of the value of the global srv_stats_persistent
-3. _ON=1, _OFF=0, persistent stats are explicitly enabled for this
-table, regardless of the value of the global srv_stats_persistent
-4. _ON=1, _OFF=1, not allowed, we assert if this ever happens. */
-#define DICT_STATS_PERSISTENT_ON (1 << 1)
-#define DICT_STATS_PERSISTENT_OFF (1 << 2)
-
-  /** Indicates whether the table uses persistent stats or not. See
-  DICT_STATS_PERSISTENT_ON and DICT_STATS_PERSISTENT_OFF. */
-  uint32_t stat_persistent;
-
-/** The two bits below are set in the 'stats_auto_recalc' member. They
-have the following meaning:
-1. _ON=0, _OFF=0, no explicit auto recalc setting for this table, the
-value of the global srv_stats_persistent_auto_recalc is used to
-determine whether the table has auto recalc enabled or not
-2. _ON=0, _OFF=1, auto recalc is explicitly disabled for this table,
-regardless of the value of the global srv_stats_persistent_auto_recalc
-3. _ON=1, _OFF=0, auto recalc is explicitly enabled for this table,
-regardless of the value of the global srv_stats_persistent_auto_recalc
-4. _ON=1, _OFF=1, not allowed, we assert if this ever happens. */
-#define DICT_STATS_AUTO_RECALC_ON (1 << 1)
-#define DICT_STATS_AUTO_RECALC_OFF (1 << 2)
-
-  /** Indicates whether the table uses automatic recalc for persistent
-  stats or not. See DICT_STATS_AUTO_RECALC_ON and
-  DICT_STATS_AUTO_RECALC_OFF. */
-  uint32_t stats_auto_recalc;
-
-  /** The number of pages to sample for this table during persistent
-  stats estimation. If this is 0, then the value of the global
-  srv_stats_persistent_sample_pages will be used instead. */
-  ulint stats_sample_pages;
-
-  /** Approximate number of rows in the table. We periodically calculate
-  new estimates. */
-  uint64_t stat_n_rows;
-
-  /** Approximate clustered index size in database pages. */
-  ulint stat_clustered_index_size;
-
-  /** Approximate size of other indexes in database pages. */
-  ulint stat_sum_of_other_index_sizes;
-
-  /** If FTS AUX table, parent table id */
-  table_id_t parent_id;
-
-  /** How many rows are modified since last stats recalc. When a row is
-  inserted, updated, or deleted, we add 1 to this number; we calculate
-  new estimates for the table and the indexes if the table has changed
-  too much, see row_update_statistics_if_needed(). The counter is reset
-  to zero at statistics calculation. This counter is not protected by
-  any latch, because this is only used for heuristics. */
-  uint64_t stat_modified_counter;
-
-/** Background stats thread is not working on this table. */
-#define BG_STAT_NONE 0
+      /** Number of non-virtual columns defined so far. */
+      /** 目前已定义的非虚拟列数 */
+      unsigned n_def : 10;
+    
+      /** Number of non-virtual columns. */
+      /** 非虚拟列数 */
+      unsigned n_cols : 10;
+    
+      /** Number of non-virtual columns before first instant ADD COLUMN,
+      including the system columns like n_cols. This is used only when table has
+      instant ADD clumns in V1. */
+      /** 第一次instant ADD COLUMN之前的非虚拟列数，包括系统列。
+          仅在表有V1版本的instant ADD列时使用 */
+      unsigned n_instant_cols : 10;
+    
+      /** Number of total columns (include virtual and non-virtual) */
+      /** 总列数(包括虚拟和非虚拟列) */
+      unsigned n_t_cols : 10;
+    
+      /** Number of total columns defined so far. */
+      /** 目前已定义的总列数 */
+      unsigned n_t_def : 10;
+    
+      /** Number of virtual columns defined so far. */
+      /** 目前已定义的虚拟列数 */
+      unsigned n_v_def : 10;
+    
+      /** Number of virtual columns. */
+      /** 虚拟列数 */
+      unsigned n_v_cols : 10;
+    
+      /** Number of multi-value virtual columns. */
+      /** 多值虚拟列数 */
+      unsigned n_m_v_cols : 10;
+    
+      /** true if this table is expected to be kept in memory. This table
+      could be a table that has FK relationships or is undergoing DDL */
+      /** 如果表预期保留在内存中则为true。
+          可能是具有外键关系或正在进行DDL操作的表 */
+      bool can_be_evicted : 1;
+    
+      /** true if this table is not evictable(can_be_evicted) and this is
+      because of DDL operation */
+      /** 如果表不可驱逐(由于DDL操作)则为true */
+      unsigned ddl_not_evictable : 1;
+    
+      /** true if some indexes should be dropped after ONLINE_INDEX_ABORTED
+      or ONLINE_INDEX_ABORTED_DROPPED. */
+      /** 如果在ONLINE_INDEX_ABORTED或ONLINE_INDEX_ABORTED_DROPPED后
+          应删除某些索引则为true */
+      unsigned drop_aborted : 1;
+    
+      /** Array of column descriptions. */
+      /** 列描述数组 */
+      dict_col_t *cols;
+    
+      /** Array of virtual column descriptions. */
+      /** 虚拟列描述数组 */
+      dict_v_col_t *v_cols;
+    
+      /** List of stored column descriptions. It is used only for foreign key
+      check during create table and copy alter operations.
+      During copy alter, s_cols list is filled during create table operation
+      and need to preserve till rename table operation. That is the
+      reason s_cols is a part of dict_table_t */
+      /** 存储列描述列表。仅在创建表和复制alter操作期间用于外键检查。
+          在复制alter期间，s_cols列表在创建表操作期间填充，
+          并需要保留到重命名表操作。这就是s_cols是dict_table_t一部分的原因 */
+      dict_s_col_list *s_cols;
+    
+      /** Column names packed in a character string
+      "name1\0name2\0...nameN\0". Until the string contains n_cols, it will
+      be allocated from a temporary heap. The final string will be allocated
+      from table->heap. */
+      /** 列名打包成字符串"name1\0name2\0...nameN\0"。
+          在包含n_cols之前，将从临时堆分配。最终字符串将从table->heap分配 */
+      const char *col_names;
+    
+      /** Virtual column names */
+      /** 虚拟列名 */
+      const char *v_col_names;
+    
+      /** True if the table belongs to a system database (mysql, information_schema
+      or performance_schema) */
+      /** 如果表属于系统数据库(mysql、information_schema或performance_schema)则为true */
+      bool is_system_table;
+    
+      /** Hash chain node. */
+      /** 哈希链节点 */
+      hash_node_t name_hash;
+    
+      /** Hash chain node. */
+      /** 哈希链节点 */
+      hash_node_t id_hash;
+    
+      /** The FTS_DOC_ID_INDEX, or NULL if no fulltext indexes exist */
+      /** FTS_DOC_ID_INDEX，如果没有全文索引则为NULL */
+      dict_index_t *fts_doc_id_index;
+    
+      /** List of indexes of the table. */
+      /** 表的索引列表 */
+      UT_LIST_BASE_NODE_T(dict_index_t, indexes) indexes;
+    
+      /** Node of the LRU list of tables. */
+      /** 表LRU列表的节点 */
+      UT_LIST_NODE_T(dict_table_t) table_LRU;
+    
+      /** metadata version number of dd::Table::se_private_data() */
+      /** dd::Table::se_private_data()的元数据版本号 */
+      uint64_t version;
+    
+      /** Current row version in case columns are added/dropped INSTANTly */
+      /** 当前行版本(用于INSTANT添加/删除列时) */
+      uint32_t current_row_version{0};
+    
+      /** Initial non-virtual column count */
+      /** 初始非虚拟列数 */
+      uint32_t initial_col_count{0};
+    
+      /** Current non-virtual column count */
+      /** 当前非虚拟列数 */
+      uint32_t current_col_count{0};
+    
+      /** Total non-virtual column count */
+      /** 总非虚拟列数 */
+      uint32_t total_col_count{0};
+    
+      /** Set if table is upgraded instant table */
+      /** 如果表是升级的instant表则设置 */
+      unsigned m_upgraded_instant : 1;
+    
+      /** table dynamic metadata status, protected by dict_persist->mutex */
+      /** 表动态元数据状态，由dict_persist->mutex保护 */
+      std::atomic<table_dirty_status> dirty_status;
+    
+    #ifndef UNIV_HOTBACKUP
+      /** Node of the dirty table list of tables, which is protected
+      by dict_persist->mutex */
+      /** 脏表列表的节点，由dict_persist->mutex保护 */
+      UT_LIST_NODE_T(dict_table_t) dirty_dict_tables;
+    #endif /* !UNIV_HOTBACKUP */
+    
+    #ifdef UNIV_DEBUG
+      /** This field is used to mark if a table is in the
+      dirty_dict_tables_list. if the dirty_status is not of
+      METADATA_CLEAN, the table should be in the list, otherwise not.
+      This field should be protected by dict_persist->mutex too. */
+      /** 用于标记表是否在dirty_dict_tables_list中。
+          如果dirty_status不是METADATA_CLEAN，表应在列表中，否则不在。
+          此字段也应由dict_persist->mutex保护 */
+      bool in_dirty_dict_tables_list;
+    #endif /* UNIV_DEBUG */
+    
+      /** Maximum recursive level we support when loading tables chained
+      together with FK constraints. If exceeds this level, we will stop
+      loading child table into memory along with its parent table. */
+      /** 加载具有外键约束的表时支持的最大递归级别。
+          如果超过此级别，将停止将子表与其父表一起加载到内存中 */
+      unsigned fk_max_recusive_level : 8;
+    
+      /** Count of how many foreign key check operations are currently being
+      performed on the table. We cannot drop the table while there are
+      foreign key checks running on it. */
+      /** 当前在表上执行的外键检查操作计数。
+          当表上有外键检查运行时不能删除表 */
+      std::atomic<ulint> n_foreign_key_checks_running;
+    
+      /** Transaction id that last touched the table definition. Either when
+      loading the definition or CREATE TABLE, or ALTER TABLE (prepare,
+      commit, and rollback phases). */
+      /** 最后接触表定义的事务ID。
+          在加载定义、CREATE TABLE或ALTER TABLE(prepare、commit和rollback阶段)时设置 */
+      trx_id_t def_trx_id;
+    
+      /*!< set of foreign key constraints in the table; these refer to
+      columns in other tables */
+      /*!< 表中的外键约束集合；这些约束引用其他表中的列 */
+      dict_foreign_set foreign_set;
+    
+      /*!< set of foreign key constraints which refer to this table */
+      /*!< 引用此表的外键约束集合 */
+      dict_foreign_set referenced_set;
+    
+    #ifdef UNIV_DEBUG
+      /** This field is used to specify in simulations tables which are so
+      big that disk should be accessed. Disk access is simulated by putting
+      the thread to sleep for a while. NOTE that this flag is not stored to
+      the data dictionary on disk, and the database will forget about value
+      true if it has to reload the table definition from disk. */
+      /** 在模拟中用于指定表非常大需要访问磁盘。
+          磁盘访问通过让线程休眠一段时间来模拟。
+          注意此标志不存储到磁盘上的数据字典中，
+          如果必须从磁盘重新加载表定义，数据库将忘记true值 */
+      bool does_not_fit_in_memory;
+    #endif /* UNIV_DEBUG */
+    
+      /** true if the maximum length of a single row exceeds BIG_ROW_SIZE.
+      Initialized in dict_table_add_to_cache(). */
+      /** 如果单行最大长度超过BIG_ROW_SIZE则为true。
+          在dict_table_add_to_cache()中初始化 */
+      unsigned big_rows : 1;
+    
+    #ifndef UNIV_HOTBACKUP
+      /** Statistics for query optimization. @{ */
+    
+      /** Creation state of 'stats_latch'. */
+      /** 'stats_latch'的创建状态 */
+      std::atomic<os_once::state_t> stats_latch_created;
+    
+      /** This latch protects:
+      "dict_table_t::stat_initialized",
+      "dict_table_t::stat_n_rows (*)",
+      "dict_table_t::stat_clustered_index_size",
+      "dict_table_t::stat_sum_of_other_index_sizes",
+      "dict_table_t::stat_modified_counter (*)",
+      "dict_table_t::indexes*::stat_n_diff_key_vals[]",
+      "dict_table_t::indexes*::stat_index_size",
+      "dict_table_t::indexes*::stat_n_leaf_pages".
+      (*) Those are not always protected for
+      performance reasons. */
+      /** 此锁存器保护：
+          "dict_table_t::stat_initialized",
+          "dict_table_t::stat_n_rows (*)",
+          "dict_table_t::stat_clustered_index_size",
+          "dict_table_t::stat_sum_of_other_index_sizes",
+          "dict_table_t::stat_modified_counter (*)",
+          "dict_table_t::indexes*::stat_n_diff_key_vals[]",
+          "dict_table_t::indexes*::stat_index_size",
+          "dict_table_t::indexes*::stat_n_leaf_pages".
+          (*) 出于性能原因，这些并不总是受保护 */
+      rw_lock_t *stats_latch;
+    
+      /** true if statistics have been calculated the first time after
+      database startup or table creation. */
+      /** 如果在数据库启动或表创建后首次计算统计信息则为true */
+      unsigned stat_initialized : 1;
+    
+      /** Timestamp of last recalc of the stats. */
+      /** 上次重新计算统计信息的时间戳 */
+      std::chrono::steady_clock::time_point stats_last_recalc;
+    
+    /** The two bits below are set in the 'stat_persistent' member. They
+    have the following meaning:
+    1. _ON=0, _OFF=0, no explicit persistent stats setting for this table,
+    the value of the global srv_stats_persistent is used to determine
+    whether the table has persistent stats enabled or not
+    2. _ON=0, _OFF=1, persistent stats are explicitly disabled for this
+    table, regardless of the value of the global srv_stats_persistent
+    3. _ON=1, _OFF=0, persistent stats are explicitly enabled for this
+    table, regardless of the value of the global srv_stats_persistent
+    4. _ON=1, _OFF=1, not allowed, we assert if this ever happens. */
+    /** 以下两位设置在'stat_persistent'成员中。它们的含义如下：
+    1. _ON=0, _OFF=0，此表没有显式持久统计设置，
+       使用全局srv_stats_persistent值确定表是否启用持久统计
+    2. _ON=0, _OFF=1，显式禁用此表的持久统计，
+       无论全局srv_stats_persistent值如何
+    3. _ON=1, _OFF=0，显式启用此表的持久统计，
+       无论全局srv_stats_persistent值如何
+    4. _ON=1, _OFF=1，不允许，如果发生这种情况我们会断言 */
+    #define DICT_STATS_PERSISTENT_ON (1 << 1)
+    #define DICT_STATS_PERSISTENT_OFF (1 << 2)
+    
+      /** Indicates whether the table uses persistent stats or not. See
+      DICT_STATS_PERSISTENT_ON and DICT_STATS_PERSISTENT_OFF. */
+      /** 指示表是否使用持久统计。
+          参见DICT_STATS_PERSISTENT_ON和DICT_STATS_PERSISTENT_OFF */
+      uint32_t stat_persistent;
+    
+    /** The two bits below are set in the 'stats_auto_recalc' member. They
+    have the following meaning:
+    1. _ON=0, _OFF=0, no explicit auto recalc setting for this table, the
+    value of the global srv_stats_persistent_auto_recalc is used to
+    determine whether the table has auto recalc enabled or not
+    2. _ON=0, _OFF=1, auto recalc is explicitly disabled for this table,
+    regardless of the value of the global srv_stats_persistent_auto_recalc
+    3. _ON=1, _OFF=0, auto recalc is explicitly enabled for this table,
+    regardless of the value of the global srv_stats_persistent_auto_recalc
+    4. _ON=1, _OFF=1, not allowed, we assert if this ever happens. */
+    /** 以下两位设置在'stats_auto_recalc'成员中。它们的含义如下：
+    1. _ON=0, _OFF=0，此表没有显式自动重新计算设置，
+       使用全局srv_stats_persistent_auto_recalc值确定表是否启用自动重新计算
+    2. _ON=0, _OFF=1，显式禁用此表的自动重新计算，
+       无论全局srv_stats_persistent_auto_recalc值如何
+    3. _ON=1, _OFF=0，显式启用此表的自动重新计算，
+       无论全局srv_stats_persistent_auto_recalc值如何
+    4. _ON=1, _OFF=1，不允许，如果发生这种情况我们会断言 */
+    #define DICT_STATS_AUTO_RECALC_ON (1 << 1)
+    #define DICT_STATS_AUTO_RECALC_OFF (1 << 2)
+    
+      /** Indicates whether the table uses automatic recalc for persistent
+      stats or not. See DICT_STATS_AUTO_RECALC_ON and
+      DICT_STATS_AUTO_RECALC_OFF. */
+      /** 指示表是否对持久统计使用自动重新计算。
+          参见DICT_STATS_AUTO_RECALC_ON和DICT_STATS_AUTO_RECALC_OFF */
+      uint32_t stats_auto_recalc;
+    
+      /** The number of pages to sample for this table during persistent
+      stats estimation. If this is 0, then the value of the global
+      srv_stats_persistent_sample_pages will be used instead. */
+      /** 在持久统计估计期间为此表采样的页数。
+          如果为0，则使用全局srv_stats_persistent_sample_pages值 */
+      ulint stats_sample_pages;
+    
+      /** Approximate number of rows in the table. We periodically calculate
+      new estimates. */
+      /** 表中近似行数。我们定期计算新的估计值 */
+      uint64_t stat_n_rows;
+    
+      /** Approximate clustered index size in database pages. */
+      /** 聚集索引在数据库页中的近似大小 */
+      ulint stat_clustered_index_size;
+    
+      /** Approximate size of other indexes in database pages. */
+      /** 其他索引在数据库页中的近似大小 */
+      ulint stat_sum_of_other_index_sizes;
+    
+      /** If FTS AUX table, parent table id */
+      /** 如果是FTS辅助表，则为父表ID */
+      table_id_t parent_id;
+    
+      /** How many rows are modified since last stats recalc. When a row is
+      inserted, updated, or deleted, we add 1 to this number; we calculate
+      new estimates for the table and the indexes if the table has changed
+      too much, see row_update_statistics_if_needed(). The counter is reset
+      to zero at statistics calculation. This counter is not protected by
+      any latch, because this is only used for heuristics. */
+      /** 自上次统计重新计算以来修改的行数。
+          当插入、更新或删除行时，我们向此数字加1；
+          如果表变化太大，我们为表和索引计算新的估计值，
+          参见row_update_statistics_if_needed()。
+          在统计计算时计数器重置为零。
+          此计数器不受任何锁存器保护，因为它仅用于启发式 */
+      uint64_t stat_modified_counter;
+    
+    /** Background stats thread is not working on this table. */
+    /** 后台统计线程未在此表上工作 */
+    #define BG_STAT_NONE 0
 
 /** Set in 'stats_bg_flag' when the background stats code is working
 on this table. The DROP TABLE code waits for this to be cleared before
 proceeding. */
+/** 当后台统计代码在此表上工作时设置'stats_bg_flag'。
+    DROP TABLE代码在继续之前等待此标志清除 */
 #define BG_STAT_IN_PROGRESS (1 << 0)
 
 /** Set in 'stats_bg_flag' when DROP TABLE starts waiting on

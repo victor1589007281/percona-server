@@ -4166,59 +4166,84 @@ buf_block_t *Buf_fetch<T>::is_on_watch() {
   return (block);
 }
 
+// 处理压缩页面的函数
 template <typename T>
 dberr_t Buf_fetch<T>::zip_page_handler(buf_block_t *&fix_block) {
+  // 如果是PEEK_IF_IN_POOL模式，直接返回未找到
   if (m_mode == Page_fetch::PEEK_IF_IN_POOL) {
     /* This m_mode is only used for dropping an adaptive hash index.  There
     cannot be an adaptive hash index for a compressed-only page, so do
     not bother decompressing the page. */
+    /* 此模式仅用于删除自适应哈希索引。压缩页面不会有自适应哈希索引，
+    因此不需要解压缩页面。 */
 
+    // 解除对块的固定
     buf_block_unfix(fix_block);
 
     return (DB_NOT_FOUND);
   }
 
+// 调试模式下验证压缩页面的互斥锁
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
   ut_ad(buf_page_get_mutex(&fix_block->page) == &m_buf_pool->zip_mutex);
 #endif /* UNIV_DEBUG || UNIV_IBUF_DEBUG */
 
+  // 获取页面指针
   const auto bpage = &fix_block->page;
 
   /* Note: We have already buffer fixed this block. */
+  /* 注意：我们已经固定了这个块 */
   /* We do not hold latches required to prevent io_fix from changing, but this
   check is just a heuristic to avoid waiting for I/O under mutex. If we return
   DB_FAIL the caller will retry soon, and if we don't then we will repeat an
   analogous check few lines below with the protection of buf_page_mutex_enter.*/
+  /* 我们没有持有防止io_fix改变的锁，但这个检查只是一个启发式方法，
+  以避免在互斥锁下等待I/O。如果我们返回DB_FAIL，调用者会很快重试，
+  如果不返回，我们将在下面几行在buf_page_mutex_enter的保护下重复类似的检查 */
+
+  // 检查页面是否被固定或正在进行I/O操作
   if (bpage->buf_fix_count > 1 || bpage->was_io_fixed()) {
     /* This condition often occurs when the buffer is not buffer-fixed, but
     I/O-fixed by buf_page_init_for_read(). */
+    /* 这种情况经常发生在缓冲区没有被固定，但是被buf_page_init_for_read()进行I/O固定时 */
 
+    // 解除对块的固定
     buf_block_unfix(fix_block);
 
     /* The block is buffer-fixed or I/O-fixed.  Try again later. */
+    /* 块被缓冲区固定或I/O固定。稍后再试 */
     std::this_thread::sleep_for(WAIT_FOR_READ);
 
     return (DB_FAIL);
   }
 
+  // 从LRU列表中获取一个空闲块
   auto block = buf_LRU_get_free_block(m_buf_pool);
 
+  // 获取LRU列表互斥锁
   mutex_enter(&m_buf_pool->LRU_list_mutex);
 
   /* If not own LRU_list_mutex, page_hash can be changed. */
+  /* 如果不持有LRU_list_mutex，page_hash可能会改变 */
   m_hash_lock = buf_page_hash_lock_get(m_buf_pool, m_page_id);
 
+  // 获取哈希锁的排他锁
   rw_lock_x_lock(m_hash_lock, UT_LOCATION_HERE);
 
   /* Buffer-fixing prevents the page_hash from changing. */
+  /* 缓冲区固定防止page_hash改变 */
   ut_ad(bpage == buf_page_hash_get_low(m_buf_pool, m_page_id));
 
+  // 解除对原块的固定
   buf_block_unfix(fix_block);
 
+  // 获取新块的页面互斥锁
   buf_page_mutex_enter(block);
 
+  // 获取压缩互斥锁
   mutex_enter(&m_buf_pool->zip_mutex);
 
+  // 再次检查页面状态
   if (bpage->buf_fix_count > 0 || buf_page_get_io_fix(bpage) != BUF_IO_NONE) {
     mutex_exit(&m_buf_pool->zip_mutex);
 
@@ -4226,102 +4251,140 @@ dberr_t Buf_fetch<T>::zip_page_handler(buf_block_t *&fix_block) {
     held by this thread.  Free the block that was allocated and retry.
     This should be extremely unlikely, for example, if buf_page_get_zip()
     was invoked. */
+    /* 当buf_pool->mutex未被此线程持有时，块被缓冲区固定或I/O固定。
+    释放已分配的块并重试。这应该极不可能发生，例如，如果调用了buf_page_get_zip() */
 
+    // 释放资源并返回失败
     mutex_exit(&m_buf_pool->LRU_list_mutex);
-
     rw_lock_x_unlock(m_hash_lock);
-
     buf_page_mutex_exit(block);
-
     buf_LRU_block_free_non_file_page(block);
 
     /* Try again */
+    /* 重试 */
     return (DB_FAIL);
   }
 
   /* Move the compressed page from bpage to block, and uncompress it. */
+  /* 将压缩页面从bpage移动到block，并解压缩 */
 
   /* Note: this is the uncompressed block and it is not accessible by other
   threads yet because it is not in any list or hash table */
+  /* 注意：这是未压缩的块，其他线程还无法访问它，因为它不在任何列表或哈希表中 */
 
+  // 重新定位页面数据
   buf_relocate(bpage, &block->page);
 
+  // 初始化块的低级字段
   buf_block_init_low(block);
 
   /* Set after buf_relocate(). */
+  /* 在buf_relocate()之后设置 */
   block->page.buf_fix_count.store(1);
 
+  // 设置内存描述符，记录压缩页面数据的大小
   UNIV_MEM_DESC(&block->page.zip.data, page_zip_get_size(&block->page.zip));
 
+  // 检查块的状态是否为压缩页面
   if (buf_page_get_state(&block->page) == BUF_BLOCK_ZIP_PAGE) {
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
+    // 调试模式下从zip_clean列表中移除该页面
     UT_LIST_REMOVE(m_buf_pool->zip_clean, &block->page);
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
+    // 确保页面不在flush列表中
     ut_ad(!block->page.in_flush_list);
 
   } else {
     /* Relocate buf_pool->flush_list. */
+    /* 重新定位buf_pool->flush_list中的页面 */
     buf_flush_relocate_on_flush_list(bpage, &block->page);
   }
 
   /* Buffer-fix, I/O-fix, and X-latch the block for the duration of the
   decompression.  Also add the block to the unzip_LRU list. */
+  /* 在解压缩期间固定缓冲区、I/O固定和X锁块。同时将块添加到unzip_LRU列表 */
   block->page.state = BUF_BLOCK_FILE_PAGE;
 
   /* Insert at the front of unzip_LRU list. */
+  /* 插入到unzip_LRU列表的前面 */
   buf_unzip_LRU_add_block(block, false);
 
+  // 释放LRU列表互斥锁
   mutex_exit(&m_buf_pool->LRU_list_mutex);
 
+  // 设置块的I/O固定状态为读取中
   buf_block_set_io_fix(block, BUF_IO_READ);
 
+  // 创建位置信息对象
   ut::Location loc{m_file, m_line};
+  // 获取块的X锁
   rw_lock_x_lock_gen(&block->lock, 0, loc);
 
+  // 释放哈希锁
   rw_lock_x_unlock(m_hash_lock);
 
+  // 释放压缩互斥锁
   mutex_exit(&m_buf_pool->zip_mutex);
 
+  // 获取页面的最后访问时间
   const auto access_time = buf_page_is_accessed(&block->page);
 
+  // 释放页面互斥锁
   buf_page_mutex_exit(block);
 
+  // 增加待解压缩页面计数
   m_buf_pool->n_pend_unzip.fetch_add(1);
 
+  // 释放原始页面描述符
   buf_page_free_descriptor(bpage);
 
   /* Decompress the page while not holding any buf_pool or block->mutex. */
+  /* 在不持有任何buf_pool或block->mutex的情况下解压缩页面 */
 
   /* Page checksum verification is already done when the page is read from
   disk. Hence page checksum verification is not necessary when
   decompressing the page. */
+  /* 从磁盘读取页面时已经完成了页面校验和验证。因此在解压缩页面时不需要再次验证校验和 */
   {
+    // 解压缩页面
     bool success = buf_zip_decompress(block, false);
+    // 确保解压缩成功
     ut_a(success);
   }
 
+  // 如果不禁止ibuf操作
   if (!recv_no_ibuf_operations) {
+    // 如果页面有访问记录
     if (access_time != std::chrono::steady_clock::time_point{}) {
 #ifdef UNIV_IBUF_COUNT_DEBUG
+      // 调试模式下确保ibuf计数为0
       ut_a(ibuf_count_get(m_page_id) == 0);
 #endif /* UNIV_IBUF_COUNT_DEBUG */
     } else {
+      // 合并或删除页面的ibuf记录
       ibuf_merge_or_delete_for_page(block, m_page_id, &m_page_size, true);
     }
   }
 
+  // 获取页面互斥锁
   buf_page_mutex_enter(block);
 
+  // 清除I/O固定状态
   buf_block_set_io_fix(block, BUF_IO_NONE);
 
+  // 释放页面互斥锁
   buf_page_mutex_exit(block);
 
+  // 减少待解压缩页面计数
   m_buf_pool->n_pend_unzip.fetch_sub(1);
 
+  // 释放块的X锁
   rw_lock_x_unlock(&block->lock);
 
+  // 更新返回的块指针
   fix_block = block;
 
+  // 返回成功状态
   return (DB_SUCCESS);
 }
 
@@ -5484,115 +5547,162 @@ func_exit:
   return (bpage);
 }
 
+// 创建一个新的缓冲页面
 buf_block_t *buf_page_create(const page_id_t &page_id,
                              const page_size_t &page_size,
                              rw_lock_type_t rw_latch, mtr_t *mtr) {
-  buf_frame_t *frame;
-  buf_block_t *block;
-  buf_block_t *free_block = nullptr;
-  buf_pool_t *buf_pool = buf_pool_get(page_id);
-  rw_lock_t *hash_lock;
+  buf_frame_t *frame;  // 页面帧指针
+  buf_block_t *block;  // 缓冲块指针
+  buf_block_t *free_block = nullptr;  // 空闲块指针
+  buf_pool_t *buf_pool = buf_pool_get(page_id);  // 获取对应缓冲池
+  rw_lock_t *hash_lock;  // 哈希锁指针
 
+  // 断言：确保mtr是活跃状态
   ut_ad(mtr->is_active());
+  // 断言：如果是系统表空间(space_id=0)，则页面不能是压缩的
   ut_ad(page_id.space() != 0 || !page_size.is_compressed());
 
+  // 从LRU列表中获取一个空闲块
   free_block = buf_LRU_get_free_block(buf_pool);
 
+  // 循环查找或创建页面
   for (;;) {
+    // 获取LRU列表互斥锁
     mutex_enter(&buf_pool->LRU_list_mutex);
 
+    // 获取页面的哈希锁
     hash_lock = buf_page_hash_lock_get(buf_pool, page_id);
 
+    // 获取哈希锁的排他锁
     rw_lock_x_lock(hash_lock, UT_LOCATION_HERE);
 
+    // 从哈希表中查找页面
     block = (buf_block_t *)buf_page_hash_get_low(buf_pool, page_id);
 
+    // 如果找到页面且页面在文件中，并且不是监视哨兵
     if (block && buf_page_in_file(&block->page) &&
         !buf_pool_watch_is_sentinel(buf_pool, &block->page)) {
+      // 如果页面是过时的
       if (block->page.was_stale()) {
         /* We must release page hash latch. The LRU mutex protects the block
         from being relocated or freed. */
+        /* 我们必须释放页面哈希锁。LRU互斥锁保护块不被重定位或释放 */
         rw_lock_x_unlock(hash_lock);
 
+        // 尝试释放过时的页面
         if (!buf_page_free_stale(buf_pool, &block->page)) {
           /* The page is during IO and can't be released. We wait some to not go
           into loop that would consume CPU. This is not something that will be
           hit frequently. */
+          /* 页面正在进行I/O操作，无法释放。我们等待一段时间以避免消耗CPU的循环。
+          这种情况不会经常发生 */
           mutex_exit(&buf_pool->LRU_list_mutex);
           std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
         /* The hash lock was released, we should try again lookup for the page
         until it's gone - it should disappear eventually when the IO ends. */
+        /* 哈希锁已被释放，我们应该继续查找页面直到它消失 - 
+        当I/O结束时它最终会消失 */
         continue;
       }
 
+// 调试模式下检查ibuf计数
 #ifdef UNIV_IBUF_COUNT_DEBUG
       ut_a(ibuf_count_get(page_id) == 0);
 #endif /* UNIV_IBUF_COUNT_DEBUG */
 
+      // 调试模式下标记页面未被释放
       ut_d(block->page.file_page_was_freed = false);
 
+      // 断言：页面不是过时的
       ut_ad(!block->page.was_stale());
 
       /* Page can be found in buf_pool */
+      /* 页面可以在缓冲池中找到 */
       mutex_exit(&buf_pool->LRU_list_mutex);
       rw_lock_x_unlock(hash_lock);
 
+      // 释放空闲块
       buf_block_free(free_block);
 
+      // 返回获取的页面
       return (
           buf_page_get(page_id, page_size, rw_latch, UT_LOCATION_HERE, mtr));
     }
     break;
   }
   /* If we get here, the page was not in buf_pool: init it there */
+  /* 如果执行到这里，说明页面不在缓冲池中：需要初始化它 */
 
+  // 打印调试信息
   DBUG_PRINT("ib_buf", ("create page " UINT32PF ":" UINT32PF, page_id.space(),
                         page_id.page_no()));
 
+  // 使用空闲块作为新块
   block = free_block;
 
+  // 初始化页面
   buf_page_init(buf_pool, page_id, page_size, block);
 
+  // 增加块的引用计数
   buf_block_buf_fix_inc(block, UT_LOCATION_HERE);
 
+  // 获取块的互斥锁
   buf_page_mutex_enter(block);
 
+ // 设置页面为已访问状态
   buf_page_set_accessed(&block->page);
 
+  // 释放块的互斥锁
   mutex_exit(&block->mutex);
 
   /* Latch the page before releasing hash lock so that concurrent request for
   this page doesn't see half initialized page. ALTER tablespace for encryption
   and clone page copy can request page for any page id within tablespace
   size limit. */
-  mtr_memo_type_t mtr_latch_type;
+  /* 在释放哈希锁之前锁定页面，这样并发请求不会看到半初始化的页面。
+  ALTER表空间加密和克隆页面拷贝可以请求表空间大小限制内的任何页面ID */
+  mtr_memo_type_t mtr_latch_type;  // 定义mtr锁类型变量
 
+  // 根据读写锁类型选择不同的锁定方式
   if (rw_latch == RW_X_LATCH) {
+    // 获取排他锁
     rw_lock_x_lock(&block->lock, UT_LOCATION_HERE);
-    mtr_latch_type = MTR_MEMO_PAGE_X_FIX;
+    mtr_latch_type = MTR_MEMO_PAGE_X_FIX;  // 设置为X锁类型
   } else {
+    // 获取共享排他锁
     rw_lock_sx_lock(&block->lock, UT_LOCATION_HERE);
-    mtr_latch_type = MTR_MEMO_PAGE_SX_FIX;
+    mtr_latch_type = MTR_MEMO_PAGE_SX_FIX;  // 设置为SX锁类型
   }
+  // 将块和锁类型记录到mtr中
   mtr_memo_push(mtr, block, mtr_latch_type);
 
+  // 释放哈希锁
   rw_lock_x_unlock(hash_lock);
 
   /* The block must be put to the LRU list */
+  /* 必须将块放入LRU列表 */
   buf_LRU_add_block(&block->page, false);
 
+  // 增加缓冲池创建的页面计数
   buf_pool->stat.n_pages_created.fetch_add(1);
 
+  // 如果是压缩页面
   if (page_size.is_compressed()) {
+    // 释放LRU列表互斥锁
     mutex_exit(&buf_pool->LRU_list_mutex);
 
+    // 从buddy分配器中分配压缩页面所需的内存
     auto data = buf_buddy_alloc(buf_pool, page_size.physical());
 
+    // 重新获取LRU列表互斥锁
     mutex_enter(&buf_pool->LRU_list_mutex);
 
+    // 获取块的互斥锁
     buf_page_mutex_enter(block);
+    // 设置压缩页面数据指针
     block->page.zip.data = (page_zip_t *)data;
+    // 释放块的互斥锁
     buf_page_mutex_exit(block);
 
     /* To maintain the invariant
@@ -5600,27 +5710,40 @@ buf_block_t *buf_page_create(const page_id_t &page_id,
     == buf_page_belongs_to_unzip_LRU(&block->page)
     we have to add this block to unzip_LRU after
     block->page.zip.data is set. */
+    /* 为了维护block->in_unzip_LRU_list == 
+    buf_page_belongs_to_unzip_LRU(&block->page)这个不变量，
+    我们必须在设置block->page.zip.data后将此块添加到unzip_LRU */
+    // 断言验证页面属于unzip_LRU
     ut_ad(buf_page_belongs_to_unzip_LRU(&block->page));
+    // 将块添加到unzip_LRU列表
     buf_unzip_LRU_add_block(block, false);
   }
 
+  // 释放LRU列表互斥锁
   mutex_exit(&buf_pool->LRU_list_mutex);
 
   /* Change buffer will not contain entries for undo tablespaces or temporary
   tablespaces. */
+  /* 变更缓冲区不会包含undo表空间或临时表空间的条目 */
   bool skip_ibuf = fsp_is_system_temporary(page_id.space()) ||
                    fsp_is_undo_tablespace(page_id.space());
 
+  // 如果不是跳过ibuf的情况
   if (!skip_ibuf) {
     /* Delete possible entries for the page from the insert buffer:
     such can exist if the page belonged to an index which was dropped */
+    /* 从插入缓冲区删除页面的可能条目：
+    如果页面属于已删除的索引，则可能存在此类条目 */
     ibuf_merge_or_delete_for_page(nullptr, page_id, &page_size, true);
   }
 
+  // 获取块的帧指针
   frame = block->frame;
 
+  // 初始化页面的前后指针为无效值
   memset(frame + FIL_PAGE_PREV, 0xff, 4);
   memset(frame + FIL_PAGE_NEXT, 0xff, 4);
+  // 设置页面类型为已分配
   mach_write_to_2(frame + FIL_PAGE_TYPE, FIL_PAGE_TYPE_ALLOCATED);
 
   /* These 8 bytes are also repurposed for PageIO compression and must
@@ -5632,17 +5755,31 @@ buf_block_t *buf_page_create(const page_id_t &page_id,
   (2) FIL_RTREE_SPLIT_SEQ_NUM on R-tree pages .
 
   Therefore we don't transparently compress such pages. */
+  /* 这8个字节也被重新用于PageIO压缩，当帧被分配给新的页面ID时必须重置。
+  参见fil0fil.h。存储在FIL_PAGE_FILE_FLUSH_LSN偏移处的LSN用于以下页面：
+  (1) InnoDB系统表空间的第一页(page 0:0)
+  (2) R-tree页面上的FIL_RTREE_SPLIT_SEQ_NUM。
+  因此我们不透明地压缩这些页面。 */
 
+  // 将页面帧中FIL_PAGE_FILE_FLUSH_LSN偏移处的8个字节清零
   memset(frame + FIL_PAGE_FILE_FLUSH_LSN, 0, 8);
 
+// 调试模式下验证缓冲池状态
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
+  // 断言：定期验证缓冲池状态(每5771次操作验证一次)
   ut_a(++buf_dbg_counter % 5771 || buf_validate());
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
+
+// 调试模式下检查ibuf计数
 #ifdef UNIV_IBUF_COUNT_DEBUG
+  // 断言：确保插入缓冲区计数为0
   ut_a(ibuf_count_get(block->page.id) == 0);
 #endif
+
+  // 返回初始化好的块指针
   return (block);
 }
+
 
 /** Monitor the buffer page read/write activity, and increment corresponding
  counter value if MONITOR_MODULE_BUF_PAGE (module_buf_page) module is

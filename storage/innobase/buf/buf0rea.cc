@@ -616,45 +616,59 @@ ulint buf_read_ahead_linear(const page_id_t &page_id,
 void buf_read_ibuf_merge_pages(bool sync, const space_id_t *space_ids,
                                const page_no_t *page_nos, ulint n_stored) {
 #ifdef UNIV_IBUF_DEBUG
+  // 调试模式下检查存储的页面数不超过页大小
   ut_a(n_stored < UNIV_PAGE_SIZE);
 #endif /* UNIV_IBUF_DBUG */
 
+  // 遍历所有需要合并的页面
   for (ulint i = 0; i < n_stored; i++) {
+    // 构造页面ID对象
     const page_id_t page_id(space_ids[i], page_nos[i]);
 
+    // 获取对应缓冲池实例
     buf_pool_t *buf_pool = buf_pool_get(page_id);
 
+    // 获取表空间页面大小
     bool found;
     const page_size_t page_size(fil_space_get_page_size(space_ids[i], &found));
 
+    // 如果表空间不存在
     if (!found) {
       /* The tablespace was not found, remove the
       entries for that page */
+      /* 表空间未找到，移除该页面的条目 */
       ibuf_merge_or_delete_for_page(nullptr, page_id, nullptr, false);
       continue;
     }
 
+    // 内存屏障，确保读取顺序
     os_rmb;
+    
+    // 如果挂起的读取请求过多，等待
     while (buf_pool->n_pend_reads >
            buf_pool->curr_size / BUF_READ_AHEAD_PEND_LIMIT) {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
+    // 读取页面
     dberr_t err;
-
     buf_read_page_low(&err, sync && (i + 1 == n_stored),
                       IORequest::IGNORE_MISSING, BUF_READ_ANY_PAGE, page_id,
                       page_size, true, nullptr, false);
 
+    // 如果表空间已被删除
     if (err == DB_TABLESPACE_DELETED) {
       /* We have deleted or are deleting the single-table
       tablespace: remove the entries for that page */
+      /* 我们已删除或正在删除单表表空间：移除该页面的条目 */
       ibuf_merge_or_delete_for_page(nullptr, page_id, &page_size, false);
     }
   }
 
+  // 唤醒模拟的AIO处理线程
   os_aio_simulated_wake_handler_threads();
 
+  // 如果有存储的页面，打印调试信息
   if (n_stored) {
     DBUG_PRINT("ib_buf", ("ibuf merge read-ahead %u pages, space %u",
                           unsigned(n_stored), unsigned(space_ids[0])));

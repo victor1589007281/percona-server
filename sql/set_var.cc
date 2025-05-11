@@ -1410,7 +1410,16 @@ sys_var *check_find_sys_var(THD *thd, const char *str, size_t length,
   @retval
     -1  ERROR, message not sent
 */
-
+// 执行所有变量的更新
+// 首先检查所有变量更新是否会成功
+// 如果检查通过，则执行所有更新，如果有任何失败则返回错误
+// 这确保在正常情况下要么全部变量都更新，要么都不更新
+// @param thd 线程ID
+// @param var_list 要更新的变量列表
+// @param opened 为true表示表已打开，此函数将锁定它们
+// @return 0 成功
+// @return 1 错误，已发送消息(通常没有变量被更新)
+// @return -1 错误，未发送消息
 int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool opened) {
   int error;
   List_iterator_fast<set_var_base> it(*var_list);
@@ -1420,48 +1429,65 @@ int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool opened) {
 
   LEX *lex = thd->lex;
   set_var_base *var;
+  // 如果语句单元尚未准备
   if (!thd->lex->unit->is_prepared()) {
+    // 设置是否使用超图优化器标志
     lex->using_hypergraph_optimizer =
         thd->optimizer_switch_flag(OPTIMIZER_SWITCH_HYPERGRAPH_OPTIMIZER);
 
+    // 创建预处理语句arena holder
     Prepared_stmt_arena_holder ps_arena_holder(thd);
+    // 遍历变量列表并解析每个变量
     while ((var = it++)) {
       if ((error = var->resolve(thd))) goto err;
     }
     if ((error = thd->is_error())) goto err;
+    // 标记语句单元为已准备状态
     thd->lex->unit->set_prepared();
+    // 如果不是常规语句arena，保存命令属性
     if (!thd->stmt_arena->is_regular()) thd->lex->save_cmd_properties(thd);
   }
+  // 如果需要打开表并锁定表失败
   if (opened && lock_tables(thd, lex->query_tables, lex->table_count, 0)) {
     error = 1;
     goto err;
   }
+  // 标记执行已开始
   thd->lex->set_exec_started();
+  // 重置迭代器并检查每个变量
   it.rewind();
   while ((var = it++)) {
     if ((error = var->check(thd))) goto err;
   }
   if ((error = thd->is_error())) goto err;
 
+  // 重置迭代器并更新每个变量
   it.rewind();
   while ((var = it++)) {
     if ((error = var->update(thd)))  // Returns 0, -1 or 1
       goto err;
   }
+  // 如果没有错误
   if (!error) {
     /* At this point SET statement is considered a success. */
+    // 此时SET语句被视为成功
     Persisted_variables_cache *pv = nullptr;
+    // 重置迭代器并处理持久化变量
     it.rewind();
     while ((var = it++)) {
       set_var *setvar = dynamic_cast<set_var *>(var);
+      // 如果是持久化或仅持久化类型的变量
       if (setvar &&
           (setvar->type == OPT_PERSIST || setvar->type == OPT_PERSIST_ONLY)) {
+        // 获取持久化变量缓存实例
         pv = Persisted_variables_cache::get_instance();
         /* update in-memory copy of persistent options */
+        // 更新持久化选项的内存副本
         if (pv->set_variable(thd, setvar)) return 1;
       }
     }
     /* flush all persistent options to a file */
+    // 将所有持久化选项刷新到文件
     if (pv && pv->flush_to_file()) {
       my_error(ER_VARIABLE_NOT_PERSISTED, MYF(0));
       return 1;
@@ -1469,9 +1495,11 @@ int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool opened) {
   }
 
 err:
+  // 错误处理：清理所有变量
   for (set_var_base &v : *var_list) {
     v.cleanup();
   }
+  // 释放底层连接
   free_underlaid_joins(thd->lex->query_block);
   return error;
 }
@@ -1657,29 +1685,39 @@ int set_var::resolve(THD *thd) {
    @retval -1 Failure
    @retval 0 Success
 */
-
+// 验证提供的变量值是否正确
+// @param thd 线程处理器
+// @return 状态码
+//   @retval -1 失败
+//   @retval 0 成功
 int set_var::check(THD *thd) {
   DBUG_TRACE;
   DEBUG_SYNC(thd, "after_error_checking");
 
   /* value is a NULL pointer if we are using SET ... = DEFAULT */
+  // 如果使用SET...=DEFAULT语法，value会是NULL指针
   if (value == nullptr) {
     return 0;
   }
 
+  // 定义lambda函数处理变量检查
   auto f = [this, thd](const System_variable_tracker &, sys_var *var) -> int {
+    // 检查变量值类型是否匹配
     if (var->check_update_type(value->result_type())) {
       my_error(ER_WRONG_TYPE_FOR_VAR, MYF(0), var->name.str);
       return -1;
     }
+    // 执行变量特定的检查逻辑
     return var->check(thd, this) ? -1 : 0;
   };
 
+  // 访问系统变量并执行检查
   int ret =
       m_var_tracker
           .access_system_variable<int>(thd, f, Suppress_not_found_error::NO)
           .value_or(-1);
 
+  // 如果是全局持久化变量且检查通过，发送审计通知
   if (!ret && (is_global_persist())) {
     ret = mysql_audit_notify(thd, AUDIT_EVENT(MYSQL_AUDIT_GLOBAL_VARIABLE_SET),
                              m_var_tracker.get_var_name(),
@@ -1760,39 +1798,52 @@ void set_var::update_source_user_host_timestamp(THD *thd, sys_var *var) {
 
 /**
   Update variable
-
+  
   @param   thd    thread handler
   @returns 0|1    ok or ERROR
-
+  
   @note ERROR can be only due to abnormal operations involving
   the server's execution environment such as
   out of memory, hard disk failure or the computer blows up.
   Consider set_var::check() method if there is a need to return
   an error due to logics.
 */
+// 更新变量
+// @param thd 线程处理器
+// @return 0|1 成功或错误
+// @note 错误只能由于涉及服务器执行环境的异常操作引起，如内存不足、硬盘故障等
 int set_var::update(THD *thd) {
+  // 定义一个lambda函数来处理变量更新
   auto f = [this, thd](const System_variable_tracker &, sys_var *var) -> bool {
     bool ret = false;
     /* for persist only syntax do not update the value */
+    // 如果是仅持久化语法，则不更新值
     if (type != OPT_PERSIST_ONLY) {
+      // 保存变量原来的来源
       auto saved_var_source = var->get_source();
+      // 设置变量来源为动态
       var->set_source(enum_variable_source::DYNAMIC);
+      // 如果有值则更新变量，否则设置为默认值
       if (value)
         ret = var->update(thd, this);
       else
         ret = var->set_default(thd, this);
+      // 恢复变量原来的来源
       var->set_source(saved_var_source);
       /*
        For PERSIST_ONLY syntax we dont change the value of the variable
        for the current session, thus we should not change variables
        source/timestamp/user/host.
       */
+      // 对于PERSIST_ONLY语法，我们不改变当前会话的变量值，因此不应改变变量的来源/时间戳/用户/主机
       if (!ret) {
+        // 更新来源、用户、主机和时间戳
         update_source_user_host_timestamp(thd, var);
       }
     }
     return ret;
   };
+  // 访问系统变量并执行更新操作
   return m_var_tracker
                  .access_system_variable<bool>(thd, f,
                                                Suppress_not_found_error::NO)

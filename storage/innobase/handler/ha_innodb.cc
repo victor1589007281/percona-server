@@ -21680,16 +21680,22 @@ static void innodb_old_blocks_pct_update(
 
 /** Update the system variable innodb_old_blocks_pct using the "saved"
  value. This function is registered as a callback with MySQL. */
+/** 使用"saved"值更新系统变量innodb_old_blocks_pct。
+这个函数作为回调函数注册到MySQL。 */
 static void innodb_change_buffer_max_size_update(
     THD *,            /*!< in: thread handle */
-    SYS_VAR *,        /*!< in: pointer to
-                                      system variable */
-    void *,           /*!< out: where the
-                      formal string goes */
-    const void *save) /*!< in: immediate result
-                      from check function */
+    /* 输入：线程句柄 */
+    SYS_VAR *,        /*!< in: pointer to system variable */
+    /* 输入：指向系统变量的指针 */
+    void *,           /*!< out: where the formal string goes */
+    /* 输出：存放正式字符串的位置 */
+    const void *save) /*!< in: immediate result from check function */
+    /* 输入：检查函数的即时结果 */
 {
+  // 将用户设置的值赋给全局变量srv_change_buffer_max_size
   srv_change_buffer_max_size = (*static_cast<const uint *>(save));
+  
+  // 调用ibuf_max_size_update函数更新change buffer的最大大小
   ibuf_max_size_update(srv_change_buffer_max_size);
 }
 

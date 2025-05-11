@@ -9443,8 +9443,23 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     这将使线程等待直到轮到它提交。
     Commit_order_manager维护自己的队列和提交顺序。所以阶段#0不需要单独的StageID。
   */
+ /*
+ - 当启用并行复制时(Slave并行线程执行事务)
+- 需要确保从库线程按照relay log中的顺序提交事务
+- 在MTS(Multi-Threaded Slave)场景下协调多个工作线程的执行顺序
+ */
   if (Commit_order_manager::wait_for_its_turn_before_flush_stage(thd) ||
+/*
+- 当前事务正在完成提交或回滚过程
+- all=true 表示是真实的事务提交(非语句级别)
+- 在分布式事务(XA)的prepare/commit阶段
+*/  
       ending_trans(thd, all) ||
+/*
+- 事务执行过程中发生错误需要回滚
+- 从库应用日志时发现冲突需要回滚事务
+- 组提交协调器(Commit_order_manager)标记了需要回滚
+*/      
       Commit_order_manager::get_rollback_status(thd)) {
     if (Commit_order_manager::wait(thd)) {
       return thd->commit_error;
@@ -9496,9 +9511,11 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
     goto commit_stage;
   }
   DEBUG_SYNC(thd, "waiting_in_the_middle_of_flush_stage");
+  // 处理flush阶段的队列，获取总字节数、是否需要轮转和等待队列
   flush_error =
       process_flush_stage_queue(&total_bytes, &do_rotate, &wait_queue);
 
+  // 如果flush阶段没有错误且总字节数大于0，则将缓存刷新到文件
   if (flush_error == 0 && total_bytes > 0)
     flush_error = flush_cache_to_file(&flush_end_pos);
   DBUG_EXECUTE_IF("crash_after_flush_binlog", DBUG_SUICIDE(););
@@ -9651,7 +9668,13 @@ int MYSQL_BIN_LOG::ordered_commit(THD *thd, bool all, bool skip_commit) {
 commit_stage:
   /* Clone needs binlog commit order. */
   /* 克隆需要binlog提交顺序 */  
-  if ((opt_binlog_order_commits || Clone_handler::need_commit_order()) &&
+  // 检查是否需要按顺序提交事务：
+  // 1. 是否启用了binlog_order_commits选项
+  // 2. 或者克隆处理程序需要保持提交顺序  
+  if ((opt_binlog_order_commits || Clone_handler::need_commit_order()) &&      
+  // 同时满足以下条件之一：
+  // 1. 同步阶段没有错误
+  // 2. 或者binlog错误处理策略不是终止服务器
       (sync_error == 0 || binlog_error_action != ABORT_SERVER)) {
     if (change_stage(thd, Commit_stage_manager::COMMIT_STAGE, final_queue,
                      leave_mutex_before_commit_stage, &LOCK_commit)) {

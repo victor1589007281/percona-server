@@ -20,65 +20,124 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#ifndef COMPONENTS_SERVICES_BITS_SYSTEM_VARIABLES_BITS_H
-#define COMPONENTS_SERVICES_BITS_SYSTEM_VARIABLES_BITS_H
-
-/**
-  @addtogroup group_components_services_sys_var_service_types Variable types
-
-  Possible system variable types. Use at most one of these.
-
-  @sa mysql_service_component_sys_variable_register service.
-
-  @{
-*/
-
-/** bool variable. Use @ref BOOL_CHECK_ARG */
-#define PLUGIN_VAR_BOOL 0x0001
-/** int variable. Use @ref INTEGRAL_CHECK_ARG */
-#define PLUGIN_VAR_INT 0x0002
-/** long variable Use @ref INTEGRAL_CHECK_ARG */
-#define PLUGIN_VAR_LONG 0x0003
-/** longlong variable. Use @ref INTEGRAL_CHECK_ARG */
-#define PLUGIN_VAR_LONGLONG 0x0004
-/** char * variable. Use @ref STR_CHECK_ARG */
-#define PLUGIN_VAR_STR 0x0005
-/** Enum variable. Use @ref ENUM_CHECK_ARG */
-#define PLUGIN_VAR_ENUM 0x0006
-/** A set variable. Use @ref ENUM_CHECK_ARG */
-#define PLUGIN_VAR_SET 0x0007
-/** double variable. Use @ref INTEGRAL_CHECK_ARG */
-#define PLUGIN_VAR_DOUBLE 0x0008
-/** @} */
-/**
-  @addtogroup group_components_services_sys_var_service_flags Variable flags
-
-  Flags to specify the behavior of system variables. Use multiple as needed.
-
-  @sa mysql_service_component_sys_variable_register service.
-
-  @{
-*/
-#define PLUGIN_VAR_UNSIGNED 0x0080  /**< The variable is unsigned */
-#define PLUGIN_VAR_THDLOCAL 0x0100  /**< Variable is per-connection */
-#define PLUGIN_VAR_READONLY 0x0200  /**< Server variable is read only */
-#define PLUGIN_VAR_NOSYSVAR 0x0400  /**< Not a server variable */
-#define PLUGIN_VAR_NOCMDOPT 0x0800  /**< Not a command line option */
-#define PLUGIN_VAR_NOCMDARG 0x1000  /**< No argument for cmd line */
-#define PLUGIN_VAR_RQCMDARG 0x0000  /**< Argument required for cmd line */
-#define PLUGIN_VAR_OPCMDARG 0x2000  /**< Argument optional for cmd line */
-#define PLUGIN_VAR_NODEFAULT 0x4000 /**< SET DEFAULT is prohibited */
-#define PLUGIN_VAR_MEMALLOC 0x8000  /**< String needs memory allocated */
-#define PLUGIN_VAR_NOPERSIST \
-  0x10000 /**< SET PERSIST_ONLY is prohibited for read only variables */
-#define PLUGIN_VAR_PERSIST_AS_READ_ONLY 0x20000
-#define PLUGIN_VAR_INVISIBLE 0x40000 /**< Variable should not be shown */
-#define PLUGIN_VAR_SENSITIVE 0x80000 /**< Sensitive variable */
-/**
-  This flag enables variables to be recognized by SET_VAR() HINT. Should
-  be used only THDVAR() variables, ie variables which have session scope.
- */
-#define PLUGIN_VAR_HINTUPDATEABLE 0x100000
-/** @} */
-
-#endif /* COMPONENTS_SERVICES_BITS_SYSTEM_VARIABLES_BITS_H */
+  #ifndef COMPONENTS_SERVICES_BITS_SYSTEM_VARIABLES_BITS_H
+  #define COMPONENTS_SERVICES_BITS_SYSTEM_VARIABLES_BITS_H
+  
+  /**
+    @addtogroup group_components_services_sys_var_service_types Variable types
+    定义系统变量类型的组，这些类型最多只能使用一个
+    Possible system variable types. Use at most one of these.
+  
+    @sa mysql_service_component_sys_variable_register service.
+  
+    @{
+  */
+  
+  /** bool变量类型。使用@ref BOOL_CHECK_ARG */
+  /** bool variable. Use @ref BOOL_CHECK_ARG */
+  #define PLUGIN_VAR_BOOL 0x0001
+  
+  /** int变量类型。使用@ref INTEGRAL_CHECK_ARG */
+  /** int variable. Use @ref INTEGRAL_CHECK_ARG */
+  #define PLUGIN_VAR_INT 0x0002
+  
+  /** long变量类型。使用@ref INTEGRAL_CHECK_ARG */
+  /** long variable Use @ref INTEGRAL_CHECK_ARG */
+  #define PLUGIN_VAR_LONG 0x0003
+  
+  /** longlong变量类型。使用@ref INTEGRAL_CHECK_ARG */
+  /** longlong variable. Use @ref INTEGRAL_CHECK_ARG */
+  #define PLUGIN_VAR_LONGLONG 0x0004
+  
+  /** char*字符串变量类型。使用@ref STR_CHECK_ARG */
+  /** char * variable. Use @ref STR_CHECK_ARG */
+  #define PLUGIN_VAR_STR 0x0005
+  
+  /** 枚举变量类型。使用@ref ENUM_CHECK_ARG */
+  /** Enum variable. Use @ref ENUM_CHECK_ARG */
+  #define PLUGIN_VAR_ENUM 0x0006
+  
+  /** 集合变量类型。使用@ref ENUM_CHECK_ARG */
+  /** A set variable. Use @ref ENUM_CHECK_ARG */
+  #define PLUGIN_VAR_SET 0x0007
+  
+  /** double浮点变量类型。使用@ref INTEGRAL_CHECK_ARG */
+  /** double variable. Use @ref INTEGRAL_CHECK_ARG */
+  #define PLUGIN_VAR_DOUBLE 0x0008
+  /** @} */
+  
+  /**
+    @addtogroup group_components_services_sys_var_service_flags Variable flags
+    定义系统变量标志位的组，可以根据需要使用多个
+    Flags to specify the behavior of system variables. Use multiple as needed.
+  
+    @sa mysql_service_component_sys_variable_register service.
+  
+    @{
+  */
+  /** 变量是无符号类型 */
+  /**< The variable is unsigned */
+  #define PLUGIN_VAR_UNSIGNED 0x0080
+  
+  /** 变量是每个连接独立的 */
+  /**< Variable is per-connection */
+  #define PLUGIN_VAR_THDLOCAL 0x0100
+  
+  /** 服务器变量是只读的 */
+  /**< Server variable is read only */
+  #define PLUGIN_VAR_READONLY 0x0200
+  
+  /** 不是服务器变量 */
+  /**< Not a server variable */
+  #define PLUGIN_VAR_NOSYSVAR 0x0400
+  
+  /** 不是命令行选项 */
+  /**< Not a command line option */
+  #define PLUGIN_VAR_NOCMDOPT 0x0800
+  
+  /** 命令行不需要参数 */
+  /**< No argument for cmd line */
+  #define PLUGIN_VAR_NOCMDARG 0x1000
+  
+  /** 命令行需要参数 */
+  /**< Argument required for cmd line */
+  #define PLUGIN_VAR_RQCMDARG 0x0000
+  
+  /** 命令行参数是可选的 */
+  /**< Argument optional for cmd line */
+  #define PLUGIN_VAR_OPCMDARG 0x2000
+  
+  /** 禁止SET DEFAULT操作 */
+  /**< SET DEFAULT is prohibited */
+  #define PLUGIN_VAR_NODEFAULT 0x4000
+  
+  /** 字符串需要分配内存 */
+  /**< String needs memory allocated */
+  #define PLUGIN_VAR_MEMALLOC 0x8000
+  
+  /** 对只读变量禁止SET PERSIST_ONLY操作 */
+  /**< SET PERSIST_ONLY is prohibited for read only variables */
+  #define PLUGIN_VAR_NOPERSIST 0x10000
+  
+  /** 持久化变量作为只读处理 */
+  #define PLUGIN_VAR_PERSIST_AS_READ_ONLY 0x20000
+  
+  /** 变量不应该显示 */
+  /**< Variable should not be shown */
+  #define PLUGIN_VAR_INVISIBLE 0x40000
+  
+  /** 敏感变量 */
+  /**< Sensitive variable */
+  #define PLUGIN_VAR_SENSITIVE 0x80000
+  
+  /**
+    此标志使变量能被SET_VAR()提示识别。应该只用于THDVAR()变量，
+    即有会话作用域的变量
+    This flag enables variables to be recognized by SET_VAR() HINT. Should
+    be used only THDVAR() variables, ie variables which have session scope.
+   */
+  #define PLUGIN_VAR_HINTUPDATEABLE 0x100000
+  /** @} */
+  
+  #endif /* COMPONENTS_SERVICES_BITS_SYSTEM_VARIABLES_BITS_H */
+  
