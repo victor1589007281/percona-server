@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData">
+    <serverData>
+      <paths name="dev (239ddf66-52ec-4388-a449-8f904d03ea18)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/tmp/percona-server" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>
