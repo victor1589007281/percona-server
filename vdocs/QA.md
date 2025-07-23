@@ -309,3 +309,203 @@ WHERE VARIABLE_NAME = 'innodb_adaptive_hash_index_parts';
 🔄 **需要重启**: 修改该参数需要重启MySQL服务器才能生效  
 ⚙️ **启动配置**: 只能通过配置文件或启动参数设置  
 🎯 **用途明确**: 用于优化高并发场景下的AHI性能
+
+3. mysql.gtid_executed 这个表的落盘保存时机是什么？
+
+## mysql.gtid_executed 表落盘保存时机分析
+
+通过分析MySQL源码，`mysql.gtid_executed` 表的落盘保存时机主要有以下几种情况：
+
+### 1. 二进制日志轮换时（主要时机）
+
+**源码位置**: `sql/binlog.cc:6983-7031`
+
+```cpp
+if (!is_relay_log) {
+  /* Save set of GTIDs of the last binlog into table on binlog rotation */
+  if ((error = gtid_state->save_gtids_of_last_binlog_into_table())) {
+    // 错误处理逻辑
+  }
+}
+```
+
+**触发条件**:
+- 二进制日志文件达到 `max_binlog_size` 限制
+- 执行 `FLUSH BINARY LOGS` 命令  
+- 执行 `FLUSH LOGS` 命令
+- 服务器正常关闭时的日志轮换
+
+**实现逻辑**: `sql/rpl_gtid_state.cc:709-767`
+```cpp
+int Gtid_state::save_gtids_of_last_binlog_into_table() {
+  // 计算需要保存的GTID集合
+  // logged_gtids_last_binlog = executed_gtids - previous_gtids_logged - gtids_only_in_table
+  
+  if (!logged_gtids_last_binlog.is_empty()) {
+    /* Save set of GTIDs of the last binlog into gtid_executed table */
+    if (save(&logged_gtids_last_binlog))
+      ret = ER_RPL_GTID_TABLE_CANNOT_OPEN;
+  }
+}
+```
+
+### 2. 服务器启动时（恢复场景）
+
+**源码位置**: `sql/mysqld.cc:9926-10001`
+
+```cpp
+if (opt_bin_log) {
+  // 从binlog文件和gtid_executed表中恢复GTID信息
+  if (!gtids_in_binlog.is_empty() && !gtids_in_binlog.is_subset(executed_gtids)) {
+    /*
+      Save unsaved GTIDs into gtid_executed table, in the following four cases:
+        1. the upgrade case.
+        2. the case that a slave is provisioned from a backup
+        3. the case that no binlog rotation happened from the last RESET BINARY LOGS AND GTIDS
+        4. The set of GTIDs of the last binlog is not saved into the gtid_executed table if server crashes
+    */
+    if (gtid_state->save(&gtids_in_binlog_not_in_table) == -1) {
+      // 错误处理
+    }
+  }
+}
+```
+
+**场景说明**:
+- **升级场景**: 从旧版本升级时补充缺失的GTID
+- **从备份恢复**: 从主库备份恢复的从库需要补充GTID
+- **异常重启恢复**: 服务器崩溃重启时保存未持久化的GTID
+- **无轮换场景**: `RESET BINARY LOGS AND GTIDS` 后未发生日志轮换的情况
+
+### 3. 事务提交时（特定条件）
+
+**源码位置**: `sql/handler.cc:1570-1621`
+
+```cpp
+std::pair<int, bool> commit_owned_gtids(THD *thd, bool all) {
+  /*
+    If the binary log is disabled for this thread (either by
+    log_bin=0 or sql_log_bin=0 or by log_replica_updates=0 for a
+    slave thread), then the statement will not be written to
+    the binary log. In this case, we should save its GTID into
+    mysql.gtid_executed table and @@GLOBAL.GTID_EXECUTED as it
+    did when binlog is enabled.
+  */
+}
+```
+
+**触发条件**:
+- 二进制日志被禁用 (`log_bin=0` 或 `sql_log_bin=0`)
+- 从库禁用日志更新 (`log_replica_updates=0`)
+- 非XA事务的DDL语句
+
+**源码位置**: `sql/binlog.cc:1884-1906`
+```cpp
+int MYSQL_BIN_LOG::gtid_end_transaction(THD *thd) {
+  if (!opt_bin_log || (thd->slave_thread && !opt_log_replica_updates)) {
+    /*
+      If the binary log is disabled for this thread, then the statement 
+      must not be written to the binary log. In this case, we just save 
+      the GTID into the table directly.
+    */
+    if (gtid_state->save(thd) != 0) {
+      gtid_state->update_on_rollback(thd);
+      return 1;
+    }
+  }
+}
+```
+
+### 4. InnoDB 存储引擎持久化（异步）
+
+**源码位置**: `storage/innobase/clone/clone0repl.cc:423-536`
+
+```cpp
+int Clone_persist_gtid::write_to_table(uint32_t flush_list_number, ...) {
+  /* Write GTIDs to table. */
+  if (!write_gtid_set.is_empty()) {
+    ++m_compression_counter;
+    err = gtid_table_persistor->save(&write_gtid_set, false);
+  }
+}
+```
+
+**触发机制**:
+- InnoDB后台线程定期刷新
+- GTID数量达到阈值 (`s_gtid_threshold`)
+- 显式调用 `wait_flush()` 方法
+- 恢复过程中的批量写入
+
+**源码位置**: `storage/innobase/handler/ha_innodb.cc:6259-6303`
+```cpp
+static bool innobase_flush_logs(handlerton *hton, bool binlog_group_flush) {
+  /* Signal and wait for all GTIDs to persist on disk. */
+  if (!binlog_group_flush) {
+    auto &gtid_persistor = clone_sys->get_gtid_persistor();
+    gtid_persistor.wait_flush(true, true, nullptr);
+  }
+}
+```
+
+### 5. 从库复制场景
+
+**源码位置**: `sql/rpl_replica_commit_order_manager.cc:206-260`
+
+```cpp
+void Commit_order_manager::flush_engine_and_signal_threads(Slave_worker *worker) {
+  /* flush transactions to the storage engine in a group */
+  ha_flush_logs(true);
+  
+  /* add to @@global.gtid_executed */
+  gtid_state->update_commit_group(first);
+}
+```
+
+**应用场景**:
+- 从库应用binlog事件时
+- 多线程复制 (MTS) 的提交顺序管理
+- 组提交优化场景
+
+### 6. 保存失败的容错机制
+
+**源码位置**: `sql/binlog.cc:6983-7031`
+
+```cpp
+if ((error = gtid_state->save_gtids_of_last_binlog_into_table())) {
+  if (error == ER_RPL_GTID_TABLE_CANNOT_OPEN) {
+    close_on_error = m_binlog_file->get_real_file_size() >= static_cast<my_off_t>(max_size);
+    
+    if (!close_on_error) {
+      LogErr(ERROR_LEVEL, ER_BINLOG_UNABLE_TO_ROTATE_GTID_TABLE_READONLY,
+             "Current binlog file was flushed to disk and will be kept in use.");
+    } else {
+      if (binlog_error_action != ABORT_SERVER)
+        LogErr(WARNING_LEVEL, ER_BINLOG_UNABLE_TO_ROTATE_GTID_TABLE_READONLY,
+               "Binary logging going to be disabled.");
+    }
+  }
+}
+```
+
+**容错策略**:
+- **表只读时**: 继续使用当前日志文件，记录警告日志
+- **达到最大大小且表只读**: 根据 `binlog_error_action` 决定是否停止日志记录或关闭服务器
+- **保存失败**: 在下次服务器启动时重试保存
+
+### 总结
+
+| 时机 | 频率 | 触发条件 | 源码位置 | 说明 |
+|------|------|----------|----------|------|
+| **二进制日志轮换** | 高频 | 日志文件达到大小限制、手动FLUSH | `sql/binlog.cc:6983` | 🔥 **最主要的持久化时机** |
+| **服务器启动** | 低频 | 崩溃恢复、升级、备份恢复 | `sql/mysqld.cc:9926` | 🔄 **恢复场景的补偿机制** |
+| **事务提交** | 中频 | binlog禁用、从库不记录更新 | `sql/handler.cc:1570` | ⚙️ **特定配置下的即时保存** |
+| **InnoDB后台刷新** | 中频 | 达到阈值、定期刷新 | `storage/innobase/clone/clone0repl.cc:423` | 🚀 **存储引擎层异步持久化** |
+| **从库复制提交** | 高频 | MTS组提交、复制应用 | `sql/rpl_replica_commit_order_manager.cc:206` | 🔗 **复制架构中的同步机制** |
+
+**关键设计思想**:
+- **批量保存**: 通过日志轮换批量保存GTID，提高效率
+- **异步持久化**: InnoDB层提供异步的GTID持久化能力
+- **容错恢复**: 服务器启动时检查并补充缺失的GTID
+- **分层设计**: 服务器层和存储引擎层协同保证GTID的持久化
+
+这种设计确保了GTID信息的可靠持久化，同时在性能和一致性之间取得了良好的平衡。
