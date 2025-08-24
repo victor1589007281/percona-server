@@ -2,5 +2,8 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/extra/coredumper" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/extra/libkmip" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/storage/rocksdb/rocksdb" vcs="Git" />
   </component>
 </project>
