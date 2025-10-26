@@ -544,15 +544,15 @@ MTS中的序列号到位图位置的转换过程：
 
 ```mermaid
 flowchart TD
-    SEQ_GEN[**序列号生成**<br/>**• Coordinator分配**<br/>**• 单调递增**<br/>**• 全局唯一**] --> SEQ_ASSIGN[**序列号分配**<br/>**• checkpoint_seqno**<br/>**• 范围: 0 ~ MTS_MAX_BITS_IN_GROUP**]
+    SEQ_GEN["<b>序列号生成</b><br/>• Coordinator分配<br/>• 单调递增<br/>• 全局唯一"] --> SEQ_ASSIGN["<b>序列号分配</b><br/>• checkpoint_seqno<br/>• 范围: 0 ~ MTS_MAX_BITS_IN_GROUP"]
     
-    SEQ_ASSIGN --> BIT_MAP[**位图映射**<br/>**• 序列号 = 位位置**<br/>**• 直接映射关系**<br/>**• 无需哈希转换**]
+    SEQ_ASSIGN --> BIT_MAP["<b>位图映射</b><br/>• 序列号 = 位位置<br/>• 直接映射关系<br/>• 无需哈希转换"]
     
-    BIT_MAP --> BIT_OP[**位图操作**<br/>**• bitmap_set_bit(map, seqno)**<br/>**• bitmap_clear_bit(map, seqno)**<br/>**• bitmap_is_set(map, seqno)**]
+    BIT_MAP --> BIT_OP["<b>位图操作</b><br/>• bitmap_set_bit(map, seqno)<br/>• bitmap_clear_bit(map, seqno)<br/>• bitmap_is_set(map, seqno)"]
     
-    BIT_OP --> STATUS_TRACK[**状态跟踪**<br/>**• 已执行事务组**<br/>**• 检查点进度**<br/>**• 恢复信息**]
+    BIT_OP --> STATUS_TRACK["<b>状态跟踪</b><br/>• 已执行事务组<br/>• 检查点进度<br/>• 恢复信息"]
     
-    STATUS_TRACK --> CHECKPOINT[**检查点管理**<br/>**• 位图持久化**<br/>**• 恢复时重建**<br/>**• 一致性保证**]
+    STATUS_TRACK --> CHECKPOINT["<b>检查点管理</b><br/>• 位图持久化<br/>• 恢复时重建<br/>• 一致性保证"]
     
     style SEQ_GEN fill:#e1f5fe,color:#000,stroke:#333,stroke-width:2px
     style BIT_MAP fill:#f3e5f5,color:#000,stroke:#333,stroke-width:2px

@@ -40,7 +40,72 @@ graph TB
 
 ## Linux Fallocate命令使用分析
 
-### 1. 核心系统调用实现
+### 1. Fallocate操作完整时序流程
+
+```mermaid
+sequenceDiagram
+    participant App as **用户应用**
+    participant MySQL as **MySQL服务器**
+    participant InnoDB as **InnoDB存储引擎**
+    participant OS as **操作系统层**
+    participant FS as **文件系统**
+    participant Storage as **存储设备**
+
+    Note over App,Storage: **fallocate系统调用完整时序流程**
+
+    App->>MySQL: CREATE TABLE with COMPRESSION
+    Note over App,MySQL: **创建支持压缩的表**
+
+    MySQL->>InnoDB: 创建表空间文件
+    Note over MySQL,InnoDB: **初始化InnoDB表空间**
+
+    InnoDB->>OS: posix_fallocate(fd, 0, size)
+    Note over InnoDB,OS: **预分配磁盘空间**<br/>**防止ENOSPC错误**
+
+    OS->>FS: sys_fallocate(fd, 0, 0, size)
+    Note over OS,FS: **系统调用转发**<br/>**检查文件系统支持**
+
+    FS->>Storage: 分配物理块
+    Note over FS,Storage: **分配连续的物理存储块**<br/>**更新文件系统元数据**
+
+    Storage-->>FS: 分配完成
+    FS-->>OS: 返回成功
+    OS-->>InnoDB: 预分配成功
+
+    loop 页面写入循环
+        App->>MySQL: INSERT/UPDATE数据
+        MySQL->>InnoDB: 写入16KB页面
+        
+        alt 启用透明页压缩
+            InnoDB->>InnoDB: 页面压缩处理
+            Note over InnoDB: **ZLIB/LZ4/LZMA压缩**<br/>**计算压缩后大小**
+            
+            InnoDB->>OS: fallocate(fd, PUNCH_HOLE, offset, len)
+            Note over InnoDB,OS: **打孔操作**<br/>**释放未使用空间**
+            
+            OS->>FS: 执行punch hole
+            Note over OS,FS: **创建稀疏文件孔洞**<br/>**标记块为未分配**
+            
+            FS->>Storage: 发送TRIM命令
+            Note over FS,Storage: **通知SSD释放物理块**<br/>**优化垃圾回收**
+            
+            Storage-->>FS: TRIM完成
+            FS-->>OS: punch hole完成
+            OS-->>InnoDB: 打孔成功
+        end
+        
+        InnoDB->>OS: write()压缩数据
+        OS->>FS: 写入文件系统
+        FS->>Storage: 写入存储设备
+        Storage-->>FS: 写入完成
+        FS-->>OS: 写入成功
+        OS-->>InnoDB: 写入完成
+        InnoDB-->>MySQL: 页面写入完成
+        MySQL-->>App: 操作成功
+    end
+```
+
+### 2. 核心系统调用实现
 
 #### **fallocate打孔实现**
 
@@ -127,7 +192,75 @@ graph LR
     style POSIX_ALLOCATE fill:#e8f5e8,stroke:#333,stroke-width:2px
 ```
 
-### 3. 系统调用使用场景
+### 3. 不同fallocate操作类型的详细时序
+
+```mermaid
+sequenceDiagram
+    participant User as **用户操作**
+    participant MySQL as **MySQL进程**
+    participant Kernel as **内核空间**
+    participant FS as **文件系统层**
+    participant Device as **块设备**
+
+    Note over User,Device: **三种主要fallocate操作模式对比**
+
+    rect rgb(230, 242, 253)
+        Note over User,Device: **模式1: PUNCH_HOLE - 透明页压缩场景**
+        User->>MySQL: INSERT压缩表数据
+        MySQL->>MySQL: 页面压缩(16KB→8KB)
+        MySQL->>Kernel: fallocate(fd, PUNCH_HOLE|KEEP_SIZE, 8KB, 8KB)
+        Note over MySQL,Kernel: **释放后半部分8KB空间**
+        
+        Kernel->>FS: punch_hole操作
+        FS->>FS: 标记块为hole
+        FS->>Device: 发送TRIM(如果支持)
+        Device-->>FS: TRIM完成
+        FS-->>Kernel: hole创建完成
+        Kernel-->>MySQL: 打孔成功
+        MySQL->>Kernel: write(压缩数据, 8KB)
+        Kernel->>FS: 写入文件系统
+        FS->>Device: 实际数据写入
+        Device-->>MySQL: 写入完成
+    end
+
+    rect rgb(255, 243, 224)
+        Note over User,Device: **模式2: ZERO_RANGE - 快速置零场景**
+        User->>MySQL: TRUNCATE TABLE操作
+        MySQL->>Kernel: fallocate(fd, ZERO_RANGE, 0, filesize)
+        Note over MySQL,Kernel: **快速将整个文件置零**
+        
+        Kernel->>FS: zero_range操作
+        FS->>FS: 标记范围为已置零
+        FS-->>Kernel: 置零完成(无实际IO)
+        Kernel-->>MySQL: 操作成功
+        Note over MySQL: **避免了大量实际写入操作**
+    end
+
+    rect rgb(232, 245, 232)
+        Note over User,Device: **模式3: POSIX_FALLOCATE - 预分配场景**
+        User->>MySQL: CREATE TABLE大表
+        MySQL->>Kernel: posix_fallocate(fd, 0, 1GB)
+        Note over MySQL,Kernel: **预分配1GB连续空间**
+        
+        Kernel->>FS: 分配inode和数据块
+        FS->>Device: 保留物理存储块
+        Device->>Device: 标记块为已分配
+        Device-->>FS: 分配完成
+        FS-->>Kernel: 预分配成功
+        Kernel-->>MySQL: 空间保证可用
+        
+        loop 后续写入操作
+            User->>MySQL: INSERT数据
+            MySQL->>Kernel: write()系统调用
+            Note over Kernel: **无需再分配空间**<br/>**写入性能更稳定**
+            Kernel->>FS: 直接写入预分配块
+            FS->>Device: 快速写入
+            Device-->>MySQL: 写入完成
+        end
+    end
+```
+
+### 4. 系统调用使用场景
 
 | **命令** | **MySQL使用场景** | **参数组合** | **效果** |
 |----------|-------------------|---------------|----------|

@@ -690,10 +690,561 @@ MyRocks 的创新在于**将版本信息编码到键本身**，使得多版本�
 
 这使得 MyRocks 在现代云原生、高并发的数据库应用场景中具有独特的优势，特别是在需要处理大量写入和长时间一致性读取的场景下。
 
-## 10. 参考源码文件
+## 10. MySQL行数据在LSM中的存储格式深度解析 ⭐
+
+### 10.1 数据存储整体架构
+
+MyRocks将MySQL的行数据映射到RocksDB的Key-Value对中，通过精巧的编码方案实现高效的存储和查询。
+
+```mermaid
+graph TB
+    subgraph "**MySQL表结构**"
+        TABLE["**users表**<br/>id INT PRIMARY KEY<br/>name VARCHAR(100)<br/>age INT<br/>email VARCHAR(200)<br/>INDEX idx_name(name)"]
+    end
+    
+    subgraph "**主键索引存储 (Primary Key)**"
+        PK_KEY["**RocksDB Key**<br/>index_number(4B) + packed_pk"]
+        PK_VALUE["**RocksDB Value**<br/>non-pk columns + unpack_info"]
+        
+        PK_EXAMPLE["**示例**<br/>Key: [idx#256][id=1001]<br/>Value: [name='Alice'][age=25][email='alice@example.com']"]
+    end
+    
+    subgraph "**二级索引存储 (Secondary Index)**"
+        SK_KEY["**RocksDB Key**<br/>index_number(4B) + packed_sk + packed_pk"]
+        SK_VALUE["**RocksDB Value**<br/>unpack_info (覆盖索引时)"]
+        
+        SK_EXAMPLE["**示例**<br/>Key: [idx#257][name='Alice'][id=1001]<br/>Value: [unpack_info] 或 空"]
+    end
+    
+    subgraph "**RocksDB Internal Key**"
+        INTERNAL["**Internal Key格式**<br/>user_key + seq(56bit) + type(8bit)"]
+        LSM_STORE["**LSM-Tree存储**<br/>Level 0: MemTable<br/>Level 1-N: SST Files"]
+    end
+    
+    TABLE --> PK_KEY
+    TABLE --> SK_KEY
+    PK_KEY --> PK_VALUE
+    SK_KEY --> SK_VALUE
+    
+    PK_KEY --> PK_EXAMPLE
+    SK_KEY --> SK_EXAMPLE
+    
+    PK_EXAMPLE --> INTERNAL
+    SK_EXAMPLE --> INTERNAL
+    INTERNAL --> LSM_STORE
+    
+    style TABLE fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style PK_KEY fill:#fff3e0,stroke:#333,stroke-width:2px
+    style SK_KEY fill:#f3e5f5,stroke:#333,stroke-width:2px
+    style INTERNAL fill:#e8f5e8,stroke:#333,stroke-width:2px
+```
+
+### 10.2 主键索引存储格式详解
+
+#### 10.2.1 Primary Key存储结构
+
+**源码位置**: `storage/rocksdb/rdb_datadic.h:238-243`
+
+```mermaid
+graph LR
+    subgraph "**Primary Key = User Key**"
+        INDEX_NUM["**Index Number**<br/>4 bytes<br/>索引ID"]
+        PK_COL1["**PK Column 1**<br/>变长<br/>mem-comparable"]
+        PK_COL2["**PK Column 2**<br/>变长<br/>mem-comparable"]
+        PK_COLN["**...**"]
+    end
+    
+    subgraph "**Primary Value = Stored Record**"
+        TTL_FIELD["**TTL (可选)**<br/>8 bytes<br/>过期时间"]
+        NULL_BITMAP["**NULL Bitmap**<br/>变长<br/>NULL标记"]
+        UNPACK_INFO["**Unpack Info**<br/>变长<br/>解码信息"]
+        NON_PK1["**Non-PK Column 1**<br/>变长<br/>实际数据"]
+        NON_PK2["**Non-PK Column 2**<br/>变长<br/>实际数据"]
+        NON_PKN["**...**"]
+        CHECKSUM["**Checksum (可选)**<br/>固定<br/>校验和"]
+    end
+    
+    INDEX_NUM --> PK_COL1
+    PK_COL1 --> PK_COL2
+    PK_COL2 --> PK_COLN
+    
+    TTL_FIELD --> NULL_BITMAP
+    NULL_BITMAP --> UNPACK_INFO
+    UNPACK_INFO --> NON_PK1
+    NON_PK1 --> NON_PK2
+    NON_PK2 --> NON_PKN
+    NON_PKN --> CHECKSUM
+    
+    style INDEX_NUM fill:#ffebee,stroke:#333,stroke-width:2px
+    style TTL_FIELD fill:#e8f5e8,stroke:#333,stroke-width:2px
+    style NULL_BITMAP fill:#fff3e0,stroke:#333,stroke-width:2px
+```
+
+**格式说明**:
+
+**Key部分**:
+```cpp
+// storage/rocksdb/rdb_datadic.cc:1356-1357
+rdb_netbuf_store_index(tuple, get_index_number());  // 存储4字节索引号
+tuple += INDEX_NUMBER_SIZE;                          // INDEX_NUMBER_SIZE = 4
+// 然后是mem-comparable格式的主键列数据
+```
+
+**Value部分**:
+```cpp
+// storage/rocksdb/rdb_converter.cc:902-983
+// 1. TTL字段(如果表支持TTL)
+uint64 ts = static_cast<uint64>(std::time(nullptr));
+rdb_netbuf_store_uint64(reinterpret_cast<uchar *>(data), ts);
+
+// 2. NULL bitmap
+m_storage_record.fill(m_null_bytes_length_in_record, 0);
+
+// 3. Unpack Info (如果需要)
+if (m_maybe_unpack_info) {
+  m_storage_record.append(reinterpret_cast<char *>(pk_unpack_info->ptr()),
+                          pk_unpack_info->get_current_pos());
+}
+
+// 4. 非主键列数据
+for (uint i = 0; i < m_table->s->fields; i++) {
+  // 跳过主键列(已在Key中)
+  if (encoder.m_storage_type != Rdb_field_encoder::STORE_ALL) continue;
+  
+  // 存储实际列数据
+  m_storage_record.append(...);
+}
+```
+
+#### 10.2.2 实际存储示例
+
+**示例表结构**:
+```sql
+CREATE TABLE users (
+  id INT PRIMARY KEY,
+  name VARCHAR(100),
+  age INT,
+  email VARCHAR(200)
+) ENGINE=ROCKSDB;
+
+INSERT INTO users VALUES (1001, 'Alice', 25, 'alice@example.com');
+```
+
+**在LSM中的存储**:
+
+```mermaid
+graph TB
+    subgraph "**RocksDB Key-Value存储**"
+        MEMCMP["**Key (mem-comparable格式)**<br/>[index#256][0x000003E9]<br/>index#256 = users主键索引<br/>0x000003E9 = 1001 (大端序)"]
+        
+        STORED_REC["**Value (StoredRecord格式)**<br/>[NULL bitmap: 0x00]<br/>[name length: 5]['Alice']<br/>[age: 0x00000019]<br/>[email length: 17]['alice@example.com']"]
+    end
+    
+    subgraph "**RocksDB Internal Key (实际存储)**"
+        INTERNAL_KEY["**Internal Key**<br/>user_key: [index#256][0x000003E9]<br/>sequence: 12345<br/>type: kTypeValue (0x01)"]
+        
+        BINARY_FORMAT["**二进制格式**<br/>[index#256][0x000003E9][seq=12345<<8 | 0x01]<br/>完整Key: 16 bytes<br/>Value: ~30 bytes (变长)"]
+    end
+    
+    MEMCMP --> INTERNAL_KEY
+    STORED_REC --> INTERNAL_KEY
+    INTERNAL_KEY --> BINARY_FORMAT
+    
+    style MEMCMP fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style STORED_REC fill:#fff3e0,stroke:#333,stroke-width:2px
+    style INTERNAL_KEY fill:#f3e5f5,stroke:#333,stroke-width:2px
+```
+
+**二进制数据布局**:
+
+| 偏移 | 长度 | 字段 | 值 | 说明 |
+|-----|-----|------|-----|------|
+| **Key部分** |||||
+| 0 | 4 | index_number | `0x00000100` | 索引ID=256 (大端序) |
+| 4 | 4 | id (INT) | `0x000003E9` | id=1001 (mem-comparable) |
+| **Internal Key元数据** |||||
+| 8 | 8 | seq + type | `0x0000003039000001` | seq=12345, type=0x01 |
+| **Value部分** |||||
+| 0 | 1 | NULL bitmap | `0x00` | 无NULL列 |
+| 1 | 1 | name_length | `0x05` | VARCHAR长度前缀 |
+| 2 | 5 | name | `Alice` | 实际字符串 |
+| 7 | 4 | age | `0x00000019` | age=25 |
+| 11 | 1 | email_length | `0x11` | 长度=17 |
+| 12 | 17 | email | `alice@example.com` | 实际字符串 |
+
+### 10.3 二级索引存储格式详解
+
+#### 10.3.1 Secondary Key存储结构
+
+**源码位置**: `storage/rocksdb/rdb_datadic.h:246-250`
+
+```mermaid
+graph LR
+    subgraph "**Secondary Key = User Key**"
+        SK_INDEX["**Index Number**<br/>4 bytes<br/>二级索引ID"]
+        SK_COL1["**SK Column 1**<br/>变长<br/>索引列1"]
+        SK_COL2["**SK Column 2**<br/>变长<br/>索引列2"]
+        SK_DOTS["**...**"]
+        PK_REF["**PK Reference**<br/>变长<br/>主键引用"]
+    end
+    
+    subgraph "**Secondary Value**"
+        UNPACK["**Unpack Info**<br/>变长<br/>覆盖索引数据"]
+        EMPTY["**或 空字符串**<br/>非覆盖索引"]
+    end
+    
+    SK_INDEX --> SK_COL1
+    SK_COL1 --> SK_COL2
+    SK_COL2 --> SK_DOTS
+    SK_DOTS --> PK_REF
+    
+    SK_INDEX -.-> UNPACK
+    SK_INDEX -.-> EMPTY
+    
+    style SK_INDEX fill:#ffebee,stroke:#333,stroke-width:2px
+    style PK_REF fill:#e8f5e8,stroke:#333,stroke-width:2px
+    style UNPACK fill:#fff3e0,stroke:#333,stroke-width:2px
+```
+
+**格式说明**:
+
+**关键特点**:
+1. **Key包含主键引用**: 确保唯一性，支持回表查询
+2. **Value可选**: 覆盖索引时存储unpack_info，否则为空
+3. **mem-comparable**: 所有列都转换为可直接memcmp比较的格式
+
+#### 10.3.2 实际存储示例
+
+**示例索引**:
+```sql
+CREATE INDEX idx_name ON users(name);
+```
+
+**在LSM中的存储**:
+
+```mermaid
+graph TB
+    subgraph "**二级索引Key-Value**"
+        SK_KEY["**Key**<br/>[index#257]['Alice'][id=1001]<br/>index#257 = idx_name索引<br/>name = 'Alice' (mem-comparable)<br/>id = 1001 (主键引用)"]
+        
+        SK_VALUE["**Value**<br/>空字符串<br/>(非覆盖索引，无需存储额外数据)"]
+    end
+    
+    subgraph "**覆盖索引示例**"
+        COV_IDX["**CREATE INDEX idx_cov ON users(name, age)**"]
+        COV_KEY["**Key**<br/>[index#258]['Alice'][age=25][id=1001]"]
+        COV_VALUE["**Value**<br/>[unpack_info]<br/>用于还原name和age的原始格式"]
+    end
+    
+    SK_KEY --> SK_VALUE
+    COV_IDX --> COV_KEY
+    COV_KEY --> COV_VALUE
+    
+    style SK_KEY fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style SK_VALUE fill:#ffebee,stroke:#333,stroke-width:2px
+    style COV_KEY fill:#fff3e0,stroke:#333,stroke-width:2px
+```
+
+### 10.4 mem-comparable编码格式
+
+**核心原理**: 将任意类型的数据转换为可以直接用memcmp()比较的字节序列，保持原始数据的排序顺序。
+
+```mermaid
+graph TB
+    subgraph "**INT类型编码**"
+        INT_ORIG["**原始值**<br/>-100, 0, 100, 1000"]
+        INT_ENC["**编码后**<br/>0x7FFFFF9C<br/>0x80000000<br/>0x80000064<br/>0x800003E8"]
+        INT_RULE["**规则**<br/>• 大端序存储<br/>• 有符号数 XOR 0x80000000<br/>• 保证字典序 = 数值序"]
+    end
+    
+    subgraph "**VARCHAR类型编码**"
+        VAR_ORIG["**原始值**<br/>'Alice', 'Bob'"]
+        VAR_ENC["**编码后**<br/>'Alice\0'<br/>'Bob\0'"]
+        VAR_RULE["**规则**<br/>• UTF-8字节序<br/>• 尾部补0终止<br/>• 字典序即排序序"]
+    end
+    
+    subgraph "**FLOAT/DOUBLE编码**"
+        FLOAT_ORIG["**原始值**<br/>-1.5, 0.0, 2.5"]
+        FLOAT_ENC["**编码后**<br/>特殊浮点编码"]
+        FLOAT_RULE["**规则**<br/>• 符号位翻转<br/>• 负数全部位翻转<br/>• 保证字典序 = 数值序"]
+    end
+    
+    INT_ORIG --> INT_ENC
+    INT_ENC --> INT_RULE
+    VAR_ORIG --> VAR_ENC
+    VAR_ENC --> VAR_RULE
+    FLOAT_ORIG --> FLOAT_ENC
+    FLOAT_ENC --> FLOAT_RULE
+    
+    style INT_ENC fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style VAR_ENC fill:#fff3e0,stroke:#333,stroke-width:2px
+    style FLOAT_ENC fill:#f3e5f5,stroke:#333,stroke-width:2px
+```
+
+**编码示例**:
+
+| 原始值 | 类型 | mem-comparable编码 | 说明 |
+|-------|------|-------------------|------|
+| 0 | INT | `0x80000000` | 0 XOR 0x80000000 |
+| 100 | INT | `0x80000064` | 100 XOR 0x80000000 |
+| -100 | INT | `0x7FFFFF9C` | -100 XOR 0x80000000 |
+| 'Alice' | VARCHAR | `0x416C696365` | UTF-8字节 + 终止符 |
+| NULL | Any | `0x00` | NULL标记 |
+
+### 10.5 查询数据抽取流程
+
+#### 10.5.1 主键查询时序
+
+```mermaid
+sequenceDiagram
+    participant App as **应用程序**
+    participant Handler as **ha_rocksdb**
+    participant KeyDef as **Rdb_key_def**
+    participant RocksDB as **RocksDB**
+    participant LSM as **LSM-Tree**
+
+    Note over App,LSM: **主键查询: SELECT * FROM users WHERE id=1001**
+
+    App->>Handler: index_read_map(id=1001)
+    Note over App,Handler: **开始主键查询**
+
+    Handler->>KeyDef: pack_record(id=1001)
+    Note over Handler,KeyDef: **将主键打包为mem-comparable格式**
+    
+    KeyDef->>KeyDef: 构建Key
+    Note over KeyDef: **Key = [index#256][0x000003E9]**
+    KeyDef-->>Handler: packed_key
+    
+    Handler->>RocksDB: Get(packed_key, ReadOptions)
+    Note over Handler,RocksDB: **使用当前快照进行查询**
+    
+    RocksDB->>LSM: 在LSM-Tree中查找
+    Note over LSM: **1. 检查MemTable**<br/>**2. 检查Immutable MemTable**<br/>**3. 查找SST文件(Level 0-N)**
+    
+    LSM-->>RocksDB: Internal Key + Value
+    Note over LSM,RocksDB: **找到匹配的Key**<br/>**seq <= snapshot_seq**
+    
+    RocksDB-->>Handler: rocksdb::Slice (Value)
+    
+    Handler->>Handler: convert_record_from_storage_format()
+    Note over Handler: **解析StoredRecord**
+    
+    Handler->>KeyDef: decode(key, value, buf)
+    Note over Handler,KeyDef: **将Value解码为MySQL记录格式**
+    
+    KeyDef->>KeyDef: 解析NULL bitmap
+    KeyDef->>KeyDef: 解析unpack_info
+    KeyDef->>KeyDef: 解码各列数据
+    Note over KeyDef: **name='Alice'**<br/>**age=25**<br/>**email='alice@example.com'**
+    
+    KeyDef-->>Handler: 记录填充到table->record[0]
+    Handler-->>App: 查询结果
+```
+
+#### 10.5.2 二级索引查询时序
+
+```mermaid
+sequenceDiagram
+    participant App as **应用程序**
+    participant Handler as **ha_rocksdb**
+    participant KeyDef as **Rdb_key_def**
+    participant RocksDB as **RocksDB**
+    participant LSM as **LSM-Tree**
+
+    Note over App,LSM: **二级索引查询: SELECT * FROM users WHERE name='Alice'**
+
+    App->>Handler: index_read_map(name='Alice')
+    Note over App,Handler: **使用idx_name索引查询**
+
+    Handler->>KeyDef: pack_index_tuple(name='Alice')
+    Note over Handler,KeyDef: **打包二级索引Key**
+    KeyDef-->>Handler: SK Key = [index#257]['Alice'][0x00...]
+    
+    Handler->>RocksDB: Get(SK Key)
+    RocksDB->>LSM: 查找二级索引
+    LSM-->>RocksDB: SK Key + Empty Value
+    RocksDB-->>Handler: 找到二级索引记录
+    
+    Handler->>Handler: 从SK Key提取主键
+    Note over Handler: **extract PK from SK Key**<br/>**id = 1001**
+    
+    rect rgb(255, 243, 224)
+        Note over Handler,LSM: **回表查询 (二次查找)**
+        
+        Handler->>KeyDef: pack_record(id=1001)
+        KeyDef-->>Handler: PK Key = [index#256][0x000003E9]
+        
+        Handler->>RocksDB: Get(PK Key)
+        RocksDB->>LSM: 查找主键索引
+        LSM-->>RocksDB: PK Value (完整行数据)
+        RocksDB-->>Handler: StoredRecord
+        
+        Handler->>Handler: convert_record_from_storage_format()
+        Handler->>KeyDef: decode(key, value, buf)
+        KeyDef-->>Handler: 完整记录
+    end
+    
+    Handler-->>App: 查询结果 (所有列)
+```
+
+#### 10.5.3 覆盖索引查询优化
+
+```mermaid
+sequenceDiagram
+    participant App as **应用程序**
+    participant Handler as **ha_rocksdb**
+    participant KeyDef as **Rdb_key_def**
+    participant RocksDB as **RocksDB**
+    participant LSM as **LSM-Tree**
+
+    Note over App,LSM: **覆盖索引查询: SELECT name, age FROM users WHERE name='Alice'**
+
+    App->>Handler: index_read_map(name='Alice')
+    Note over App,Handler: **使用idx_cov(name, age)索引**
+
+    Handler->>KeyDef: pack_index_tuple(name='Alice')
+    KeyDef-->>Handler: SK Key包含name和age
+    
+    Handler->>RocksDB: Get(SK Key)
+    RocksDB->>LSM: 查找覆盖索引
+    LSM-->>RocksDB: SK Key + unpack_info
+    RocksDB-->>Handler: 找到索引记录
+    
+    rect rgb(232, 245, 232)
+        Note over Handler: **覆盖索引优化：无需回表**
+        
+        Handler->>KeyDef: unpack_record(SK Key, unpack_info)
+        Note over Handler,KeyDef: **从索引Key和unpack_info**<br/>**直接解码所需列**
+        
+        KeyDef->>KeyDef: 解析SK Key中的列
+        Note over KeyDef: **name = 'Alice' (from Key)**<br/>**age = 25 (from Key)**
+        
+        KeyDef->>KeyDef: 使用unpack_info还原
+        Note over KeyDef: **将mem-comparable格式**<br/>**还原为原始格式**
+        
+        KeyDef-->>Handler: 填充name和age列
+    end
+    
+    Handler-->>App: 查询结果 (name, age)
+    Note over App,Handler: **性能提升：避免一次LSM查找**
+```
+
+### 10.6 性能优化策略
+
+#### 10.6.1 Key编码优化
+
+```mermaid
+graph LR
+    subgraph "**优化策略**"
+        PREFIX["**前缀压缩**<br/>• SST文件内Key前缀共享<br/>• 减少存储空间<br/>• 提升缓存效率"]
+        
+        BLOOM["**Bloom Filter**<br/>• 每个SST文件的Bloom Filter<br/>• 快速判断Key是否存在<br/>• 减少无效IO"]
+        
+        INDEX_BLOCK["**Index Block**<br/>• SST文件内部索引<br/>• 二分查找定位Data Block<br/>• O(log N)复杂度"]
+    end
+    
+    subgraph "**存储优化**"
+        COMPRESS["**Value压缩**<br/>• LZ4/Snappy/ZSTD<br/>• 减少磁盘占用<br/>• 降低IO带宽"]
+        
+        BLOCK_CACHE["**Block Cache**<br/>• 缓存热点Data Block<br/>• 减少磁盘读取<br/>• 配置rocksdb_block_cache_size"]
+    end
+    
+    PREFIX --> COMPRESS
+    BLOOM --> COMPRESS
+    INDEX_BLOCK --> COMPRESS
+    
+    COMPRESS --> BLOCK_CACHE
+    
+    style PREFIX fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style BLOOM fill:#fff3e0,stroke:#333,stroke-width:2px
+    style COMPRESS fill:#f3e5f5,stroke:#333,stroke-width:2px
+```
+
+#### 10.6.2 查询性能对比
+
+| 查询类型 | 索引 | LSM查找次数 | IO量 | 性能评级 |
+|---------|-----|-----------|------|---------|
+| **主键点查** | 主键索引 | 1次 | 1个Value | ⭐⭐⭐⭐⭐ 极快 |
+| **二级索引点查** | 二级索引 | 2次 (索引+回表) | 1个Key + 1个Value | ⭐⭐⭐⭐ 快 |
+| **覆盖索引查询** | 覆盖索引 | 1次 | 1个Key + 小Value | ⭐⭐⭐⭐⭐ 极快 |
+| **范围扫描** | 任意索引 | N次 | N个KV对 | ⭐⭐⭐ 中等 |
+| **全表扫描** | 主键索引 | 顺序读 | 全部Value | ⭐⭐ 慢 |
+
+### 10.7 调试和监控
+
+**查看存储格式的工具**:
+
+```bash
+# 1. 使用RocksDB sst_dump工具查看SST文件内容
+./sst_dump --file=/path/to/sst/file --command=scan --output_hex
+
+# 2. 使用MyRocks工具查看索引统计
+mysql> SELECT * FROM information_schema.ROCKSDB_INDEX_FILE_MAP;
+mysql> SELECT * FROM information_schema.ROCKSDB_DDL;
+
+# 3. 查看Key格式和编码
+mysql> SET SESSION rocksdb_debug_ttl_rec_ts = 0;
+mysql> EXPLAIN FORMAT=TREE SELECT * FROM users WHERE id=1001\G
+```
+
+**监控Key-Value存储效率**:
+
+```sql
+-- 查看表的存储统计
+SELECT 
+    TABLE_SCHEMA,
+    TABLE_NAME,
+    DATA_LENGTH / 1024 / 1024 AS data_mb,
+    INDEX_LENGTH / 1024 / 1024 AS index_mb,
+    (DATA_LENGTH + INDEX_LENGTH) / TABLE_ROWS AS bytes_per_row
+FROM information_schema.TABLES 
+WHERE ENGINE = 'ROCKSDB'
+ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC;
+
+-- 查看索引效率
+SELECT 
+    INDEX_NUMBER,
+    INDEX_NAME,
+    KV_FORMAT_VERSION,
+    KEY_COLS,
+    INDEX_FLAGS
+FROM information_schema.ROCKSDB_DDL
+WHERE TABLE_SCHEMA = 'your_database';
+```
+
+### 10.8 核心要点总结
+
+**存储格式设计哲学**:
+
+1. **Key包含排序信息**: mem-comparable格式确保字典序 = 排序序
+2. **Value存储实际数据**: 主键索引存完整行，二级索引可选
+3. **二级索引包含主键**: 天然支持回表，无需额外映射
+4. **覆盖索引优化**: 通过unpack_info避免回表查询
+
+**性能权衡**:
+
+- **写入性能**: LSM顺序写 > B+树随机写
+- **点查性能**: 需要多次LSM查找（但有Cache优化）
+- **范围查询**: LSM层级导致多次归并，但顺序读友好
+- **空间放大**: 多版本存储 + Compaction开销
+
+**最佳实践**:
+
+1. **合理设计主键**: 紧凑的主键减少存储开销
+2. **使用覆盖索引**: 避免回表提升查询性能
+3. **避免过长的Key**: Key长度影响memcmp性能和存储空间
+4. **监控Compaction**: 确保垃圾回收及时，控制空间放大
+
+这种精巧的Key-Value映射设计，使得MyRocks能够在LSM-Tree架构上高效实现MySQL的关系型数据模型。
+
+## 11. 参考源码文件
 
 - `storage/rocksdb/ha_rocksdb.cc` - MyRocks 存储引擎主实现
+- `storage/rocksdb/rdb_converter.cc` - 记录格式转换实现
+- `storage/rocksdb/rdb_datadic.cc` - Key编码和索引定义
+- `storage/rocksdb/rdb_datadic.h` - 数据字典和Key格式定义
 - `storage/rocksdb/rocksdb/utilities/write_batch_with_index/` - WriteBatchWithIndex 实现
 - `storage/rocksdb/rocksdb/utilities/transactions/` - 事务实现
+- `storage/rocksdb/rocksdb/db/dbformat.h` - RocksDB Internal Key格式
 - `storage/rocksdb/rocksdb/examples/transaction_example.cc` - 事务示例
 - `storage/rocksdb/rocksdb/examples/optimistic_transaction_example.cc` - 乐观事务示例

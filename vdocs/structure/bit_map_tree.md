@@ -585,30 +585,30 @@ graph TB
 
 ```mermaid
 flowchart TD
-    START[**开始索引选择**] --> ANALYZE[**分析WHERE条件**]
-    ANALYZE --> INIT_KEYMAP[**初始化Key_map**<br/>**• usable_keys**<br/>**• covering_keys**]
+    START["<b>开始索引选择</b>"] --> ANALYZE["<b>分析WHERE条件</b>"]
+    ANALYZE --> INIT_KEYMAP["<b>初始化Key_map</b><br/>• usable_keys<br/>• covering_keys"]
     
-    INIT_KEYMAP --> CHECK_CONDITION{**检查每个条件**}
-    CHECK_CONDITION --> SINGLE_TABLE{**单表条件?**}
+    INIT_KEYMAP --> CHECK_CONDITION{"<b>检查每个条件</b>"}
+    CHECK_CONDITION --> SINGLE_TABLE{"<b>单表条件?</b>"}
     
-    SINGLE_TABLE -->|**是**| MARK_USABLE[**标记可用索引**<br/>**usable_keys.set_bit()**]
-    SINGLE_TABLE -->|**否**| CHECK_JOIN[**检查连接条件**]
+    SINGLE_TABLE -->|是| MARK_USABLE["<b>标记可用索引</b><br/>usable_keys.set_bit()"]
+    SINGLE_TABLE -->|否| CHECK_JOIN["<b>检查连接条件</b>"]
     
-    MARK_USABLE --> CHECK_COVERING{**检查覆盖索引**}
-    CHECK_COVERING -->|**是**| MARK_COVERING[**标记覆盖索引**<br/>**covering_keys.set_bit()**]
-    CHECK_COVERING -->|**否**| MORE_CONDITIONS{**更多条件?**}
+    MARK_USABLE --> CHECK_COVERING{"<b>检查覆盖索引</b>"}
+    CHECK_COVERING -->|是| MARK_COVERING["<b>标记覆盖索引</b><br/>covering_keys.set_bit()"]
+    CHECK_COVERING -->|否| MORE_CONDITIONS{"<b>更多条件?</b>"}
     
-    CHECK_JOIN --> JOIN_KEYMAP[**处理连接Key_map**]
+    CHECK_JOIN --> JOIN_KEYMAP["<b>处理连接Key_map</b>"]
     JOIN_KEYMAP --> MORE_CONDITIONS
     MARK_COVERING --> MORE_CONDITIONS
     
-    MORE_CONDITIONS -->|**是**| CHECK_CONDITION
-    MORE_CONDITIONS -->|**否**| INTERSECT[**计算索引交集**<br/>**keys.intersect(other_keys)**]
+    MORE_CONDITIONS -->|是| CHECK_CONDITION
+    MORE_CONDITIONS -->|否| INTERSECT["<b>计算索引交集</b><br/>keys.intersect(other_keys)"]
     
-    INTERSECT --> COST_ANALYSIS[**成本分析**<br/>**• 索引扫描成本**<br/>**• 回表成本**]
-    COST_ANALYSIS --> SELECT_BEST[**选择最优索引**]
+    INTERSECT --> COST_ANALYSIS["<b>成本分析</b><br/>• 索引扫描成本<br/>• 回表成本"]
+    COST_ANALYSIS --> SELECT_BEST["<b>选择最优索引</b>"]
     
-    SELECT_BEST --> END[**生成执行计划**]
+    SELECT_BEST --> END["<b>生成执行计划</b>"]
     
     style START fill:#e1f5fe,color:#000,stroke:#333,stroke-width:2px
     style MARK_USABLE fill:#e8f5e8,color:#000,stroke:#333,stroke-width:2px

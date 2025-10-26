@@ -17,38 +17,38 @@
 
 ```mermaid
 flowchart TB
-    subgraph APPLICATION["应用层 - Application Layer"]
-        APP1["SQL语句执行"]
-        APP2["事务处理"]
-        APP3["查询优化器"]
+    subgraph APPLICATION["<b>应用层 - Application Layer</b>"]
+        APP1["<b>SQL语句执行</b>"]
+        APP2["<b>事务处理</b>"]
+        APP3["<b>查询优化器</b>"]
     end
     
-    subgraph SERVER_LAYER["服务器层 - MySQL Server Layer"] 
-        PARSER["SQL解析器"]
-        OPTIMIZER["查询优化器"]
-        EXECUTOR["执行引擎"]
+    subgraph SERVER_LAYER["<b>服务器层 - MySQL Server Layer</b>"]
+        PARSER["<b>SQL解析器</b>"]
+        OPTIMIZER["<b>查询优化器</b>"]
+        EXECUTOR["<b>执行引擎</b>"]
     end
     
-    subgraph INNODB_LAYER["InnoDB存储引擎层"]
-        subgraph LATCH_SYSTEM["Latch 同步系统"]
-            RW_LATCH["读写锁 Latch<br/>rw_lock_t"]
-            MUTEX_LATCH["互斥锁 Latch<br/>ib_mutex_t"]
-            SPIN_LATCH["自旋锁 Latch<br/>spin_lock"]
-            SHARDED_LATCH["分片锁 Latch<br/>Sharded_rw_lock"]
+    subgraph INNODB_LAYER["<b>InnoDB存储引擎层</b>"]
+        subgraph LATCH_SYSTEM["<b>Latch 同步系统</b>"]
+            RW_LATCH["<b>读写锁 Latch</b><br/>rw_lock_t"]
+            MUTEX_LATCH["<b>互斥锁 Latch</b><br/>ib_mutex_t"]
+            SPIN_LATCH["<b>自旋锁 Latch</b><br/>spin_lock"]
+            SHARDED_LATCH["<b>分片锁 Latch</b><br/>Sharded_rw_lock"]
         end
         
-        subgraph PROTECTED_STRUCTURES["受保护的数据结构"]
-            BUFFER_POOL["缓冲池<br/>Buffer Pool"]
-            INDEX_TREE["B+树索引<br/>Index Tree"]
-            LOG_SYSTEM["日志系统<br/>Log System"]
-            LOCK_SYSTEM["锁系统<br/>Lock System"]
+        subgraph PROTECTED_STRUCTURES["<b>受保护的数据结构</b>"]
+            BUFFER_POOL["<b>缓冲池</b><br/>Buffer Pool"]
+            INDEX_TREE["<b>B+树索引</b><br/>Index Tree"]
+            LOG_SYSTEM["<b>日志系统</b><br/>Log System"]
+            LOCK_SYSTEM["<b>锁系统</b><br/>Lock System"]
         end
     end
     
-    subgraph MEMORY_STRUCTURES["内存数据结构"]
-        PAGE_LATCH["页面Latch<br/>Page Latch"]
-        DICT_LATCH["数据字典Latch<br/>Dictionary Latch"]
-        TRX_LATCH["事务Latch<br/>Transaction Latch"]
+    subgraph MEMORY_STRUCTURES["<b>内存数据结构</b>"]
+        PAGE_LATCH["<b>页面Latch</b><br/>Page Latch"]
+        DICT_LATCH["<b>数据字典Latch</b><br/>Dictionary Latch"]
+        TRX_LATCH["<b>事务Latch</b><br/>Transaction Latch"]
     end
     
     APPLICATION --> SERVER_LAYER
@@ -61,9 +61,9 @@ flowchart TB
     
     LATCH_SYSTEM --> MEMORY_STRUCTURES
     
-    style LATCH_SYSTEM fill:#e1f5fe
-    style PROTECTED_STRUCTURES fill:#f3e5f5
-    style MEMORY_STRUCTURES fill:#fff3e0
+    style LATCH_SYSTEM fill:#e3f2fd,stroke:#333,stroke-width:2px
+    style PROTECTED_STRUCTURES fill:#f3e5f5,stroke:#333,stroke-width:2px
+    style MEMORY_STRUCTURES fill:#fff3e0,stroke:#333,stroke-width:2px
 ```
 
 ### 2. Latch 层次结构图

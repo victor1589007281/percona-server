@@ -591,20 +591,21 @@ static bool get_info_about_prepared_transaction(XA_recover_txn *txn_info,
 
 ```mermaid
 sequenceDiagram
-    participant HA as ha_recover
-    participant PE as plugin_foreach
-    participant RO as recover_one_ht
-    participant IE as innobase_xa_recover
-    participant TM as trx_recover_tc_for_mysql
-    participant TS as trx_sys->rw_trx_list
+    participant HA as **ha_recover**
+    participant PE as **plugin_foreach**
+    participant RO as **recover_one_ht**
+    participant IE as **innobase_xa_recover**
+    participant TM as **trx_recover_tc_for_mysql**
+    participant TS as **trx_sys_rw_trx_list**
     
     HA->>HA: 分配info.list数组<br/>(MAX_XID_LIST_SIZE=1024)
     HA->>PE: plugin_foreach调用所有存储引擎
     PE->>RO: 调用recover_one_ht处理InnoDB
-    RO->>IE: hton->recover(info.list, info.len)
+    RO->>IE: hton recover(info.list, info.len)
     IE->>TM: trx_recover_tc_for_mysql(xid_list, len)
     
-    TM->>TM: trx_sys_mutex_enter() 🔒
+    TM->>TM: trx_sys_mutex_enter()
+    Note over TM: 🔒 获取事务系统互斥锁
     
     loop 遍历所有读写事务
         TM->>TS: 获取下一个事务trx
@@ -624,7 +625,8 @@ sequenceDiagram
         end
     end
     
-    TM->>TM: trx_sys_mutex_exit() 🔓
+    TM->>TM: trx_sys_mutex_exit()
+    Note over TM: 🔓 释放事务系统互斥锁
     TM->>IE: return count (实际填充数量)
     IE->>RO: 返回PREPARED事务数量
     RO->>PE: 处理填充的事务数据

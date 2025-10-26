@@ -568,7 +568,7 @@ sequenceDiagram
     
     rect rgb(240, 248, 255)
         Note over C,P: **阶段1: 事务本地执行**
-        C->>P: BEGIN; INSERT INTO t1 VALUES(1,'data');
+        C->>P: BEGIN; INSERT INTO t1 VALUES(1, 'data');
         P->>P: 本地执行事务
         P->>P: 生成写集(Write Set)
         P->>P: 获取事务快照版本
