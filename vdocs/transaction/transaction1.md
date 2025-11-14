@@ -309,19 +309,25 @@ sequenceDiagram
 
 ```
 1. SQL层解析和执行
-   mysql_execute_command()                    // sql/sql_parse.cc:~3500
-   └─> Sql_cmd_insert::execute()              // sql/sql_insert.cc:~500
-       └─> Sql_cmd_insert::mysql_insert()     // sql/sql_insert.cc:~800
-           └─> write_record()                 // sql/sql_insert.cc:~2000
+   mysql_execute_command()                    // sql/sql_parse.cc:~3068
+   └─> lex->m_sql_cmd->execute(thd)           // sql/sql_parse.cc:~3837  ??不确定怎么到下一个函数的
+       └─> Sql_cmd_insert_values::execute_inner()     // sql/sql_insert.cc:~478
+           └─> write_record()                 // sql/sql_insert.cc:~633
+               └─> ha_write_row()             // sql/sql_insert.cc:~2170 
                
 2. Handler层调用
    write_record()
-   └─> handler::ha_write_row()               // sql/handler.cc:~7800
-       └─> ha_innobase::write_row()          // storage/innobase/handler/ha_innodb.cc:~8000
+   └─> handler::ha_write_row()               // sql/handler.cc:~8427
+       └─> write_row()                       // sql/handler.cc:~8446  ？？不确定怎么到引擎层的
+           └─> ha_innobase::write_row()          // storage/innobase/handler/ha_innodb.cc:~8000
+       └─> binlog_log_row()                  // sql/handler.cc:~8450   ---生成table map event的信息
+           └─> Write_rows_log_event::binlog_row_logging_function       // sql/handler.cc:~8429 
+               
        
 3. InnoDB行插入（第一次修改数据）
-   ha_innobase::write_row()                   // storage/innobase/handler/ha_innodb.cc:~8050
-   └─> row_insert_for_mysql()                // storage/innobase/row/row0mysql.cc:~1300
+   ha_innobase::write_row()                   // storage/innobase/handler/ha_innodb.cc:~9734
+   └─> row_insert_for_mysql()                 // storage/innobase/handler/ha_innodb.cc:~9826  
+       └─> row_insert_for_mysql()             // storage/innobase/row/row0mysql.cc:~2183
        
        ├─> 【关键】首次DML触发事务激活
        │   row_mysql_handle_errors()          // storage/innobase/row/row0mysql.cc:~900
