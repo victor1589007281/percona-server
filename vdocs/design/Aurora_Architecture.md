@@ -12,24 +12,24 @@ Amazon Aurora 是 AWS 推出的云原生关系型数据库服务，兼容 MySQL 
 
 ```mermaid
 graph TB
-    subgraph "**客户端层**"
+    subgraph "客户端层"
         A[**应用程序**]
     end
     
-    subgraph "**计算层 - Database Engine**"
+    subgraph "计算层 - Database Engine"
         B[**主实例<br/>Primary Instance**]
         C[**只读副本 1<br/>Read Replica**]
         D[**只读副本 2**]
         E[**只读副本 15**]
     end
     
-    subgraph "**存储层 - Aurora Storage**"
+    subgraph "存储层 - Aurora Storage"
         F[**保护组 1<br/>AZ-1**]
         G[**保护组 2<br/>AZ-2**]
         H[**保护组 3<br/>AZ-3**]
     end
     
-    subgraph "**每个保护组（6个副本）**"
+    subgraph "每个保护组（6个副本）"
         I[**副本 1**]
         J[**副本 2**]
         K[**副本 3**]
@@ -38,7 +38,7 @@ graph TB
         N[**副本 6**]
     end
     
-    subgraph "**管控服务**"
+    subgraph "管控服务"
         O[**RDS 控制平面**]
         P[**监控与告警**]
         Q[**自动备份**]
@@ -101,7 +101,7 @@ Aurora 的完整架构由多个程序组件组成，从控制平面到数据平�
 
 ```mermaid
 graph TB
-    subgraph "**控制平面（Control Plane）**"
+    subgraph "控制平面（Control Plane）"
         CP1[**RDS Manager<br/>集群管理器**]
         CP2[**Configuration<br/>Service<br/>配置服务**]
         CP3[**Monitoring &<br/>Metrics<br/>监控指标**]
@@ -110,7 +110,7 @@ graph TB
         CP6[**Failure Detector<br/>故障检测器**]
     end
     
-    subgraph "**计算节点（Primary Instance）**"
+    subgraph "计算节点（Primary Instance）"
         C1[**Connection Handler<br/>连接处理器**]
         C2[**SQL Parser<br/>SQL解析器**]
         C3[**Query Optimizer<br/>CBO优化器**]
@@ -121,7 +121,7 @@ graph TB
         C8[**Storage Engine<br/>Interface<br/>存储引擎接口**]
     end
     
-    subgraph "**计算节点（Read Replica）**"
+    subgraph "计算节点（Read Replica）"
         R1[**Connection Handler<br/>连接处理器**]
         R2[**Query Executor<br/>查询执行器**]
         R3[**Buffer Pool<br/>缓冲池**]
@@ -129,7 +129,7 @@ graph TB
         R5[**Storage Reader<br/>存储读取器**]
     end
     
-    subgraph "**存储层（Storage Nodes）- 单个节点内部**"
+    subgraph "存储层（Storage Nodes）- 单个节点内部"
         S1[**Log Receiver<br/>日志接收器**]
         S2[**Log Applicator<br/>日志应用器**]
         S3[**Page Manager<br/>页面管理器**]
@@ -140,7 +140,7 @@ graph TB
         S8[**Disk Manager<br/>磁盘管理器**]
     end
     
-    subgraph "**元数据服务（Metadata Service）**"
+    subgraph "元数据服务（Metadata Service）"
         M1[**Volume<br/>Configuration<br/>卷配置管理**]
         M2[**PG Mapping<br/>Table<br/>PG映射表**]
         M3[**Instance to<br/>Volume Registry<br/>实例卷注册表**]
@@ -148,7 +148,7 @@ graph TB
         M5[**Segment Catalog<br/>分段目录**]
     end
     
-    subgraph "**备份层（Backup Layer）**"
+    subgraph "备份层（Backup Layer）"
         B1[**Continuous<br/>Backup<br/>持续备份**]
         B2[**S3 Storage<br/>S3存储**]
         B3[**PITR Engine<br/>时间点恢复引擎**]
@@ -345,22 +345,22 @@ Aurora 选择 10GB 作为 PG 的大小，这是一个经过精心设计的权衡
 
 ```mermaid
 graph TB
-    subgraph "**单个 PG 的内部存储结构**"
-        subgraph "**Redo Log 区域**"
+    subgraph "单个 PG 的内部存储结构"
+        subgraph "Redo Log 区域"
             L1[**Log Entry 1<br/>LSN=100**]
             L2[**Log Entry 2<br/>LSN=101**]
             L3[**Log Entry 3<br/>LSN=102**]
             L4[**...**]
         end
         
-        subgraph "**Data Page 区域**"
+        subgraph "Data Page 区域"
             P1[**Page 0<br/>Page LSN=100**]
             P2[**Page 1<br/>Page LSN=99**]
             P3[**Page 2<br/>Page LSN=102**]
             P4[**...**]
         end
         
-        subgraph "**元数据区域**"
+        subgraph "元数据区域"
             M1[**PG Header<br/>VDL=102<br/>VCL=102**]
             M2[**Page-LSN<br/>Mapping Table**]
             M3[**Log Index<br/>LSN → Offset**]
@@ -415,23 +415,23 @@ Aurora 使用专门的**元数据服务**来管理 PG 与实例、卷的关联�
 
 ```mermaid
 graph TB
-    subgraph "**元数据服务架构**"
+    subgraph "元数据服务架构"
         MS1[**Volume Manager<br/>卷管理器**]
         MS2[**Segment Mapper<br/>分段映射器**]
         MS3[**Instance Registry<br/>实例注册表**]
     end
     
-    subgraph "**Volume 配置（存储在元数据服务）**"
+    subgraph "Volume 配置（存储在元数据服务）"
         V1[**Volume ID: vol-12345<br/>Owner Instance: db-primary-1<br/>Size: 50GB<br/>Segment Count: 5**]
     end
     
-    subgraph "**PG 映射表（存储在元数据服务）**"
+    subgraph "PG 映射表（存储在元数据服务）"
         PG1[**PG-0: Segment 0<br/>Replicas:<br/>node-1, node-2, ...<br/>Offset: 0-10GB**]
         PG2[**PG-1: Segment 1<br/>Replicas:<br/>node-3, node-4, ...<br/>Offset: 10-20GB**]
         PG3[**PG-2: Segment 2<br/>Replicas:<br/>node-5, node-6, ...<br/>Offset: 20-30GB**]
     end
     
-    subgraph "**Instance to Volume 映射**"
+    subgraph "Instance to Volume 映射"
         I1[**db-primary-1 → vol-12345**]
         I2[**db-replica-1 → vol-12345<br/>只读**]
         I3[**db-replica-2 → vol-12345<br/>只读**]
@@ -474,37 +474,37 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **计算节点<br/>（Primary）**
-    participant **M** as **元数据服务**
-    participant **S** as **存储节点**
+    participant C as "计算节点<br/>（Primary）"
+    participant M as "元数据服务"
+    participant S as "存储节点"
     
-    **C**->>**C**: **1. 生成 Redo Log<br/>（Page ID=12345, LSN=1000）**
+    C->>C: **1. 生成 Redo Log<br/>（Page ID=12345, LSN=1000）**
     
-    **C**->>**M**: **2. 查询：Page 12345 属于哪个 PG？**
-    **M**->>**M**: **3. 计算：PG ID = Page ID / 640<br/>（10GB / 16KB = 640 pages/PG）<br/>PG ID = 12345 / 640 = 19**
-    **M**->>**M**: **4. 查询 PG-19 的副本节点列表**
-    **M**-->>**C**: **5. 返回：nodes = [N1, N2, N3, N4, N5, N6]**
+    C->>M: **2. 查询：Page 12345 属于哪个 PG？**
+    M->>M: **3. 计算：PG ID = Page ID / 640<br/>（10GB / 16KB = 640 pages/PG）<br/>PG ID = 12345 / 640 = 19**
+    M->>M: **4. 查询 PG-19 的副本节点列表**
+    M-->>C: **5. 返回：nodes = [N1, N2, N3, N4, N5, N6]**
     
     par **并行发送到 6 个副本**
-        **C**->>**S**: **6a. 发送 Redo 到 N1**
-        **C**->>**S**: **6b. 发送 Redo 到 N2**
-        **C**->>**S**: **6c. 发送 Redo 到 N3**
-        **C**->>**S**: **6d. 发送 Redo 到 N4**
-        **C**->>**S**: **6e. 发送 Redo 到 N5**
-        **C**->>**S**: **6f. 发送 Redo 到 N6**
+        C->>S: **6a. 发送 Redo 到 N1**
+        C->>S: **6b. 发送 Redo 到 N2**
+        C->>S: **6c. 发送 Redo 到 N3**
+        C->>S: **6d. 发送 Redo 到 N4**
+        C->>S: **6e. 发送 Redo 到 N5**
+        C->>S: **6f. 发送 Redo 到 N6**
     end
     
     par **等待 Quorum 确认（4/6）**
-        **S**-->>**C**: **7a. N1 ACK**
-        **S**-->>**C**: **7b. N2 ACK**
-        **S**-->>**C**: **7c. N3 ACK**
-        **S**-->>**C**: **7d. N4 ACK ✓ Quorum达成**
+        S-->>C: **7a. N1 ACK**
+        S-->>C: **7b. N2 ACK**
+        S-->>C: **7c. N3 ACK**
+        S-->>C: **7d. N4 ACK ✓ Quorum达成**
     end
     
-    **C**->>**C**: **8. 事务提交**
+    C->>C: **8. 事务提交**
     
     rect rgb(255, 250, 205)
-    Note over **C**,**S**: **关键：元数据服务支撑快速定位，无需扫描所有节点**
+    Note over C,S: **关键：元数据服务支撑快速定位，无需扫描所有节点**
     end
 ```
 
@@ -523,18 +523,18 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**存储节点 Node-1（物理服务器）**"
-        subgraph "**Volume-A（集群A）**"
+    subgraph "存储节点 Node-1（物理服务器）"
+        subgraph "Volume-A（集群A）"
             PA1[**PG-0<br/>10GB**]
             PA2[**PG-3<br/>10GB**]
         end
         
-        subgraph "**Volume-B（集群B）**"
+        subgraph "Volume-B（集群B）"
             PB1[**PG-1<br/>10GB**]
             PB2[**PG-5<br/>10GB**]
         end
         
-        subgraph "**Volume-C（集群C）**"
+        subgraph "Volume-C（集群C）"
             PC1[**PG-2<br/>10GB**]
         end
         
@@ -581,7 +581,7 @@ Aurora 的元数据管理模块（Configuration Service）维护了三层映射�
 
 ```mermaid
 graph TB
-    subgraph "**Aurora 计算节点架构**"
+    subgraph "Aurora 计算节点架构"
         A[**SQL Layer<br/>SQL解析层**]
         B[**Query Optimizer<br/>查询优化器**]
         C[**Transaction<br/>Manager<br/>事务管理**]
@@ -590,7 +590,7 @@ graph TB
         F[**Storage<br/>Interface<br/>存储接口**]
     end
     
-    subgraph "**Aurora 特殊模块**"
+    subgraph "Aurora 特殊模块"
         G[**Redo Log<br/>Generator**]
         H[**Read Views<br/>MVCC**]
         I[**Crash Recovery<br/>快速恢复**]
@@ -635,20 +635,20 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**Protection Group 架构**"
+    subgraph "Protection Group 架构"
         A[**10GB 数据段**]
         B[**6个副本**]
         C[**跨3个AZ**]
     end
     
-    subgraph "**存储节点功能**"
+    subgraph "存储节点功能"
         D[**接收 Redo Log**]
         E[**应用日志到数据页**]
         F[**数据持久化**]
         G[**Gossip 协议<br/>副本同步**]
     end
     
-    subgraph "**存储服务**"
+    subgraph "存储服务"
         H[**备份到 S3**]
         I[**PITR 快照**]
         J[**数据修复**]
@@ -684,46 +684,46 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**存储节点（Storage Node）**"
-        subgraph "**接收层（Reception Layer）**"
+    subgraph "存储节点（Storage Node）"
+        subgraph "接收层（Reception Layer）"
             R1[**Log Receiver<br/>日志接收器**]
             R2[**Request Router<br/>请求路由器**]
             R3[**Connection Pool<br/>连接池**]
         end
         
-        subgraph "**处理层（Processing Layer）**"
+        subgraph "处理层（Processing Layer）"
             P1[**Log Applicator<br/>日志应用器**]
             P2[**Page Materializer<br/>页面物化器**]
             P3[**Read Request<br/>Handler<br/>读请求处理器**]
             P4[**Write Request<br/>Handler<br/>写请求处理器**]
         end
         
-        subgraph "**元数据管理（Metadata Management）**"
+        subgraph "元数据管理（Metadata Management）"
             M1[**LSN Tracker<br/>VDL/VCL管理**]
             M2[**Page-LSN Table<br/>页LSN映射表**]
             M3[**Log Index<br/>日志索引**]
             M4[**PG Header<br/>分段头信息**]
         end
         
-        subgraph "**协调层（Coordination Layer）**"
+        subgraph "协调层（Coordination Layer）"
             C1[**Gossip Protocol<br/>Gossip协议引擎**]
             C2[**Quorum Manager<br/>Quorum管理器**]
             C3[**Peer Sync<br/>对等同步**]
         end
         
-        subgraph "**修复层（Repair Layer）**"
+        subgraph "修复层（Repair Layer）"
             RP1[**Segment Repair<br/>分段修复器**]
             RP2[**Corruption Detector<br/>损坏检测器**]
             RP3[**Recovery<br/>Coordinator<br/>恢复协调器**]
         end
         
-        subgraph "**备份层（Backup Layer）**"
+        subgraph "备份层（Backup Layer）"
             B1[**S3 Writer<br/>S3写入器**]
             B2[**Backup Stream<br/>备份流管理**]
             B3[**Snapshot Manager<br/>快照管理器**]
         end
         
-        subgraph "**存储层（Storage Layer）**"
+        subgraph "存储层（Storage Layer）"
             S1[**Redo Log Store<br/>Redo日志存储**]
             S2[**Data Page Store<br/>数据页存储**]
             S3[**Metadata Store<br/>元数据存储**]
@@ -848,51 +848,51 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **Conn** as **Connection Pool<br/>连接池**
-    participant **Recv** as **Log Receiver<br/>日志接收器**
-    participant **Router** as **Request Router<br/>请求路由器**
-    participant **Writer** as **Write Handler<br/>写请求处理器**
-    participant **Quorum** as **Quorum Manager<br/>Quorum管理器**
-    participant **LSN_T** as **LSN Tracker<br/>LSN追踪器**
-    participant **Store** as **Redo Log Store<br/>Redo存储**
-    participant **Gossip** as **Gossip Protocol<br/>Gossip协议**
+    participant Primary as "主实例"
+    participant Conn as "Connection Pool<br/>连接池"
+    participant Recv as "Log Receiver<br/>日志接收器"
+    participant Router as "Request Router<br/>请求路由器"
+    participant Writer as "Write Handler<br/>写请求处理器"
+    participant Quorum as "Quorum Manager<br/>Quorum管理器"
+    participant LSN_T as "LSN Tracker<br/>LSN追踪器"
+    participant Store as "Redo Log Store<br/>Redo存储"
+    participant Gossip as "Gossip Protocol<br/>Gossip协议"
     
-    **Primary**->>**Conn**: **1. 建立TCP连接（复用）**
-    **Conn**->>**Recv**: **2. 发送Redo Log Batch<br/>（LSN=1000-1010）**
+    Primary->>Conn: **1. 建立TCP连接（复用）**
+    Conn->>Recv: **2. 发送Redo Log Batch<br/>（LSN=1000-1010）**
     
-    **Recv**->>**Recv**: **3. 缓冲到内存队列**
-    **Recv**->>**Router**: **4. 路由写请求**
+    Recv->>Recv: **3. 缓冲到内存队列**
+    Recv->>Router: **4. 路由写请求**
     
-    **Router**->>**Writer**: **5. 分发到写处理器**
+    Router->>Writer: **5. 分发到写处理器**
     
-    **Writer**->>**Writer**: **6. 验证LSN顺序<br/>（检查gap）**
+    Writer->>Writer: **6. 验证LSN顺序<br/>（检查gap）**
     
     alt **LSN连续**
-        **Writer**->>**Store**: **7a. 写入Redo Log**
-        **Store**-->>**Writer**: **8a. 持久化完成**
-        **Writer**->>**LSN_T**: **9a. 更新VDL=1010**
-        **LSN_T**->>**Gossip**: **10a. 广播VDL更新**
-        **Writer**->>**Quorum**: **11a. 通知Quorum Manager**
-        **Quorum**-->>**Conn**: **12a. 返回ACK**
+        Writer->>Store: **7a. 写入Redo Log**
+        Store-->>Writer: **8a. 持久化完成**
+        Writer->>LSN_T: **9a. 更新VDL=1010**
+        LSN_T->>Gossip: **10a. 广播VDL更新**
+        Writer->>Quorum: **11a. 通知Quorum Manager**
+        Quorum-->>Conn: **12a. 返回ACK**
     else **LSN有gap（缺失日志）**
-        **Writer**->>**Writer**: **7b. 缓存到gap队列**
-        **Writer**->>**Gossip**: **8b. 请求缺失日志<br/>（LSN=1005-1009）**
-        **Gossip**->>**Gossip**: **9b. 从其他副本拉取**
-        **Gossip**-->>**Writer**: **10b. 返回缺失日志**
-        **Writer**->>**Store**: **11b. 补齐后写入**
-        **Store**-->>**Writer**: **12b. 持久化完成**
-        **Writer**-->>**Conn**: **13b. 返回ACK**
+        Writer->>Writer: **7b. 缓存到gap队列**
+        Writer->>Gossip: **8b. 请求缺失日志<br/>（LSN=1005-1009）**
+        Gossip->>Gossip: **9b. 从其他副本拉取**
+        Gossip-->>Writer: **10b. 返回缺失日志**
+        Writer->>Store: **11b. 补齐后写入**
+        Store-->>Writer: **12b. 持久化完成**
+        Writer-->>Conn: **13b. 返回ACK**
     end
     
-    **Conn**-->>**Primary**: **13. ACK传回主实例**
+    Conn-->>Primary: **13. ACK传回主实例**
     
-    Note over **LSN_T**,**Gossip**: **后台异步任务**
-    **LSN_T**->>**LSN_T**: **14. 定期检查VCL<br/>（是否有gap）**
-    **Gossip**->>**Gossip**: **15. 定期与对等节点<br/>交换元数据**
+    Note over LSN_T,Gossip: **后台异步任务**
+    LSN_T->>LSN_T: **14. 定期检查VCL<br/>（是否有gap）**
+    Gossip->>Gossip: **15. 定期与对等节点<br/>交换元数据**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Gossip**: **关键：存储节点自己处理LSN gap，主实例无需关心**
+    Note over Primary,Gossip: **关键：存储节点自己处理LSN gap，主实例无需关心**
     end
 ```
 
@@ -900,57 +900,57 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Replica** as **只读副本**
-    participant **Conn** as **Connection Pool<br/>连接池**
-    participant **Router** as **Request Router<br/>请求路由器**
-    participant **Reader** as **Read Handler<br/>读请求处理器**
-    participant **PageLSN** as **Page-LSN Table<br/>页LSN映射表**
-    participant **Cache** as **Cache Manager<br/>缓存管理器**
-    participant **Materialize** as **Page Materializer<br/>页面物化器**
-    participant **RedoStore** as **Redo Log Store<br/>Redo存储**
-    participant **PageStore** as **Data Page Store<br/>数据页存储**
-    participant **LSN_T** as **LSN Tracker<br/>LSN追踪器**
+    participant Replica as "只读副本"
+    participant Conn as "Connection Pool<br/>连接池"
+    participant Router as "Request Router<br/>请求路由器"
+    participant Reader as "Read Handler<br/>读请求处理器"
+    participant PageLSN as "Page-LSN Table<br/>页LSN映射表"
+    participant Cache as "Cache Manager<br/>缓存管理器"
+    participant Materialize as "Page Materializer<br/>页面物化器"
+    participant RedoStore as "Redo Log Store<br/>Redo存储"
+    participant PageStore as "Data Page Store<br/>数据页存储"
+    participant LSN_T as "LSN Tracker<br/>LSN追踪器"
     
-    **Replica**->>**Conn**: **1. 请求读取 Page ID=12345<br/>（需要LSN >= 1000的版本）**
-    **Conn**->>**Router**: **2. 路由读请求**
-    **Router**->>**Reader**: **3. 分发到读处理器**
+    Replica->>Conn: **1. 请求读取 Page ID=12345<br/>（需要LSN >= 1000的版本）**
+    Conn->>Router: **2. 路由读请求**
+    Router->>Reader: **3. 分发到读处理器**
     
-    **Reader**->>**PageLSN**: **4. 查询 Page 12345 的当前LSN**
-    **PageLSN**-->>**Reader**: **5. 返回 Page LSN=995**
+    Reader->>PageLSN: **4. 查询 Page 12345 的当前LSN**
+    PageLSN-->>Reader: **5. 返回 Page LSN=995**
     
-    **Reader**->>**LSN_T**: **6. 查询当前VDL**
-    **LSN_T**-->>**Reader**: **7. 返回 VDL=1010**
+    Reader->>LSN_T: **6. 查询当前VDL**
+    LSN_T-->>Reader: **7. 返回 VDL=1010**
     
-    **Reader**->>**Reader**: **8. 判断：Page LSN(995) < 需要LSN(1000)**
+    Reader->>Reader: **8. 判断：Page LSN(995) < 需要LSN(1000)**
     
     alt **页面LSN足够新**
-        **Reader**->>**Cache**: **9a. 查询缓存**
+        Reader->>Cache: **9a. 查询缓存**
         alt **缓存命中**
-            **Cache**-->>**Reader**: **10a1. 返回缓存页面**
+            Cache-->>Reader: **10a1. 返回缓存页面**
         else **缓存未命中**
-            **Reader**->>**PageStore**: **10a2. 读取磁盘页面**
-            **PageStore**-->>**Reader**: **11a2. 返回页面数据**
-            **Reader**->>**Cache**: **12a2. 更新缓存**
+            Reader->>PageStore: **10a2. 读取磁盘页面**
+            PageStore-->>Reader: **11a2. 返回页面数据**
+            Reader->>Cache: **12a2. 更新缓存**
         end
     else **页面LSN过旧，需要应用Redo**
-        **Reader**->>**RedoStore**: **9b. 查询LSN 996-1000的Redo**
-        **RedoStore**-->>**Reader**: **10b. 返回Redo日志**
+        Reader->>RedoStore: **9b. 查询LSN 996-1000的Redo**
+        RedoStore-->>Reader: **10b. 返回Redo日志**
         
-        **Reader**->>**Materialize**: **11b. 请求物化页面<br/>（应用Redo 996-1000）**
-        **Materialize**->>**PageStore**: **12b. 读取基础页面（LSN=995）**
-        **PageStore**-->>**Materialize**: **13b. 返回基础页面**
-        **Materialize**->>**Materialize**: **14b. 应用Redo到页面**
-        **Materialize**->>**PageLSN**: **15b. 更新 Page LSN=1000**
-        **Materialize**-->>**Reader**: **16b. 返回物化后的页面**
+        Reader->>Materialize: **11b. 请求物化页面<br/>（应用Redo 996-1000）**
+        Materialize->>PageStore: **12b. 读取基础页面（LSN=995）**
+        PageStore-->>Materialize: **13b. 返回基础页面**
+        Materialize->>Materialize: **14b. 应用Redo到页面**
+        Materialize->>PageLSN: **15b. 更新 Page LSN=1000**
+        Materialize-->>Reader: **16b. 返回物化后的页面**
         
-        **Reader**->>**Cache**: **17b. 更新缓存**
+        Reader->>Cache: **17b. 更新缓存**
     end
     
-    **Reader**-->>**Conn**: **18. 返回页面数据**
-    **Conn**-->>**Replica**: **19. 传回只读副本**
+    Reader-->>Conn: **18. 返回页面数据**
+    Conn-->>Replica: **19. 传回只读副本**
     
     rect rgb(255, 250, 205)
-    Note over **Replica**,**PageStore**: **关键：存储节点按需物化页面（Lazy Materialization）**
+    Note over Replica,PageStore: **关键：存储节点按需物化页面（Lazy Materialization）**
     end
 ```
 
@@ -958,49 +958,49 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Node1** as **存储节点1**
-    participant **G1** as **Gossip Protocol<br/>节点1**
-    participant **G2** as **Gossip Protocol<br/>节点2**
-    participant **G3** as **Gossip Protocol<br/>节点3**
-    participant **Node2** as **存储节点2**
-    participant **Node3** as **存储节点3**
+    participant Node1 as "存储节点1"
+    participant G1 as "Gossip Protocol<br/>节点1"
+    participant G2 as "Gossip Protocol<br/>节点2"
+    participant G3 as "Gossip Protocol<br/>节点3"
+    participant Node2 as "存储节点2"
+    participant Node3 as "存储节点3"
     
-    Note over **G1**,**G3**: **周期性Gossip（每100ms）**
+    Note over G1,G3: **周期性Gossip（每100ms）**
     
     par **多节点并行Gossip**
-        **G1**->>**G2**: **1a. Gossip消息<br/>VDL=1010, VCL=1000<br/>Health=OK**
-        **G1**->>**G3**: **1b. Gossip消息**
+        G1->>G2: **1a. Gossip消息<br/>VDL=1010, VCL=1000<br/>Health=OK**
+        G1->>G3: **1b. Gossip消息**
     end
     
-    **G2**->>**G2**: **2. 比较元数据**
+    G2->>G2: **2. 比较元数据**
     
     alt **节点2 VCL < 节点1 VCL**
-        **G2**->>**G1**: **3a. 请求缺失日志<br/>（LSN 950-999）**
-        **G1**->>**Node1**: **4a. 查询Redo Store**
-        **Node1**-->>**G1**: **5a. 返回日志**
-        **G1**-->>**G2**: **6a. 发送日志**
-        **G2**->>**Node2**: **7a. 应用日志**
-        **Node2**-->>**G2**: **8a. VCL更新到1000**
+        G2->>G1: **3a. 请求缺失日志<br/>（LSN 950-999）**
+        G1->>Node1: **4a. 查询Redo Store**
+        Node1-->>G1: **5a. 返回日志**
+        G1-->>G2: **6a. 发送日志**
+        G2->>Node2: **7a. 应用日志**
+        Node2-->>G2: **8a. VCL更新到1000**
     else **节点2 VCL >= 节点1 VCL**
-        **G2**->>**G2**: **3b. 无需同步**
+        G2->>G2: **3b. 无需同步**
     end
     
-    **G2**-->>**G1**: **9. Gossip响应<br/>VDL=1010, VCL=1000<br/>Health=OK**
+    G2-->>G1: **9. Gossip响应<br/>VDL=1010, VCL=1000<br/>Health=OK**
     
-    **G3**->>**G3**: **10. 处理节点3 Gossip**
-    **G3**-->>**G1**: **11. Gossip响应<br/>VDL=1005, VCL=1005<br/>Health=OK**
+    G3->>G3: **10. 处理节点3 Gossip**
+    G3-->>G1: **11. Gossip响应<br/>VDL=1005, VCL=1005<br/>Health=OK**
     
-    **G1**->>**G1**: **12. 汇总Gossip信息<br/>计算全局VDL**
-    **G1**->>**G1**: **13. 更新全局视图：<br/>VDL=1010（Quorum达成）**
+    G1->>G1: **12. 汇总Gossip信息<br/>计算全局VDL**
+    G1->>G1: **13. 更新全局视图：<br/>VDL=1010（Quorum达成）**
     
-    Note over **G1**,**G3**: **故障检测**
-    **G1**->>**G3**: **14. Gossip请求**
-    **G3**->>**G3**: **15. 超时未响应（3次）**
-    **G1**->>**G1**: **16. 标记节点3为可疑**
-    **G1**->>**Node1**: **17. 通知Segment Repair<br/>（节点3可能故障）**
+    Note over G1,G3: **故障检测**
+    G1->>G3: **14. Gossip请求**
+    G3->>G3: **15. 超时未响应（3次）**
+    G1->>G1: **16. 标记节点3为可疑**
+    G1->>Node1: **17. 通知Segment Repair<br/>（节点3可能故障）**
     
     rect rgb(255, 250, 205)
-    Note over **G1**,**Node3**: **Gossip协议实现：<br/>1. 元数据同步（VDL/VCL）<br/>2. 故障检测<br/>3. 数据修复触发**
+    Note over G1,Node3: **Gossip协议实现：<br/>1. 元数据同步（VDL/VCL）<br/>2. 故障检测<br/>3. 数据修复触发**
     end
 ```
 
@@ -1008,44 +1008,44 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Detector** as **Corruption Detector<br/>损坏检测器**
-    participant **Coord** as **Recovery Coordinator<br/>恢复协调器**
-    participant **Repair** as **Segment Repair<br/>分段修复器**
-    participant **Gossip** as **Gossip Protocol<br/>Gossip协议**
-    participant **Source** as **源存储节点<br/>（健康副本）**
-    participant **Store** as **本地存储**
+    participant Detector as "Corruption Detector<br/>损坏检测器"
+    participant Coord as "Recovery Coordinator<br/>恢复协调器"
+    participant Repair as "Segment Repair<br/>分段修复器"
+    participant Gossip as "Gossip Protocol<br/>Gossip协议"
+    participant Source as "源存储节点<br/>（健康副本）"
+    participant Store as "本地存储"
     
-    **Detector**->>**Detector**: **1. 定期校验数据<br/>（Checksum）**
-    **Detector**->>**Detector**: **2. 发现损坏：<br/>PG-19, Page 123<br/>Checksum不匹配**
+    Detector->>Detector: **1. 定期校验数据<br/>（Checksum）**
+    Detector->>Detector: **2. 发现损坏：<br/>PG-19, Page 123<br/>Checksum不匹配**
     
-    **Detector**->>**Coord**: **3. 报告损坏**
-    **Coord**->>**Gossip**: **4. 查询其他副本状态**
-    **Gossip**-->>**Coord**: **5. 返回副本列表：<br/>Node2(OK), Node3(OK)<br/>Node4(OK), Node5(Slow)**
+    Detector->>Coord: **3. 报告损坏**
+    Coord->>Gossip: **4. 查询其他副本状态**
+    Gossip-->>Coord: **5. 返回副本列表：<br/>Node2(OK), Node3(OK)<br/>Node4(OK), Node5(Slow)**
     
-    **Coord**->>**Coord**: **6. 选择最佳源：<br/>Node2（最快+健康）**
-    **Coord**->>**Repair**: **7. 触发修复任务<br/>（从Node2拉取PG-19）**
+    Coord->>Coord: **6. 选择最佳源：<br/>Node2（最快+健康）**
+    Coord->>Repair: **7. 触发修复任务<br/>（从Node2拉取PG-19）**
     
-    **Repair**->>**Source**: **8. 请求PG-19数据<br/>（LSN范围：1000-1100）**
-    **Source**->>**Source**: **9. 读取Redo + Pages**
-    **Source**-->>**Repair**: **10. 返回数据<br/>（增量Redo + 页面）**
+    Repair->>Source: **8. 请求PG-19数据<br/>（LSN范围：1000-1100）**
+    Source->>Source: **9. 读取Redo + Pages**
+    Source-->>Repair: **10. 返回数据<br/>（增量Redo + 页面）**
     
-    **Repair**->>**Repair**: **11. 验证数据完整性<br/>（Checksum）**
+    Repair->>Repair: **11. 验证数据完整性<br/>（Checksum）**
     
     alt **数据完整**
-        **Repair**->>**Store**: **12a. 写入修复数据**
-        **Store**-->>**Repair**: **13a. 持久化完成**
-        **Repair**->>**Coord**: **14a. 修复成功**
-        **Coord**->>**Gossip**: **15a. 广播修复完成**
+        Repair->>Store: **12a. 写入修复数据**
+        Store-->>Repair: **13a. 持久化完成**
+        Repair->>Coord: **14a. 修复成功**
+        Coord->>Gossip: **15a. 广播修复完成**
     else **数据仍损坏**
-        **Repair**->>**Coord**: **12b. 修复失败<br/>（从Node2获取的数据也损坏）**
-        **Coord**->>**Coord**: **13b. 选择Node3重试**
-        **Coord**->>**Repair**: **14b. 重新触发修复<br/>（从Node3）**
+        Repair->>Coord: **12b. 修复失败<br/>（从Node2获取的数据也损坏）**
+        Coord->>Coord: **13b. 选择Node3重试**
+        Coord->>Repair: **14b. 重新触发修复<br/>（从Node3）**
     end
     
-    **Coord**->>**Coord**: **16. 记录修复日志<br/>（用于故障分析）**
+    Coord->>Coord: **16. 记录修复日志<br/>（用于故障分析）**
     
     rect rgb(255, 250, 205)
-    Note over **Detector**,**Store**: **MTTR < 10秒：10GB数据在1Gbps网络下快速修复**
+    Note over Detector,Store: **MTTR < 10秒：10GB数据在1Gbps网络下快速修复**
     end
 ```
 
@@ -1068,44 +1068,44 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **P** as **主实例**
-    participant **BC** as **Buffer Cache**
-    participant **S1** as **存储节点 1**
-    participant **S2** as **存储节点 2**
-    participant **S3** as **存储节点 3**
-    participant **S4** as **存储节点 4**
-    participant **S5** as **存储节点 5**
-    participant **S6** as **存储节点 6**
+    participant C as "客户端"
+    participant P as "主实例"
+    participant BC as "Buffer Cache"
+    participant S1 as "存储节点 1"
+    participant S2 as "存储节点 2"
+    participant S3 as "存储节点 3"
+    participant S4 as "存储节点 4"
+    participant S5 as "存储节点 5"
+    participant S6 as "存储节点 6"
     
-    **C**->>**P**: **1. INSERT/UPDATE**
-    **P**->>**BC**: **2. 修改 Buffer Cache**
-    **P**->>**P**: **3. 生成 Redo Log**
+    C->>P: **1. INSERT/UPDATE**
+    P->>BC: **2. 修改 Buffer Cache**
+    P->>P: **3. 生成 Redo Log**
     
     par **并行发送到6个副本**
-        **P**->>**S1**: **4. 发送 Redo Log**
-        **P**->>**S2**: **4. 发送 Redo Log**
-        **P**->>**S3**: **4. 发送 Redo Log**
-        **P**->>**S4**: **4. 发送 Redo Log**
-        **P**->>**S5**: **4. 发送 Redo Log**
-        **P**->>**S6**: **4. 发送 Redo Log**
+        P->>S1: **4. 发送 Redo Log**
+        P->>S2: **4. 发送 Redo Log**
+        P->>S3: **4. 发送 Redo Log**
+        P->>S4: **4. 发送 Redo Log**
+        P->>S5: **4. 发送 Redo Log**
+        P->>S6: **4. 发送 Redo Log**
     end
     
     par **4/6 确认即可**
-        **S1**-->>**P**: **5. ACK (1/6)**
-        **S2**-->>**P**: **5. ACK (2/6)**
-        **S3**-->>**P**: **5. ACK (3/6)**
-        **S4**-->>**P**: **5. ACK (4/6) ✓**
+        S1-->>P: **5. ACK (1/6)**
+        S2-->>P: **5. ACK (2/6)**
+        S3-->>P: **5. ACK (3/6)**
+        S4-->>P: **5. ACK (4/6) ✓**
     end
     
-    **P**-->>**C**: **6. 提交成功**
+    P-->>C: **6. 提交成功**
     
-    Note over **S5**,**S6**: **后续异步确认**
-    **S5**-->>**P**: **7. ACK (5/6)**
-    **S6**-->>**P**: **7. ACK (6/6)**
+    Note over S5,S6: **后续异步确认**
+    S5-->>P: **7. ACK (5/6)**
+    S6-->>P: **7. ACK (6/6)**
     
     rect rgb(255, 250, 205)
-    Note over **P**,**S6**: **关键：只需4/6确认即可提交，提升可用性**
+    Note over P,S6: **关键：只需4/6确认即可提交，提升可用性**
     end
 ```
 
@@ -1113,38 +1113,38 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **R** as **只读副本**
-    participant **BC** as **Buffer Cache**
-    participant **S1** as **存储节点 1**
-    participant **S2** as **存储节点 2**
-    participant **S3** as **存储节点 3**
+    participant C as "客户端"
+    participant R as "只读副本"
+    participant BC as "Buffer Cache"
+    participant S1 as "存储节点 1"
+    participant S2 as "存储节点 2"
+    participant S3 as "存储节点 3"
     
-    **C**->>**R**: **1. SELECT 查询**
-    **R**->>**BC**: **2. 检查 Buffer Cache**
+    C->>R: **1. SELECT 查询**
+    R->>BC: **2. 检查 Buffer Cache**
     
     alt **缓存命中**
-        **BC**-->>**R**: **3a. 返回缓存数据**
+        BC-->>R: **3a. 返回缓存数据**
     else **缓存未命中**
         par **并行读取3个副本**
-            **R**->>**S1**: **3b. 读取数据页**
-            **R**->>**S2**: **3b. 读取数据页**
-            **R**->>**S3**: **3b. 读取数据页**
+            R->>S1: **3b. 读取数据页**
+            R->>S2: **3b. 读取数据页**
+            R->>S3: **3b. 读取数据页**
         end
         
         alt **3/6副本确认**
-            **S1**-->>**R**: **4. 返回数据 (1/3)**
-            **S2**-->>**R**: **4. 返回数据 (2/3)**
-            **S3**-->>**R**: **4. 返回数据 (3/3) ✓**
+            S1-->>R: **4. 返回数据 (1/3)**
+            S2-->>R: **4. 返回数据 (2/3)**
+            S3-->>R: **4. 返回数据 (3/3) ✓**
         end
         
-        **R**->>**BC**: **5. 更新 Buffer Cache**
+        R->>BC: **5. 更新 Buffer Cache**
     end
     
-    **R**-->>**C**: **6. 返回查询结果**
+    R-->>C: **6. 返回查询结果**
     
     rect rgb(255, 250, 205)
-    Note over **R**,**S3**: **优化：读取最近的3个副本，降低延迟**
+    Note over R,S3: **优化：读取最近的3个副本，降低延迟**
     end
 ```
 
@@ -1154,14 +1154,14 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**传统 MySQL 架构**"
+    subgraph "传统 MySQL 架构"
         A[**计算层写 Redo Log**]
         B[**计算层刷数据页**]
         C[**主从同步数据页**]
         D[**网络开销大**]
     end
     
-    subgraph "**Aurora Log-is-Database**"
+    subgraph "Aurora Log-is-Database"
         E[**计算层只写 Redo Log**]
         F[**存储层应用日志**]
         G[**存储层生成数据页**]
@@ -1214,14 +1214,14 @@ Quorum 协议的核心思想是：**在 N 个副本中，写入需要 Vw 个副�
 
 ```mermaid
 graph TB
-    subgraph "**Aurora Quorum 配置 (N=6, Vw=4, Vr=3)**"
+    subgraph "Aurora Quorum 配置 (N=6, Vw=4, Vr=3)"
         A[**总副本数 N=6<br/>跨3个AZ**]
         B[**写入Quorum Vw=4<br/>容忍2个副本故障**]
         C[**读取Quorum Vr=3<br/>容忍3个副本故障**]
         D[**Vw + Vr = 7 > 6<br/>保证强一致性**]
     end
     
-    subgraph "**为什么选择4/6写、3/6读？**"
+    subgraph "为什么选择4/6写、3/6读？"
         E[**可用性：<br/>容忍2个副本同时故障**]
         F[**性能：<br/>4个ACK比6个ACK快**]
         G[**一致性：<br/>满足Quorum条件**]
@@ -1276,20 +1276,20 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**写入集合（Vw=4个副本）**"
+    subgraph "写入集合（Vw=4个副本）"
         W1[**副本1 ✓**]
         W2[**副本2 ✓**]
         W3[**副本3 ✓**]
         W4[**副本4 ✓**]
     end
     
-    subgraph "**读取集合（Vr=3个副本）**"
+    subgraph "读取集合（Vr=3个副本）"
         R1[**副本2 ✓<br/>重叠！**]
         R2[**副本5**]
         R3[**副本6**]
     end
     
-    subgraph "**其他副本**"
+    subgraph "其他副本"
         O1[**副本5**]
         O2[**副本6**]
     end
@@ -1339,30 +1339,30 @@ graph TB
 **原因3：选择最新数据**
 ```mermaid
 sequenceDiagram
-    participant **Client** as **客户端**
-    participant **Replica** as **只读副本**
-    participant **S1** as **存储节点1<br/>LSN=1000**
-    participant **S2** as **存储节点2<br/>LSN=998**
-    participant **S3** as **存储节点3<br/>LSN=1000**
+    participant Client as "客户端"
+    participant Replica as "只读副本"
+    participant S1 as "存储节点1<br/>LSN=1000"
+    participant S2 as "存储节点2<br/>LSN=998"
+    participant S3 as "存储节点3<br/>LSN=1000"
     
-    **Client**->>**Replica**: **读请求**
+    Client->>Replica: **读请求**
     
     par **并行读取3个副本**
-        **Replica**->>**S1**: **读取Page 123**
-        **Replica**->>**S2**: **读取Page 123**
-        **Replica**->>**S3**: **读取Page 123**
+        Replica->>S1: **读取Page 123**
+        Replica->>S2: **读取Page 123**
+        Replica->>S3: **读取Page 123**
     end
     
-    **S1**-->>**Replica**: **返回数据（LSN=1000）**
-    **S2**-->>**Replica**: **返回数据（LSN=998）✗旧**
-    **S3**-->>**Replica**: **返回数据（LSN=1000）**
+    S1-->>Replica: **返回数据（LSN=1000）**
+    S2-->>Replica: **返回数据（LSN=998）✗旧**
+    S3-->>Replica: **返回数据（LSN=1000）**
     
-    **Replica**->>**Replica**: **比较LSN，选择最大值<br/>LSN=1000（2票）> LSN=998（1票）**
+    Replica->>Replica: **比较LSN，选择最大值<br/>LSN=1000（2票）> LSN=998（1票）**
     
-    **Replica**-->>**Client**: **返回LSN=1000的数据**
+    Replica-->>Client: **返回LSN=1000的数据**
     
     rect rgb(255, 250, 205)
-    Note over **Client**,**S3**: **Quorum读取：多数派（2/3）一致即可**
+    Note over Client,S3: **Quorum读取：多数派（2/3）一致即可**
     end
 ```
 
@@ -1396,19 +1396,19 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**写入侧（Vw=4）**"
+    subgraph "写入侧（Vw=4）"
         W1[**主实例写入**]
         W2[**4个副本确认**]
         W3[**VDL推进到LSN=1000**]
     end
     
-    subgraph "**读取侧（Vr=3）**"
+    subgraph "读取侧（Vr=3）"
         R1[**只读副本查询VDL**]
         R2[**读取3个副本**]
         R3[**至少1个有LSN=1000**]
     end
     
-    subgraph "**一致性保证（Vw+Vr>N）**"
+    subgraph "一致性保证（Vw+Vr>N）"
         C1[**读写重叠保证**]
         C2[**强一致性**]
     end
@@ -1469,19 +1469,19 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**写入 Quorum (Vw = 4)**"
+    subgraph "写入 Quorum (Vw = 4)"
         A[**6个副本**]
         B[**至少4个确认**]
         C[**写入成功**]
     end
     
-    subgraph "**读取 Quorum (Vr = 3)**"
+    subgraph "读取 Quorum (Vr = 3)"
         D[**6个副本**]
         E[**至少3个确认**]
         F[**读取成功**]
     end
     
-    subgraph "**一致性保证**"
+    subgraph "一致性保证"
         G[**Vw + Vr > V**]
         H[**4 + 3 > 6 ✓**]
         I[**强一致性**]
@@ -1529,7 +1529,7 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**单副本故障**"
+    subgraph "单副本故障"
         A[**6副本中1个失败**]
         B[**仍有5个可用**]
         C[**写入：4/5 ✓**]
@@ -1537,7 +1537,7 @@ graph TB
         E[**无影响**]
     end
     
-    subgraph "**双副本故障**"
+    subgraph "双副本故障"
         F[**6副本中2个失败**]
         G[**仍有4个可用**]
         H[**写入：4/4 ✓**]
@@ -1545,7 +1545,7 @@ graph TB
         J[**性能略降**]
     end
     
-    subgraph "**AZ级故障**"
+    subgraph "AZ级故障"
         K[**整个AZ不可用**]
         L[**剩余2个AZ**]
         M[**4个副本可用**]
@@ -1592,19 +1592,19 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**主实例故障**"
+    subgraph "主实例故障"
         A[**心跳检测失败**]
         B[**RDS控制平面<br/>确认故障**]
         C[**选择只读副本**]
     end
     
-    subgraph "**故障切换**"
+    subgraph "故障切换"
         D[**提升为新主实例**]
         E[**更新DNS记录**]
         F[**重定向连接**]
     end
     
-    subgraph "**数据一致性**"
+    subgraph "数据一致性"
         G[**检查LSN**]
         H[**应用缺失日志**]
         I[**切换完成**]
@@ -1641,64 +1641,64 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **RDS** as **RDS控制平面**
-    participant **OLD** as **旧主实例<br/>(故障)**
-    participant **RO1** as **只读副本1**
-    participant **RO2** as **只读副本2**
-    participant **ST** as **存储层**
-    participant **DNS** as **DNS服务**
-    participant **APP** as **应用程序**
+    participant RDS as "RDS控制平面"
+    participant OLD as "旧主实例<br/>(故障)"
+    participant RO1 as "只读副本1"
+    participant RO2 as "只读副本2"
+    participant ST as "存储层"
+    participant DNS as "DNS服务"
+    participant APP as "应用程序"
     
-    **RDS**->>**OLD**: **1. 心跳检测失败<br/>(连续3次超时)**
+    RDS->>OLD: **1. 心跳检测失败<br/>(连续3次超时)**
     **OLD**--x**RDS**: **2. 无响应**
     
-    **RDS**->>**RDS**: **3. 确认故障<br/>触发Failover**
+    RDS->>RDS: **3. 确认故障<br/>触发Failover**
     
-    Note over **RDS**: **主实例降级与隔离（Fencing）**
+    Note over RDS: **主实例降级与隔离（Fencing）**
     
-    **RDS**->>**ST**: **4. 禁止旧主写入<br/>设置Write Fence**
-    **ST**->>**ST**: **5. 更新元数据<br/>Master=NULL**
+    RDS->>ST: **4. 禁止旧主写入<br/>设置Write Fence**
+    ST->>ST: **5. 更新元数据<br/>Master=NULL**
     
     par **防止脑裂**
-        **ST**-->>**OLD**: **6a. 拒绝写入请求<br/>WRITE_FENCED错误**
-        **RDS**->>**OLD**: **6b. 发送STONITH<br/>(Shoot The Other Node In The Head)**
+        ST-->>OLD: **6a. 拒绝写入请求<br/>WRITE_FENCED错误**
+        RDS->>OLD: **6b. 发送STONITH<br/>(Shoot The Other Node In The Head)**
     end
     
-    Note over **RDS**,**RO2**: **选举新主实例**
+    Note over RDS,RO2: **选举新主实例**
     
-    **RDS**->>**RO1**: **7. 读取VCL<br/>(Volume Complete LSN)**
-    **RO1**-->>**RDS**: **8. VCL=5000**
+    RDS->>RO1: **7. 读取VCL<br/>(Volume Complete LSN)**
+    RO1-->>RDS: **8. VCL=5000**
     
-    **RDS**->>**RO2**: **9. 读取VCL**
-    **RO2**-->>**RDS**: **10. VCL=4995**
+    RDS->>RO2: **9. 读取VCL**
+    RO2-->>RDS: **10. VCL=4995**
     
-    **RDS**->>**RDS**: **11. 选择VCL最大的副本<br/>RO1 胜出**
+    RDS->>RDS: **11. 选择VCL最大的副本<br/>RO1 胜出**
     
-    Note over **RO1**: **只读副本提升为主**
+    Note over RO1: **只读副本提升为主**
     
-    **RDS**->>**RO1**: **12. 发送Promotion命令**
-    **RO1**->>**ST**: **13. 读取VDL<br/>(Volume Durable LSN)**
-    **ST**-->>**RO1**: **14. VDL=5010**
+    RDS->>RO1: **12. 发送Promotion命令**
+    RO1->>ST: **13. 读取VDL<br/>(Volume Durable LSN)**
+    ST-->>RO1: **14. VDL=5010**
     
-    **RO1**->>**RO1**: **15. 应用缺失的Redo Log<br/>(VCL=5000 → VDL=5010)**
-    **RO1**->>**RO1**: **16. 升级为主实例<br/>设置READ_WRITE模式**
+    RO1->>RO1: **15. 应用缺失的Redo Log<br/>(VCL=5000 → VDL=5010)**
+    RO1->>RO1: **16. 升级为主实例<br/>设置READ_WRITE模式**
     
-    **RO1**->>**ST**: **17. 注册为主实例<br/>更新元数据 Master=RO1**
-    **ST**-->>**RO1**: **18. 确认注册**
+    RO1->>ST: **17. 注册为主实例<br/>更新元数据 Master=RO1**
+    ST-->>RO1: **18. 确认注册**
     
-    **RO1**-->>**RDS**: **19. Promotion完成<br/>新主就绪**
+    RO1-->>RDS: **19. Promotion完成<br/>新主就绪**
     
-    Note over **RDS**,**DNS**: **更新路由**
+    Note over RDS,DNS: **更新路由**
     
-    **RDS**->>**DNS**: **20. 更新Writer端点<br/>指向RO1**
-    **DNS**-->>**RDS**: **21. DNS更新完成**
+    RDS->>DNS: **20. 更新Writer端点<br/>指向RO1**
+    DNS-->>RDS: **21. DNS更新完成**
     
-    **RDS**-->>**APP**: **22. 通知Failover完成**
-    **APP**->>**RO1**: **23. 连接新主实例**
-    **RO1**-->>**APP**: **24. 接受读写请求**
+    RDS-->>APP: **22. 通知Failover完成**
+    APP->>RO1: **23. 连接新主实例**
+    RO1-->>APP: **24. 接受读写请求**
     
     rect rgb(255, 250, 205)
-    Note over **OLD**,**ST**: **关键：通过Write Fence防止旧主继续写入**
+    Note over OLD,ST: **关键：通过Write Fence防止旧主继续写入**
     end
 ```
 
@@ -1706,52 +1706,52 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **RDS** as **RDS控制平面**
-    participant **OLD_M** as **旧主实例**
-    participant **ST** as **存储层**
-    participant **NEW_M** as **新主实例**
-    participant **APP** as **应用程序**
+    participant RDS as "RDS控制平面"
+    participant OLD_M as "旧主实例"
+    participant ST as "存储层"
+    participant NEW_M as "新主实例"
+    participant APP as "应用程序"
     
-    Note over **RDS**: **计划内主从切换场景**
+    Note over RDS: **计划内主从切换场景**
     
-    **RDS**->>**OLD_M**: **1. 发送降级命令<br/>DEMOTE_TO_REPLICA**
+    RDS->>OLD_M: **1. 发送降级命令<br/>DEMOTE_TO_REPLICA**
     
-    **OLD_M**->>**OLD_M**: **2. 停止接受新连接<br/>设置READ_ONLY**
-    **OLD_M**->>**APP**: **3. 断开现有写连接<br/>返回SHUTDOWN错误**
+    OLD_M->>OLD_M: **2. 停止接受新连接<br/>设置READ_ONLY**
+    OLD_M->>APP: **3. 断开现有写连接<br/>返回SHUTDOWN错误**
     
-    **OLD_M**->>**OLD_M**: **4. 等待活跃事务完成<br/>(最多30秒)**
+    OLD_M->>OLD_M: **4. 等待活跃事务完成<br/>(最多30秒)**
     
     loop **等待事务提交**
-        **OLD_M**->>**OLD_M**: **检查活跃事务列表**
+        OLD_M->>OLD_M: **检查活跃事务列表**
         alt **超时30秒**
-            **OLD_M**->>**OLD_M**: **强制回滚未完成事务**
+            OLD_M->>OLD_M: **强制回滚未完成事务**
         end
     end
     
-    **OLD_M**->>**ST**: **5. 刷新所有脏页<br/>确保数据持久化**
-    **ST**-->>**OLD_M**: **6. 确认刷新完成<br/>返回最终VDL**
+    OLD_M->>ST: **5. 刷新所有脏页<br/>确保数据持久化**
+    ST-->>OLD_M: **6. 确认刷新完成<br/>返回最终VDL**
     
-    **OLD_M**->>**OLD_M**: **7. 转换为只读模式<br/>切换角色**
-    **OLD_M**-->>**RDS**: **8. 降级完成<br/>当前状态：READ_REPLICA**
+    OLD_M->>OLD_M: **7. 转换为只读模式<br/>切换角色**
+    OLD_M-->>RDS: **8. 降级完成<br/>当前状态：READ_REPLICA**
     
-    Note over **RDS**,**NEW_M**: **提升新主实例**
+    Note over RDS,NEW_M: **提升新主实例**
     
-    **RDS**->>**NEW_M**: **9. 发送提升命令<br/>PROMOTE_TO_MASTER**
-    **NEW_M**->>**ST**: **10. 注册为主实例**
-    **ST**->>**ST**: **11. 更新元数据<br/>Master=NEW_M**
-    **ST**-->>**NEW_M**: **12. 确认注册**
+    RDS->>NEW_M: **9. 发送提升命令<br/>PROMOTE_TO_MASTER**
+    NEW_M->>ST: **10. 注册为主实例**
+    ST->>ST: **11. 更新元数据<br/>Master=NEW_M**
+    ST-->>NEW_M: **12. 确认注册**
     
-    **NEW_M**->>**NEW_M**: **13. 切换到读写模式<br/>开始接受写入**
-    **NEW_M**-->>**RDS**: **14. 提升完成**
+    NEW_M->>NEW_M: **13. 切换到读写模式<br/>开始接受写入**
+    NEW_M-->>RDS: **14. 提升完成**
     
-    **RDS**->>**RDS**: **15. 更新DNS/VIP<br/>指向新主**
-    **RDS**-->>**APP**: **16. 通知切换完成**
+    RDS->>RDS: **15. 更新DNS/VIP<br/>指向新主**
+    RDS-->>APP: **16. 通知切换完成**
     
-    **APP**->>**NEW_M**: **17. 连接新主实例**
-    **NEW_M**-->>**APP**: **18. 接受读写请求**
+    APP->>NEW_M: **17. 连接新主实例**
+    NEW_M-->>APP: **18. 接受读写请求**
     
     rect rgb(255, 250, 205)
-    Note over **OLD_M**,**NEW_M**: **平滑切换：确保旧主所有事务完成后再切换**
+    Note over OLD_M,NEW_M: **平滑切换：确保旧主所有事务完成后再切换**
     end
 ```
 
@@ -1759,19 +1759,19 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**Fencing 机制**"
+    subgraph "Fencing 机制"
         A[**Write Fence<br/>写入隔离**]
         B[**Storage-Level<br/>Fence<br/>存储层隔离**]
         C[**Metadata Lock<br/>元数据锁**]
     end
     
-    subgraph "**检测机制**"
+    subgraph "检测机制"
         D[**心跳超时检测**]
         E[**VCL/VDL 一致性检查**]
         F[**Master Registration<br/>主实例注册**]
     end
     
-    subgraph "**恢复机制**"
+    subgraph "恢复机制"
         G[**自动Fence旧主**]
         H[**选举新主**]
         I[**更新元数据**]
@@ -1832,40 +1832,40 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **OLD_M** as **旧主实例**
-    participant **PG** as **Protection Group<br/>存储节点**
-    participant **META** as **元数据服务**
-    participant **NEW_M** as **新主实例**
+    participant OLD_M as "旧主实例"
+    participant PG as "Protection Group<br/>存储节点"
+    participant META as "元数据服务"
+    participant NEW_M as "新主实例"
     
-    Note over **OLD_M**,**META**: **假死场景**
+    Note over OLD_M,META: **假死场景**
     
     **OLD_M**-x**META**: **1. 网络分区<br/>无法续约Lease**
-    **META**->>**META**: **2. Lease超时<br/>(10秒)**
+    META->>META: **2. Lease超时<br/>(10秒)**
     
-    **META**->>**PG**: **3. 广播Write Fence<br/>禁止InstanceID=OLD_M写入**
-    **PG**->>**PG**: **4. 更新本地Fence列表<br/>InstanceID=OLD_M → FENCED**
+    META->>PG: **3. 广播Write Fence<br/>禁止InstanceID=OLD_M写入**
+    PG->>PG: **4. 更新本地Fence列表<br/>InstanceID=OLD_M → FENCED**
     
-    Note over **OLD_M**: **旧主尝试写入**
+    Note over OLD_M: **旧主尝试写入**
     
-    **OLD_M**->>**PG**: **5. 写入请求<br/>InstanceID=OLD_M, LSN=1000**
-    **PG**->>**PG**: **6. 检查Fence列表<br/>OLD_M已被隔离**
-    **PG**-->>**OLD_M**: **7. 拒绝写入<br/>错误码：WRITE_FENCED**
+    OLD_M->>PG: **5. 写入请求<br/>InstanceID=OLD_M, LSN=1000**
+    PG->>PG: **6. 检查Fence列表<br/>OLD_M已被隔离**
+    PG-->>OLD_M: **7. 拒绝写入<br/>错误码：WRITE_FENCED**
     
-    **OLD_M**->>**OLD_M**: **8. 检测到Fence<br/>自动降级为只读**
+    OLD_M->>OLD_M: **8. 检测到Fence<br/>自动降级为只读**
     
-    Note over **NEW_M**,**PG**: **新主注册**
+    Note over NEW_M,PG: **新主注册**
     
-    **NEW_M**->>**META**: **9. 注册为主实例<br/>InstanceID=NEW_M**
-    **META**->>**META**: **10. 分配新Generation<br/>Gen=2 (旧Gen=1)**
-    **META**->>**PG**: **11. 广播新主信息<br/>Master=NEW_M, Gen=2**
-    **PG**->>**PG**: **12. 更新主实例信息**
+    NEW_M->>META: **9. 注册为主实例<br/>InstanceID=NEW_M**
+    META->>META: **10. 分配新Generation<br/>Gen=2 (旧Gen=1)**
+    META->>PG: **11. 广播新主信息<br/>Master=NEW_M, Gen=2**
+    PG->>PG: **12. 更新主实例信息**
     
-    **NEW_M**->>**PG**: **13. 写入请求<br/>InstanceID=NEW_M, Gen=2, LSN=1001**
-    **PG**->>**PG**: **14. 验证Generation**
-    **PG**-->>**NEW_M**: **15. 接受写入<br/>成功**
+    NEW_M->>PG: **13. 写入请求<br/>InstanceID=NEW_M, Gen=2, LSN=1001**
+    PG->>PG: **14. 验证Generation**
+    PG-->>NEW_M: **15. 接受写入<br/>成功**
     
     rect rgb(255, 250, 205)
-    Note over **OLD_M**,**PG**: **存储层强制隔离，确保只有新主可以写入**
+    Note over OLD_M,PG: **存储层强制隔离，确保只有新主可以写入**
     end
 ```
 
@@ -1885,26 +1885,26 @@ Aurora 在多个层级存储和维护 LSN，每个层级都有不同的作用：
 
 ```mermaid
 graph TB
-    subgraph "**主实例（Primary Instance）**"
+    subgraph "主实例（Primary Instance）"
         P1[**内存中的LSN<br/>Current LSN（当前生成）**]
         P2[**Redo Log Buffer<br/>最新未提交LSN**]
         P3[**Transaction Manager<br/>每个事务的LSN范围**]
     end
     
-    subgraph "**只读副本（Read Replica）**"
+    subgraph "只读副本（Read Replica）"
         R1[**Buffer Pool中的LSN<br/>已应用的Page LSN**]
         R2[**VCL缓存<br/>Volume Complete LSN**]
         R3[**Recovery LSN<br/>重启恢复点**]
     end
     
-    subgraph "**存储层（Storage Layer）- 每个PG**"
+    subgraph "存储层（Storage Layer）- 每个PG"
         S1[**VDL<br/>Volume Durable LSN<br/>持久化的LSN**]
         S2[**VCL<br/>Volume Complete LSN<br/>完整的LSN（无gap）**]
         S3[**Page Header<br/>每个Page的LSN**]
         S4[**Redo Log Store<br/>日志条目的LSN**]
     end
     
-    subgraph "**元数据服务（Metadata Service）**"
+    subgraph "元数据服务（Metadata Service）"
         M1[**Volume Registry<br/>每个Volume的最新LSN**]
         M2[**Checkpoint LSN<br/>已检查点的LSN**]
         M3[**Backup LSN<br/>已备份到S3的LSN**]
@@ -1964,42 +1964,42 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **RDS** as **RDS控制平面**
-    participant **RO1** as **只读副本1**
-    participant **RO2** as **只读副本2**
-    participant **RO3** as **只读副本3**
-    participant **ST** as **存储层**
+    participant RDS as "RDS控制平面"
+    participant RO1 as "只读副本1"
+    participant RO2 as "只读副本2"
+    participant RO3 as "只读副本3"
+    participant ST as "存储层"
     
-    Note over **RDS**: **主实例故障，开始选举**
+    Note over RDS: **主实例故障，开始选举**
     
     par **并行查询所有副本的LSN**
-        **RDS**->>**RO1**: **查询Applied LSN**
-        **RDS**->>**RO2**: **查询Applied LSN**
-        **RDS**->>**RO3**: **查询Applied LSN**
+        RDS->>RO1: **查询Applied LSN**
+        RDS->>RO2: **查询Applied LSN**
+        RDS->>RO3: **查询Applied LSN**
     end
     
-    **RO1**-->>**RDS**: **Applied LSN=5000**
-    **RO2**-->>**RDS**: **Applied LSN=4998**
-    **RO3**-->>**RDS**: **Applied LSN=5001 ✓最新**
+    RO1-->>RDS: **Applied LSN=5000**
+    RO2-->>RDS: **Applied LSN=4998**
+    RO3-->>RDS: **Applied LSN=5001 ✓最新**
     
-    **RDS**->>**RDS**: **选择RO3（LSN最大）**
+    RDS->>RDS: **选择RO3（LSN最大）**
     
-    **RDS**->>**ST**: **查询存储层VDL**
-    **ST**-->>**RDS**: **VDL=5010<br/>（还有9条日志未应用）**
+    RDS->>ST: **查询存储层VDL**
+    ST-->>RDS: **VDL=5010<br/>（还有9条日志未应用）**
     
-    **RDS**->>**RO3**: **提升为主实例**
+    RDS->>RO3: **提升为主实例**
     
-    **RO3**->>**ST**: **读取LSN 5002-5010的Redo**
-    **ST**-->>**RO3**: **返回缺失的Redo日志**
+    RO3->>ST: **读取LSN 5002-5010的Redo**
+    ST-->>RO3: **返回缺失的Redo日志**
     
-    **RO3**->>**RO3**: **应用Redo日志<br/>Applied LSN: 5001 → 5010**
+    RO3->>RO3: **应用Redo日志<br/>Applied LSN: 5001 → 5010**
     
-    **RO3**->>**RO3**: **确认所有日志已应用<br/>Applied LSN = VDL = 5010**
+    RO3->>RO3: **确认所有日志已应用<br/>Applied LSN = VDL = 5010**
     
-    **RO3**->>**ST**: **注册为主实例<br/>开始生成新LSN（5011+）**
+    RO3->>ST: **注册为主实例<br/>开始生成新LSN（5011+）**
     
     rect rgb(255, 250, 205)
-    Note over **RDS**,**ST**: **关键：选择Applied LSN最大的副本，减少恢复时间**
+    Note over RDS,ST: **关键：选择Applied LSN最大的副本，减少恢复时间**
     end
 ```
 
@@ -2014,41 +2014,41 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **RO** as **只读副本<br/>（重启中）**
-    participant **Local** as **本地存储<br/>控制文件**
-    participant **ST** as **存储层**
-    participant **BufPool** as **Buffer Pool**
+    participant RO as "只读副本<br/>（重启中）"
+    participant Local as "本地存储<br/>控制文件"
+    participant ST as "存储层"
+    participant BufPool as "Buffer Pool"
     
-    Note over **RO**: **只读副本启动**
+    Note over RO: **只读副本启动**
     
-    **RO**->>**Local**: **1. 读取本地控制文件**
-    **Local**-->>**RO**: **2. Recovery LSN=4500<br/>上次Checkpoint点**
+    RO->>Local: **1. 读取本地控制文件**
+    Local-->>RO: **2. Recovery LSN=4500<br/>上次Checkpoint点**
     
-    **RO**->>**ST**: **3. 查询存储层VDL**
-    **ST**-->>**RO**: **4. VDL=5000<br/>（当前最新LSN）**
+    RO->>ST: **3. 查询存储层VDL**
+    ST-->>RO: **4. VDL=5000<br/>（当前最新LSN）**
     
-    **RO**->>**RO**: **5. 计算恢复范围<br/>LSN 4500-5000（500条日志）**
+    RO->>RO: **5. 计算恢复范围<br/>LSN 4500-5000（500条日志）**
     
     alt **恢复范围小（< 1000条）**
-        **RO**->>**ST**: **6a. 顺序读取Redo<br/>LSN 4500-5000**
-        **ST**-->>**RO**: **7a. 返回Redo日志**
-        **RO**->>**BufPool**: **8a. 应用Redo到Buffer Pool**
-        **RO**->>**RO**: **9a. 快速恢复完成<br/>Applied LSN=5000**
+        RO->>ST: **6a. 顺序读取Redo<br/>LSN 4500-5000**
+        ST-->>RO: **7a. 返回Redo日志**
+        RO->>BufPool: **8a. 应用Redo到Buffer Pool**
+        RO->>RO: **9a. 快速恢复完成<br/>Applied LSN=5000**
     else **恢复范围大（>= 1000条）**
-        **RO**->>**ST**: **6b. 请求最新Checkpoint快照<br/>（LSN=4800）**
-        **ST**-->>**RO**: **7b. 返回快照数据**
-        **RO**->>**BufPool**: **8b. 加载快照**
-        **RO**->>**ST**: **9b. 读取增量Redo<br/>LSN 4800-5000**
-        **ST**-->>**RO**: **10b. 返回增量Redo**
-        **RO**->>**BufPool**: **11b. 应用增量Redo**
-        **RO**->>**RO**: **12b. 恢复完成<br/>Applied LSN=5000**
+        RO->>ST: **6b. 请求最新Checkpoint快照<br/>（LSN=4800）**
+        ST-->>RO: **7b. 返回快照数据**
+        RO->>BufPool: **8b. 加载快照**
+        RO->>ST: **9b. 读取增量Redo<br/>LSN 4800-5000**
+        ST-->>RO: **10b. 返回增量Redo**
+        RO->>BufPool: **11b. 应用增量Redo**
+        RO->>RO: **12b. 恢复完成<br/>Applied LSN=5000**
     end
     
-    **RO**->>**Local**: **13. 更新控制文件<br/>Recovery LSN=5000**
-    **RO**->>**RO**: **14. 启动完成，开始接受查询**
+    RO->>Local: **13. 更新控制文件<br/>Recovery LSN=5000**
+    RO->>RO: **14. 启动完成，开始接受查询**
     
     rect rgb(255, 250, 205)
-    Note over **RO**,**ST**: **智能恢复：根据缺失日志量选择恢复策略**
+    Note over RO,ST: **智能恢复：根据缺失日志量选择恢复策略**
     end
 ```
 
@@ -2073,26 +2073,26 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**LSN落后检测**"
+    subgraph "LSN落后检测"
         A[**Gossip协议<br/>交换VCL**]
         B[**发现节点LSN落后<br/>Gap > 1000**]
         C[**计算落后量<br/>VCL_max - VCL_local**]
     end
     
-    subgraph "**轻微落后（Gap < 10000）**"
+    subgraph "轻微落后（Gap < 10000）"
         D1[**从对等节点<br/>拉取缺失Redo**]
         D2[**后台异步应用**]
         D3[**逐步追赶**]
     end
     
-    subgraph "**严重落后（Gap >= 10000）**"
+    subgraph "严重落后（Gap >= 10000）"
         E1[**标记节点为<br/>LAGGING状态**]
         E2[**从最快节点<br/>批量拉取Redo**]
         E3[**暂停接受新写入<br/>专注恢复**]
         E4[**追赶完成后<br/>恢复ACTIVE状态**]
     end
     
-    subgraph "**极端落后（Gap > 100000）**"
+    subgraph "极端落后（Gap > 100000）"
         F1[**触发Segment Repair**]
         F2[**从健康副本<br/>完整复制PG**]
         F3[**替换落后数据**]
@@ -2148,43 +2148,43 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **Replica** as **只读副本<br/>（落后）**
-    participant **ST** as **存储层**
-    participant **Mon** as **监控服务**
+    participant Primary as "主实例"
+    participant Replica as "只读副本<br/>（落后）"
+    participant ST as "存储层"
+    participant Mon as "监控服务"
     
-    Note over **Replica**: **只读副本运行中**
+    Note over Replica: **只读副本运行中**
     
-    **Replica**->>**ST**: **1. 查询VDL**
-    **ST**-->>**Replica**: **2. VDL=10000**
+    Replica->>ST: **1. 查询VDL**
+    ST-->>Replica: **2. VDL=10000**
     
-    **Replica**->>**Replica**: **3. 检查本地Applied LSN=9000<br/>Gap=1000**
+    Replica->>Replica: **3. 检查本地Applied LSN=9000<br/>Gap=1000**
     
     alt **Gap < 5000（正常范围）**
-        **Replica**->>**ST**: **4a. 拉取Redo LSN 9000-10000**
-        **ST**-->>**Replica**: **5a. 返回Redo**
-        **Replica**->>**Replica**: **6a. 后台应用Redo**
+        Replica->>ST: **4a. 拉取Redo LSN 9000-10000**
+        ST-->>Replica: **5a. 返回Redo**
+        Replica->>Replica: **6a. 后台应用Redo**
     else **Gap >= 5000（落后明显）**
-        **Replica**->>**Mon**: **4b. 上报落后状态<br/>REPLICATION_LAG=5000**
-        **Mon**-->>**Mon**: **5b. 触发告警**
+        Replica->>Mon: **4b. 上报落后状态<br/>REPLICATION_LAG=5000**
+        Mon-->>Mon: **5b. 触发告警**
         
-        **Replica**->>**Replica**: **6b. 检查CPU/网络<br/>是否瓶颈**
+        Replica->>Replica: **6b. 检查CPU/网络<br/>是否瓶颈**
         
         alt **资源瓶颈**
-            **Replica**->>**Mon**: **7b1. 上报资源不足**
-            **Mon**->>**Replica**: **8b1. 建议升级实例类型**
+            Replica->>Mon: **7b1. 上报资源不足**
+            Mon->>Replica: **8b1. 建议升级实例类型**
         else **无瓶颈，单纯落后**
-            **Replica**->>**ST**: **7b2. 批量拉取Redo<br/>更大batch size**
-            **ST**-->>**Replica**: **8b2. 返回批量Redo**
-            **Replica**->>**Replica**: **9b2. 加速应用<br/>暂停查询服务**
-            **Replica**->>**Replica**: **10b2. 追赶完成<br/>恢复查询服务**
+            Replica->>ST: **7b2. 批量拉取Redo<br/>更大batch size**
+            ST-->>Replica: **8b2. 返回批量Redo**
+            Replica->>Replica: **9b2. 加速应用<br/>暂停查询服务**
+            Replica->>Replica: **10b2. 追赶完成<br/>恢复查询服务**
         end
     end
     
-    **Replica**->>**Mon**: **11. 上报当前Lag=0<br/>恢复正常**
+    Replica->>Mon: **11. 上报当前Lag=0<br/>恢复正常**
     
     rect rgb(255, 250, 205)
-    Note over **Replica**,**Mon**: **Replica Lag监控：超过阈值触发告警或自动恢复**
+    Note over Replica,Mon: **Replica Lag监控：超过阈值触发告警或自动恢复**
     end
 ```
 
@@ -2206,19 +2206,19 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**升主时的LSN状态**"
+    subgraph "升主时的LSN状态"
         A[**Applied LSN=5001<br/>已应用到Buffer Pool**]
         B[**VDL=5010<br/>存储层持久化LSN**]
         C[**Checkpoint LSN=4500<br/>上次Checkpoint点**]
     end
     
-    subgraph "**立即操作（升主时）**"
+    subgraph "立即操作（升主时）"
         D1[**应用LSN 5001-5010<br/>到Applied LSN=VDL**]
         D2[**切换为主实例<br/>开始生成新LSN**]
         D3[**立即可接受写入<br/>从LSN 5011开始**]
     end
     
-    subgraph "**后台操作（升主后）**"
+    subgraph "后台操作（升主后）"
         E1[**触发增量Checkpoint<br/>从LSN 4500开始**]
         E2[**遍历Buffer Pool<br/>找到dirty pages**]
         E3[**将dirty pages<br/>持久化到存储层**]
@@ -2295,28 +2295,28 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **ST** as **存储节点**
-    participant **META** as **元数据服务**
+    participant Primary as "主实例"
+    participant ST as "存储节点"
+    participant META as "元数据服务"
     
-    Note over **Primary**: **主实例写入Redo**
+    Note over Primary: **主实例写入Redo**
     
-    **Primary**->>**Primary**: **1. 生成Redo Log<br/>包含事务数据**
+    Primary->>Primary: **1. 生成Redo Log<br/>包含事务数据**
     
-    **Primary**->>**Primary**: **2. 构造写入请求<br/>Request {<br/>  InstanceID: "db-primary-1"<br/>  Generation: 5<br/>  LSN: 1000<br/>  RedoData: ...<br/>}**
+    Primary->>Primary: **2. 构造写入请求<br/>Request {<br/>  InstanceID: "db-primary-1"<br/>  Generation: 5<br/>  LSN: 1000<br/>  RedoData: ...<br/>}**
     
-    **Primary**->>**ST**: **3. 发送写入请求<br/>（携带InstanceID+Generation）**
+    Primary->>ST: **3. 发送写入请求<br/>（携带InstanceID+Generation）**
     
-    **ST**->>**META**: **4. 查询当前注册的主实例**
-    **META**-->>**ST**: **5. 返回：<br/>Master=db-primary-1<br/>Generation=5**
+    ST->>META: **4. 查询当前注册的主实例**
+    META-->>ST: **5. 返回：<br/>Master=db-primary-1<br/>Generation=5**
     
-    **ST**->>**ST**: **6. 验证请求：<br/>InstanceID匹配？✓<br/>Generation匹配？✓**
+    ST->>ST: **6. 验证请求：<br/>InstanceID匹配？✓<br/>Generation匹配？✓**
     
-    **ST**->>**ST**: **7. 执行写入<br/>持久化Redo**
-    **ST**-->>**Primary**: **8. 返回ACK**
+    ST->>ST: **7. 执行写入<br/>持久化Redo**
+    ST-->>Primary: **8. 返回ACK**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**META**: **每个写入请求都携带InstanceID和Generation双重验证**
+    Note over Primary,META: **每个写入请求都携带InstanceID和Generation双重验证**
     end
 ```
 
@@ -2337,65 +2337,65 @@ class WriteRequest:
 
 ```mermaid
 sequenceDiagram
-    participant **OLD_M** as **旧主实例<br/>db-primary-1**
-    participant **ST** as **存储节点**
-    participant **META** as **元数据服务**
-    participant **NEW_M** as **新主实例<br/>db-replica-1**
+    participant OLD_M as "旧主实例<br/>db-primary-1"
+    participant ST as "存储节点"
+    participant META as "元数据服务"
+    participant NEW_M as "新主实例<br/>db-replica-1"
     
-    Note over **OLD_M**,**META**: **1. 旧主故障被检测**
+    Note over OLD_M,META: **1. 旧主故障被检测**
     
-    **META**->>**META**: **Failover触发<br/>Generation: 5 → 6**
+    META->>META: **Failover触发<br/>Generation: 5 → 6**
     
-    **META**->>**ST**: **2. 广播Fence命令<br/>FENCE_MASTER {<br/>  InstanceID: "db-primary-1"<br/>  Generation: 5<br/>}**
+    META->>ST: **2. 广播Fence命令<br/>FENCE_MASTER {<br/>  InstanceID: "db-primary-1"<br/>  Generation: 5<br/>}**
     
-    **ST**->>**ST**: **3. 更新Fence列表<br/>禁止 db-primary-1(Gen=5) 写入**
-    **ST**->>**ST**: **4. 清除主实例注册<br/>Master = NULL**
+    ST->>ST: **3. 更新Fence列表<br/>禁止 db-primary-1(Gen=5) 写入**
+    ST->>ST: **4. 清除主实例注册<br/>Master = NULL**
     
-    Note over **OLD_M**: **旧主尝试写入（如果网络恢复）**
+    Note over OLD_M: **旧主尝试写入（如果网络恢复）**
     
-    **OLD_M**->>**ST**: **5. 写入请求<br/>InstanceID=db-primary-1<br/>Generation=5<br/>LSN=1000**
+    OLD_M->>ST: **5. 写入请求<br/>InstanceID=db-primary-1<br/>Generation=5<br/>LSN=1000**
     
-    **ST**->>**ST**: **6. 检查Fence列表<br/>db-primary-1(Gen=5) 已被Fence**
-    **ST**-->>**OLD_M**: **7. 拒绝写入<br/>错误：WRITE_FENCED<br/>原因：Master已切换**
+    ST->>ST: **6. 检查Fence列表<br/>db-primary-1(Gen=5) 已被Fence**
+    ST-->>OLD_M: **7. 拒绝写入<br/>错误：WRITE_FENCED<br/>原因：Master已切换**
     
-    **OLD_M**->>**OLD_M**: **8. 检测到Fence<br/>自动降级为只读**
+    OLD_M->>OLD_M: **8. 检测到Fence<br/>自动降级为只读**
     
-    Note over **NEW_M**,**ST**: **2. 新主提升和LSN推进**
+    Note over NEW_M,ST: **2. 新主提升和LSN推进**
     
-    **NEW_M**->>**ST**: **9. 查询VDL**
-    **ST**-->>**NEW_M**: **10. VDL=1010**
+    NEW_M->>ST: **9. 查询VDL**
+    ST-->>NEW_M: **10. VDL=1010**
     
-    **NEW_M**->>**NEW_M**: **11. 本地Applied LSN=1005<br/>需要应用 LSN 1006-1010**
+    NEW_M->>NEW_M: **11. 本地Applied LSN=1005<br/>需要应用 LSN 1006-1010**
     
-    **NEW_M**->>**ST**: **12. 拉取Redo LSN 1006-1010**
-    **ST**-->>**NEW_M**: **13. 返回缺失的Redo**
+    NEW_M->>ST: **12. 拉取Redo LSN 1006-1010**
+    ST-->>NEW_M: **13. 返回缺失的Redo**
     
-    **NEW_M**->>**NEW_M**: **14. 应用Redo到Buffer Pool<br/>Applied LSN: 1005 → 1010**
+    NEW_M->>NEW_M: **14. 应用Redo到Buffer Pool<br/>Applied LSN: 1005 → 1010**
     
-    **NEW_M**->>**NEW_M**: **15. 确认无gap<br/>Applied LSN = VDL = 1010**
+    NEW_M->>NEW_M: **15. 确认无gap<br/>Applied LSN = VDL = 1010**
     
-    Note over **NEW_M**,**META**: **3. 新主注册**
+    Note over NEW_M,META: **3. 新主注册**
     
-    **NEW_M**->>**META**: **16. 注册为主实例<br/>REGISTER_MASTER {<br/>  InstanceID: "db-replica-1"<br/>  Generation: 6<br/>  CurrentLSN: 1010<br/>}**
+    NEW_M->>META: **16. 注册为主实例<br/>REGISTER_MASTER {<br/>  InstanceID: "db-replica-1"<br/>  Generation: 6<br/>  CurrentLSN: 1010<br/>}**
     
-    **META**->>**META**: **17. 验证并记录<br/>Master = db-replica-1<br/>Generation = 6**
+    META->>META: **17. 验证并记录<br/>Master = db-replica-1<br/>Generation = 6**
     
-    **META**->>**ST**: **18. 广播新主信息<br/>NEW_MASTER {<br/>  InstanceID: "db-replica-1"<br/>  Generation: 6<br/>}**
+    META->>ST: **18. 广播新主信息<br/>NEW_MASTER {<br/>  InstanceID: "db-replica-1"<br/>  Generation: 6<br/>}**
     
-    **ST**->>**ST**: **19. 更新主实例注册<br/>Master = db-replica-1(Gen=6)**
-    **ST**->>**ST**: **20. 移除旧Fence<br/>（db-primary-1已无效）**
+    ST->>ST: **19. 更新主实例注册<br/>Master = db-replica-1(Gen=6)**
+    ST->>ST: **20. 移除旧Fence<br/>（db-primary-1已无效）**
     
-    Note over **NEW_M**,**ST**: **4. 新主开始写入**
+    Note over NEW_M,ST: **4. 新主开始写入**
     
-    **NEW_M**->>**ST**: **21. 写入新事务<br/>InstanceID=db-replica-1<br/>Generation=6<br/>LSN=1011**
+    NEW_M->>ST: **21. 写入新事务<br/>InstanceID=db-replica-1<br/>Generation=6<br/>LSN=1011**
     
-    **ST**->>**ST**: **22. 验证：<br/>Master=db-replica-1 ✓<br/>Generation=6 ✓**
+    ST->>ST: **22. 验证：<br/>Master=db-replica-1 ✓<br/>Generation=6 ✓**
     
-    **ST**->>**ST**: **23. 执行写入<br/>VDL: 1010 → 1011**
-    **ST**-->>**NEW_M**: **24. ACK**
+    ST->>ST: **23. 执行写入<br/>VDL: 1010 → 1011**
+    ST-->>NEW_M: **24. ACK**
     
     rect rgb(255, 250, 205)
-    Note over **OLD_M**,**NEW_M**: **禁写→推进LSN→注册→开始写入，确保LSN连续性**
+    Note over OLD_M,NEW_M: **禁写→推进LSN→注册→开始写入，确保LSN连续性**
     end
 ```
 
@@ -2414,7 +2414,7 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    subgraph "**LSN时间轴**"
+    subgraph "LSN时间轴"
         A[**Checkpoint LSN<br/>950**]
         B[**Applied LSN<br/>1010**]
         C[**VDL<br/>1010**]
@@ -2493,14 +2493,14 @@ def background_checkpoint():
 
 ```mermaid
 graph TB
-    subgraph "**如果不刷脏页的问题**"
+    subgraph "如果不刷脏页的问题"
         A1[**旧主降级<br/>Buffer Pool有脏页**]
         A2[**新主提升<br/>开始写入**]
         A3[**旧主的脏页<br/>未持久化**]
         A4[**数据不一致<br/>旧主修改丢失**]
     end
     
-    subgraph "**刷脏页后的保证**"
+    subgraph "刷脏页后的保证"
         B1[**旧主刷新脏页<br/>确保持久化**]
         B2[**存储层VDL更新<br/>包含所有修改**]
         B3[**新主提升<br/>读取最新VDL**]
@@ -2561,42 +2561,42 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **OLD_M** as **旧主实例**
-    participant **BP** as **Buffer Pool**
-    participant **ST** as **存储层**
-    participant **APP** as **Log Applicator<br/>（存储层）**
+    participant OLD_M as "旧主实例"
+    participant BP as "Buffer Pool"
+    participant ST as "存储层"
+    participant APP as "Log Applicator<br/>（存储层）"
     
-    Note over **OLD_M**: **收到降级命令**
+    Note over OLD_M: **收到降级命令**
     
-    **OLD_M**->>**OLD_M**: **1. 停止接受新连接<br/>设置READ_ONLY**
-    **OLD_M**->>**OLD_M**: **2. 等待活跃事务完成<br/>（最多30秒）**
+    OLD_M->>OLD_M: **1. 停止接受新连接<br/>设置READ_ONLY**
+    OLD_M->>OLD_M: **2. 等待活跃事务完成<br/>（最多30秒）**
     
-    **OLD_M**->>**BP**: **3. 遍历Buffer Pool<br/>找到所有dirty pages**
-    **BP**-->>**OLD_M**: **4. 返回dirty page列表<br/>（例如：100个pages）**
+    OLD_M->>BP: **3. 遍历Buffer Pool<br/>找到所有dirty pages**
+    BP-->>OLD_M: **4. 返回dirty page列表<br/>（例如：100个pages）**
     
-    **OLD_M**->>**OLD_M**: **5. 生成Flush请求<br/>包含所有dirty pages的LSN范围**
+    OLD_M->>OLD_M: **5. 生成Flush请求<br/>包含所有dirty pages的LSN范围**
     
-    **OLD_M**->>**ST**: **6. 发送Flush命令<br/>FLUSH_ALL_DIRTY {<br/>  LSN_Range: [950-1010]<br/>  Force: true<br/>  Timeout: 30s<br/>}**
+    OLD_M->>ST: **6. 发送Flush命令<br/>FLUSH_ALL_DIRTY {<br/>  LSN_Range: [950-1010]<br/>  Force: true<br/>  Timeout: 30s<br/>}**
     
-    **ST**->>**APP**: **7. 触发强制物化<br/>优先级：最高**
+    ST->>APP: **7. 触发强制物化<br/>优先级：最高**
     
     loop **物化所有pending Redo**
-        **APP**->>**APP**: **8. 应用LSN 950-1010的Redo到数据页**
-        **APP**->>**ST**: **9. 将物化后的页面持久化**
+        APP->>APP: **8. 应用LSN 950-1010的Redo到数据页**
+        APP->>ST: **9. 将物化后的页面持久化**
     end
     
-    **APP**->>**ST**: **10. 所有Redo已应用<br/>VCL推进到1010**
-    **ST**->>**ST**: **11. 确认VCL = VDL = 1010<br/>（无gap）**
+    APP->>ST: **10. 所有Redo已应用<br/>VCL推进到1010**
+    ST->>ST: **11. 确认VCL = VDL = 1010<br/>（无gap）**
     
-    **ST**-->>**OLD_M**: **12. 返回Flush完成<br/>Final_VDL = 1010**
+    ST-->>OLD_M: **12. 返回Flush完成<br/>Final_VDL = 1010**
     
-    **OLD_M**->>**OLD_M**: **13. 清空Buffer Pool<br/>释放资源**
-    **OLD_M**->>**OLD_M**: **14. 切换为只读模式**
+    OLD_M->>OLD_M: **13. 清空Buffer Pool<br/>释放资源**
+    OLD_M->>OLD_M: **14. 切换为只读模式**
     
-    **OLD_M**-->>**OLD_M**: **15. 降级完成<br/>可以安全提升新主**
+    OLD_M-->>OLD_M: **15. 降级完成<br/>可以安全提升新主**
     
     rect rgb(255, 250, 205)
-    Note over **OLD_M**,**APP**: **关键：确保所有脏页持久化后再切换，避免数据丢失**
+    Note over OLD_M,APP: **关键：确保所有脏页持久化后再切换，避免数据丢失**
     end
 ```
 
@@ -2678,7 +2678,7 @@ def demotion_flush():
 
 ```mermaid
 graph TB
-    subgraph "**Aurora Serverless v2 架构**"
+    subgraph "Aurora Serverless v2 架构"
         A[**客户端连接**]
         B[**代理层 Proxy**]
         C[**ACU 资源池**]
@@ -2686,7 +2686,7 @@ graph TB
         E[**Aurora 存储**]
     end
     
-    subgraph "**自动伸缩**"
+    subgraph "自动伸缩"
         F[**监控负载**]
         G[**ACU 0.5-128**]
         H[**毫秒级调整**]
@@ -2726,20 +2726,20 @@ Aurora 通过 **LSN-Timestamp Mapping** 机制实现精确的时间点恢复。L
 
 ```mermaid
 graph TB
-    subgraph "**LSN-Timestamp 映射表**"
+    subgraph "LSN-Timestamp 映射表"
         A[**LSN: 1000<br/>Timestamp: 2025-01-01 10:00:00**]
         B[**LSN: 2000<br/>Timestamp: 2025-01-01 10:00:05**]
         C[**LSN: 3000<br/>Timestamp: 2025-01-01 10:00:10**]
         D[**LSN: N<br/>Timestamp: T**]
     end
     
-    subgraph "**映射构建**"
+    subgraph "映射构建"
         E[**每秒记录一次**]
         F[**每1000个事务记录一次**]
         G[**Checkpoint时记录**]
     end
     
-    subgraph "**映射存储**"
+    subgraph "映射存储"
         H[**内存哈希表**]
         I[**持久化到S3**]
         J[**元数据服务**]
@@ -2784,19 +2784,19 @@ LSN-Timestamp Mapping Entry:
 
 ```mermaid
 graph TB
-    subgraph "**持续备份层**"
+    subgraph "持续备份层"
         A[**Redo Log Stream<br/>日志流**]
         B[**Snapshot Service<br/>快照服务**]
         C[**Archive Service<br/>归档服务**]
     end
     
-    subgraph "**存储层 - S3**"
+    subgraph "存储层 - S3"
         D[**Full Snapshots<br/>全量快照**]
         E[**Incremental Logs<br/>增量日志**]
         F[**LSN-Time Index<br/>LSN-时间索引**]
     end
     
-    subgraph "**恢复服务**"
+    subgraph "恢复服务"
         G[**Recovery Coordinator<br/>恢复协调器**]
         H[**Log Replay Engine<br/>日志重放引擎**]
         I[**Validation Service<br/>验证服务**]
@@ -2831,47 +2831,47 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **USER** as **用户**
-    participant **RDS** as **RDS控制平面**
-    participant **IDX** as **LSN-Time索引**
-    participant **S3** as **S3存储**
-    participant **NEW** as **新实例**
-    participant **VAL** as **验证服务**
+    participant USER as "用户"
+    participant RDS as "RDS控制平面"
+    participant IDX as "LSN-Time索引"
+    participant S3 as "S3存储"
+    participant NEW as "新实例"
+    participant VAL as "验证服务"
     
-    **USER**->>**RDS**: **1. 请求PITR恢复<br/>目标时间: 2025-01-01 10:05:30**
+    USER->>RDS: **1. 请求PITR恢复<br/>目标时间: 2025-01-01 10:05:30**
     
-    **RDS**->>**IDX**: **2. 查询时间到LSN映射<br/>Target Time**
-    **IDX**->>**IDX**: **3. 二分查找索引<br/>找到最接近的LSN**
-    **IDX**-->>**RDS**: **4. 返回 Target LSN=2500<br/>前一个快照LSN=2000**
+    RDS->>IDX: **2. 查询时间到LSN映射<br/>Target Time**
+    IDX->>IDX: **3. 二分查找索引<br/>找到最接近的LSN**
+    IDX-->>RDS: **4. 返回 Target LSN=2500<br/>前一个快照LSN=2000**
     
-    **RDS**->>**S3**: **5. 读取基准快照<br/>Snapshot at LSN=2000**
-    **S3**-->>**RDS**: **6. 返回快照数据**
+    RDS->>S3: **5. 读取基准快照<br/>Snapshot at LSN=2000**
+    S3-->>RDS: **6. 返回快照数据**
     
-    **RDS**->>**NEW**: **7. 创建新实例<br/>加载基准快照**
-    **NEW**->>**NEW**: **8. 恢复快照到存储层**
+    RDS->>NEW: **7. 创建新实例<br/>加载基准快照**
+    NEW->>NEW: **8. 恢复快照到存储层**
     
-    **NEW**->>**S3**: **9. 读取增量Redo Log<br/>LSN: 2001-2500**
-    **S3**-->>**NEW**: **10. 返回Redo Log流**
+    NEW->>S3: **9. 读取增量Redo Log<br/>LSN: 2001-2500**
+    S3-->>NEW: **10. 返回Redo Log流**
     
     loop **逐条应用日志**
-        **NEW**->>**NEW**: **11. 应用Redo Log<br/>检查LSN和Timestamp**
+        NEW->>NEW: **11. 应用Redo Log<br/>检查LSN和Timestamp**
         
         alt **LSN ≤ Target LSN && Time ≤ Target Time**
-            **NEW**->>**NEW**: **12a. 应用该日志**
+            NEW->>NEW: **12a. 应用该日志**
         else **超过目标时间点**
-            **NEW**->>**NEW**: **12b. 停止应用<br/>PITR完成**
+            NEW->>NEW: **12b. 停止应用<br/>PITR完成**
         end
     end
     
-    **NEW**->>**VAL**: **13. 请求一致性验证**
-    **VAL**->>**VAL**: **14. 检查数据完整性<br/>验证事务一致性**
-    **VAL**-->>**NEW**: **15. 验证通过**
+    NEW->>VAL: **13. 请求一致性验证**
+    VAL->>VAL: **14. 检查数据完整性<br/>验证事务一致性**
+    VAL-->>NEW: **15. 验证通过**
     
-    **NEW**-->>**RDS**: **16. 实例就绪<br/>恢复完成**
-    **RDS**-->>**USER**: **17. 通知恢复成功<br/>新实例端点**
+    NEW-->>RDS: **16. 实例就绪<br/>恢复完成**
+    RDS-->>USER: **17. 通知恢复成功<br/>新实例端点**
     
     rect rgb(255, 250, 205)
-    Note over **IDX**,**NEW**: **关键：通过LSN-Time索引快速定位恢复点**
+    Note over IDX,NEW: **关键：通过LSN-Time索引快速定位恢复点**
     end
 ```
 
@@ -2923,14 +2923,14 @@ sequenceDiagram
 
 ```mermaid
 graph TD
-    subgraph "**持续备份（每5分钟）**"
+    subgraph "持续备份（每5分钟）"
         A[**T0: Snapshot LSN=0**]
         B[**T1: Redo Logs LSN=0-1000**]
         C[**T2: Redo Logs LSN=1000-2000**]
         D[**T3: Snapshot LSN=2000**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         E[**选择时间点 T2.5**]
         F[**定位快照 T0 LSN=0**]
         G[**应用日志 LSN=0-1500**]
@@ -2996,14 +2996,14 @@ graph TD
 
 ```mermaid
 graph TB
-    subgraph "**方案1：原生Binlog（不推荐）**"
+    subgraph "方案1：原生Binlog（不推荐）"
         A[**主实例**]
         B[**开启 Binlog**]
         C[**写入本地存储**]
         D[**性能下降20%**]
     end
     
-    subgraph "**方案2：AWS DMS（推荐）**"
+    subgraph "方案2：AWS DMS（推荐）"
         E[**Aurora主实例**]
         F[**DMS复制实例**]
         G[**CDC捕获变更**]
@@ -3032,20 +3032,20 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**数据源（Aurora）**"
+    subgraph "数据源（Aurora）"
         A[**Aurora MySQL<br/>主实例**]
         B[**Aurora 存储层**]
         C[**Redo Log**]
     end
     
-    subgraph "**DMS 复制实例**"
+    subgraph "DMS 复制实例"
         D[**源端点<br/>Source Endpoint**]
         E[**CDC 引擎<br/>Change Data Capture**]
         F[**转换引擎<br/>Transformation**]
         G[**目标端点<br/>Target Endpoint**]
     end
     
-    subgraph "**目标系统**"
+    subgraph "目标系统"
         H[**RDS/Aurora**]
         I[**Redshift**]
         J[**S3**]
@@ -3085,36 +3085,36 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **APP** as **应用程序**
-    participant **AUR** as **Aurora主实例**
-    participant **ST** as **存储层**
-    participant **DMS** as **DMS复制实例**
-    participant **TGT** as **目标系统**
+    participant APP as "应用程序"
+    participant AUR as "Aurora主实例"
+    participant ST as "存储层"
+    participant DMS as "DMS复制实例"
+    participant TGT as "目标系统"
     
-    **APP**->>**AUR**: **1. 执行 DML 操作**
-    **AUR**->>**ST**: **2. 写入 Redo Log**
-    **ST**-->>**AUR**: **3. 确认持久化**
-    **AUR**-->>**APP**: **4. 返回成功**
+    APP->>AUR: **1. 执行 DML 操作**
+    AUR->>ST: **2. 写入 Redo Log**
+    ST-->>AUR: **3. 确认持久化**
+    AUR-->>APP: **4. 返回成功**
     
-    Note over **DMS**: **CDC 异步捕获流程**
+    Note over DMS: **CDC 异步捕获流程**
     
-    **DMS**->>**AUR**: **5. 读取表结构元数据**
-    **AUR**-->>**DMS**: **6. 返回表结构**
+    DMS->>AUR: **5. 读取表结构元数据**
+    AUR-->>DMS: **6. 返回表结构**
     
-    **DMS**->>**ST**: **7. 订阅 Redo Log 流<br/>(基于LSN)**
-    **ST**-->>**DMS**: **8. 推送 Redo Log 变更**
+    DMS->>ST: **7. 订阅 Redo Log 流<br/>(基于LSN)**
+    ST-->>DMS: **8. 推送 Redo Log 变更**
     
-    **DMS**->>**DMS**: **9. 解析 Redo Log<br/>提取数据变更**
-    **DMS**->>**DMS**: **10. 应用转换规则<br/>(可选)**
-    **DMS**->>**DMS**: **11. 格式转换<br/>(适配目标系统)**
+    DMS->>DMS: **9. 解析 Redo Log<br/>提取数据变更**
+    DMS->>DMS: **10. 应用转换规则<br/>(可选)**
+    DMS->>DMS: **11. 格式转换<br/>(适配目标系统)**
     
-    **DMS**->>**TGT**: **12. 批量写入变更<br/>(Batch Insert)**
-    **TGT**-->>**DMS**: **13. 确认写入**
+    DMS->>TGT: **12. 批量写入变更<br/>(Batch Insert)**
+    TGT-->>DMS: **13. 确认写入**
     
-    **DMS**->>**DMS**: **14. 更新 Checkpoint<br/>(记录已同步LSN)**
+    DMS->>DMS: **14. 更新 Checkpoint<br/>(记录已同步LSN)**
     
     rect rgb(255, 250, 205)
-    Note over **AUR**,**DMS**: **关键：DMS直接读取Redo Log，无需开启Binlog**
+    Note over AUR,DMS: **关键：DMS直接读取Redo Log，无需开启Binlog**
     end
 ```
 
@@ -3126,44 +3126,44 @@ DMS在启动CDC时需要获取一个一致性的LSN位点作为起始点，这�
 
 ```mermaid
 sequenceDiagram
-    participant **DMS** as **DMS Replication<br/>Instance**
-    participant **AUR** as **Aurora Primary**
-    participant **ST** as **存储层**
-    participant **META** as **元数据服务**
+    participant DMS as "DMS Replication<br/>Instance"
+    participant AUR as "Aurora Primary"
+    participant ST as "存储层"
+    participant META as "元数据服务"
     
-    Note over **DMS**: **DMS任务启动**
+    Note over DMS: **DMS任务启动**
     
-    **DMS**->>**AUR**: **1. 连接Aurora<br/>开启事务（隔离级别：REPEATABLE READ）**
-    **AUR**-->>**DMS**: **2. 事务ID：TXN_12345**
+    DMS->>AUR: **1. 连接Aurora<br/>开启事务（隔离级别：REPEATABLE READ）**
+    AUR-->>DMS: **2. 事务ID：TXN_12345**
     
-    **DMS**->>**AUR**: **3. SELECT查询当前VDL<br/>SHOW MASTER STATUS**
-    **AUR**->>**ST**: **4. 查询存储层VDL**
-    **ST**-->>**AUR**: **5. 返回VDL=10000**
-    **AUR**-->>**DMS**: **6. 返回一致性LSN=10000<br/>+ Binlog Position（如果开启）**
+    DMS->>AUR: **3. SELECT查询当前VDL<br/>SHOW MASTER STATUS**
+    AUR->>ST: **4. 查询存储层VDL**
+    ST-->>AUR: **5. 返回VDL=10000**
+    AUR-->>DMS: **6. 返回一致性LSN=10000<br/>+ Binlog Position（如果开启）**
     
-    **DMS**->>**AUR**: **7. 读取表结构<br/>SHOW CREATE TABLE**
-    **AUR**-->>**DMS**: **8. 返回所有表的DDL**
+    DMS->>AUR: **7. 读取表结构<br/>SHOW CREATE TABLE**
+    AUR-->>DMS: **8. 返回所有表的DDL**
     
-    **DMS**->>**AUR**: **9. 获取当前快照<br/>（如果需要全量同步）**
+    DMS->>AUR: **9. 获取当前快照<br/>（如果需要全量同步）**
     alt **全量+增量模式**
-        **AUR**->>**AUR**: **10a. 创建一致性快照<br/>基于LSN=10000**
-        **AUR**-->>**DMS**: **11a. 返回快照数据**
-        **DMS**->>**DMS**: **12a. 加载快照到目标**
+        AUR->>AUR: **10a. 创建一致性快照<br/>基于LSN=10000**
+        AUR-->>DMS: **11a. 返回快照数据**
+        DMS->>DMS: **12a. 加载快照到目标**
     else **仅增量模式**
-        **DMS**->>**DMS**: **10b. 跳过全量，直接增量**
+        DMS->>DMS: **10b. 跳过全量，直接增量**
     end
     
-    **DMS**->>**AUR**: **13. 提交事务**
-    **AUR**-->>**DMS**: **14. 事务提交成功**
+    DMS->>AUR: **13. 提交事务**
+    AUR-->>DMS: **14. 事务提交成功**
     
-    **DMS**->>**ST**: **15. 订阅Redo Log流<br/>Starting LSN=10000**
-    **ST**->>**ST**: **16. 建立CDC连接<br/>记录consumer offset**
-    **ST**-->>**DMS**: **17. 确认订阅成功<br/>开始推送Redo**
+    DMS->>ST: **15. 订阅Redo Log流<br/>Starting LSN=10000**
+    ST->>ST: **16. 建立CDC连接<br/>记录consumer offset**
+    ST-->>DMS: **17. 确认订阅成功<br/>开始推送Redo**
     
-    **DMS**->>**DMS**: **18. 保存Checkpoint<br/>Current LSN=10000**
+    DMS->>DMS: **18. 保存Checkpoint<br/>Current LSN=10000**
     
     rect rgb(255, 250, 205)
-    Note over **DMS**,**ST**: **关键：事务保证LSN和表结构的一致性**
+    Note over DMS,ST: **关键：事务保证LSN和表结构的一致性**
     end
 ```
 
@@ -3185,25 +3185,25 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**Aurora Redo Log格式（扩展）**"
+    subgraph "Aurora Redo Log格式（扩展）"
         A[**物理Redo<br/>Page变更**]
         B[**逻辑Redo<br/>Row变更**]
         C[**元数据Redo<br/>DDL操作**]
     end
     
-    subgraph "**DMS解析器**"
+    subgraph "DMS解析器"
         D[**物理Redo解析器<br/>（传统MySQL兼容）**]
         E[**逻辑Redo解析器<br/>（Aurora扩展）**]
         F[**DDL解析器**]
     end
     
-    subgraph "**转换层**"
+    subgraph "转换层"
         G[**行级变更提取**]
         H[**Before/After Image**]
         I[**Binlog格式生成**]
     end
     
-    subgraph "**输出**"
+    subgraph "输出"
         J[**Binlog Event<br/>（逻辑格式）**]
         K[**发送到目标系统**]
     end
@@ -3276,33 +3276,33 @@ class AuroraRedoLog:
 
 ```mermaid
 sequenceDiagram
-    participant **AUR** as **Aurora Primary**
-    participant **ST** as **存储层<br/>Redo Log**
-    participant **DMS** as **DMS<br/>CDC引擎**
-    participant **Parser** as **Redo解析器**
-    participant **Conv** as **格式转换器**
-    participant **TGT** as **目标系统**
+    participant AUR as "Aurora Primary"
+    participant ST as "存储层<br/>Redo Log"
+    participant DMS as "DMS<br/>CDC引擎"
+    participant Parser as "Redo解析器"
+    participant Conv as "格式转换器"
+    participant TGT as "目标系统"
     
-    **AUR**->>**ST**: **1. 写入Redo Log<br/>LSN: 10001<br/>Page: 123<br/>Offset: 256<br/>Data: 0x1E（age=30）<br/><br/>Logical:<br/>Type: UPDATE<br/>Table: users<br/>RowID: 1<br/>Before: age=25<br/>After: age=30**
+    AUR->>ST: **1. 写入Redo Log<br/>LSN: 10001<br/>Page: 123<br/>Offset: 256<br/>Data: 0x1E（age=30）<br/><br/>Logical:<br/>Type: UPDATE<br/>Table: users<br/>RowID: 1<br/>Before: age=25<br/>After: age=30**
     
-    **ST**-->>**DMS**: **2. 推送Redo Event**
+    ST-->>DMS: **2. 推送Redo Event**
     
-    **DMS**->>**Parser**: **3. 解析Redo**
+    DMS->>Parser: **3. 解析Redo**
     
-    **Parser**->>**Parser**: **4. 提取逻辑信息<br/>检测到logical_type=UPDATE**
+    Parser->>Parser: **4. 提取逻辑信息<br/>检测到logical_type=UPDATE**
     
-    **Parser**-->>**Conv**: **5. 返回逻辑变更<br/>Operation: UPDATE<br/>Table: users<br/>PK: id=1<br/>OldValues: age=25<br/>NewValues: age=30**
+    Parser-->>Conv: **5. 返回逻辑变更<br/>Operation: UPDATE<br/>Table: users<br/>PK: id=1<br/>OldValues: age=25<br/>NewValues: age=30**
     
-    **Conv**->>**Conv**: **6. 生成Binlog Event<br/>（ROW格式）**
+    Conv->>Conv: **6. 生成Binlog Event<br/>（ROW格式）**
     
-    **Conv**->>**TGT**: **7. 发送Binlog Event<br/>或直接执行SQL<br/>UPDATE users SET age=30 WHERE id=1**
+    Conv->>TGT: **7. 发送Binlog Event<br/>或直接执行SQL<br/>UPDATE users SET age=30 WHERE id=1**
     
-    **TGT**-->>**DMS**: **8. ACK**
+    TGT-->>DMS: **8. ACK**
     
-    **DMS**->>**DMS**: **9. 更新Checkpoint<br/>LSN=10001**
+    DMS->>DMS: **9. 更新Checkpoint<br/>LSN=10001**
     
     rect rgb(255, 250, 205)
-    Note over **ST**,**Conv**: **关键：Aurora Redo包含逻辑信息，无需从物理重建**
+    Note over ST,Conv: **关键：Aurora Redo包含逻辑信息，无需从物理重建**
     end
 ```
 
@@ -3365,36 +3365,36 @@ void aurora_write_redo(page_id, offset, data, logical_info) {
 
 ```mermaid
 sequenceDiagram
-    participant **DMS** as **DMS CDC**
-    participant **ST** as **存储层**
-    participant **TGT** as **目标数据库**
+    participant DMS as "DMS CDC"
+    participant ST as "存储层"
+    participant TGT as "目标数据库"
     
-    Note over **DMS**: **场景：DMS重启**
+    Note over DMS: **场景：DMS重启**
     
-    **DMS**->>**DMS**: **1. 读取Checkpoint<br/>Last LSN=9999**
+    DMS->>DMS: **1. 读取Checkpoint<br/>Last LSN=9999**
     
-    **DMS**->>**ST**: **2. 请求从LSN=9999开始**
-    **ST**-->>**DMS**: **3. 推送LSN 9999-10010**
+    DMS->>ST: **2. 请求从LSN=9999开始**
+    ST-->>DMS: **3. 推送LSN 9999-10010**
     
-    Note over **DMS**: **LSN 10000-10005已执行过**
+    Note over DMS: **LSN 10000-10005已执行过**
     
     loop **遍历Redo Event**
-        **DMS**->>**DMS**: **4. 检查LSN=10000**
+        DMS->>DMS: **4. 检查LSN=10000**
         
         alt **LSN已处理过（幂等检查）**
-            **DMS**->>**TGT**: **5a. 查询目标：<br/>SELECT * FROM users WHERE id=1**
-            **TGT**-->>**DMS**: **6a. 返回：age=30<br/>（已是最新值）**
-            **DMS**->>**DMS**: **7a. 跳过此Redo<br/>（幂等保护）**
+            DMS->>TGT: **5a. 查询目标：<br/>SELECT * FROM users WHERE id=1**
+            TGT-->>DMS: **6a. 返回：age=30<br/>（已是最新值）**
+            DMS->>DMS: **7a. 跳过此Redo<br/>（幂等保护）**
         else **LSN未处理**
-            **DMS**->>**TGT**: **5b. 执行：<br/>UPDATE users SET age=30 WHERE id=1**
-            **TGT**-->>**DMS**: **6b. ACK**
+            DMS->>TGT: **5b. 执行：<br/>UPDATE users SET age=30 WHERE id=1**
+            TGT-->>DMS: **6b. ACK**
         end
     end
     
-    **DMS**->>**DMS**: **8. 更新Checkpoint<br/>LSN=10010**
+    DMS->>DMS: **8. 更新Checkpoint<br/>LSN=10010**
     
     rect rgb(255, 250, 205)
-    Note over **DMS**,**TGT**: **幂等性保证：基于主键查询+版本号/时间戳比较**
+    Note over DMS,TGT: **幂等性保证：基于主键查询+版本号/时间戳比较**
     end
 ```
 
@@ -3413,37 +3413,37 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **AUR** as **Aurora Primary**
-    participant **ST** as **存储层**
-    participant **DMS** as **DMS CDC**
-    participant **Cache** as **Schema Cache**
-    participant **TGT** as **目标系统**
+    participant AUR as "Aurora Primary"
+    participant ST as "存储层"
+    participant DMS as "DMS CDC"
+    participant Cache as "Schema Cache"
+    participant TGT as "目标系统"
     
-    Note over **AUR**: **执行DDL：<br/>ALTER TABLE users ADD COLUMN email VARCHAR(100)**
+    Note over AUR: **执行DDL：<br/>ALTER TABLE users ADD COLUMN email VARCHAR(100)**
     
-    **AUR**->>**ST**: **1. 写入DDL Redo<br/>{<br/>  LSN: 10100<br/>  Type: DDL_ALTER_TABLE<br/>  SQL: "ALTER TABLE users..."<br/>  SchemaVersion: 2<br/>}**
+    AUR->>ST: **1. 写入DDL Redo<br/>{<br/>  LSN: 10100<br/>  Type: DDL_ALTER_TABLE<br/>  SQL: "ALTER TABLE users..."<br/>  SchemaVersion: 2<br/>}**
     
-    **ST**-->>**DMS**: **2. 推送DDL Event**
+    ST-->>DMS: **2. 推送DDL Event**
     
-    **DMS**->>**DMS**: **3. 检测到DDL Event**
+    DMS->>DMS: **3. 检测到DDL Event**
     
-    **DMS**->>**AUR**: **4. 获取新表结构<br/>SHOW CREATE TABLE users**
-    **AUR**-->>**DMS**: **5. 返回新Schema<br/>（包含email列）**
+    DMS->>AUR: **4. 获取新表结构<br/>SHOW CREATE TABLE users**
+    AUR-->>DMS: **5. 返回新Schema<br/>（包含email列）**
     
-    **DMS**->>**Cache**: **6. 更新Schema Cache<br/>Version: 1 → 2**
+    DMS->>Cache: **6. 更新Schema Cache<br/>Version: 1 → 2**
     
-    **DMS**->>**TGT**: **7. 在目标执行DDL<br/>ALTER TABLE users ADD COLUMN email VARCHAR(100)**
-    **TGT**-->>**DMS**: **8. DDL执行成功**
+    DMS->>TGT: **7. 在目标执行DDL<br/>ALTER TABLE users ADD COLUMN email VARCHAR(100)**
+    TGT-->>DMS: **8. DDL执行成功**
     
-    **DMS**->>**DMS**: **9. 标记Schema切换点<br/>LSN=10100, SchemaVer=2**
+    DMS->>DMS: **9. 标记Schema切换点<br/>LSN=10100, SchemaVer=2**
     
-    Note over **DMS**: **后续DML使用新Schema解析**
+    Note over DMS: **后续DML使用新Schema解析**
     
-    **ST**-->>**DMS**: **10. 推送DML Event<br/>{LSN: 10101, SchemaVer: 2}**
-    **DMS**->>**Cache**: **11. 使用SchemaVer=2解析**
+    ST-->>DMS: **10. 推送DML Event<br/>{LSN: 10101, SchemaVer: 2}**
+    DMS->>Cache: **11. 使用SchemaVer=2解析**
     
     rect rgb(255, 250, 205)
-    Note over **DMS**,**TGT**: **DDL同步：暂停DML → 执行DDL → 更新Schema → 继续DML**
+    Note over DMS,TGT: **DDL同步：暂停DML → 执行DDL → 更新Schema → 继续DML**
     end
 ```
 
@@ -3529,7 +3529,7 @@ graph TD
 graph LR
     A[**DMS**]
     
-    subgraph "**关系型数据库**"
+    subgraph "关系型数据库"
         B[**RDS MySQL**]
         C[**Aurora**]
         D[**PostgreSQL**]
@@ -3537,17 +3537,17 @@ graph LR
         F[**SQL Server**]
     end
     
-    subgraph "**数据仓库**"
+    subgraph "数据仓库"
         G[**Redshift**]
         H[**Snowflake**]
     end
     
-    subgraph "**流平台**"
+    subgraph "流平台"
         I[**Kinesis**]
         J[**Kafka**]
     end
     
-    subgraph "**对象存储**"
+    subgraph "对象存储"
         K[**S3**]
     end
     
@@ -3581,14 +3581,14 @@ graph LR
 
 ```mermaid
 graph LR
-    subgraph "**开启Binlog**"
+    subgraph "开启Binlog"
         A[**写Redo Log**]
         B[**写Binlog**]
         C[**双重写入**]
         D[**性能下降20%**]
     end
     
-    subgraph "**使用DMS**"
+    subgraph "使用DMS"
         E[**写Redo Log**]
         F[**DMS异步读取**]
         G[**单次写入**]
@@ -3651,7 +3651,7 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**传统 MySQL 恢复**"
+    subgraph "传统 MySQL 恢复"
         A[**崩溃**]
         B[**扫描 Redo Log**]
         C[**重放日志**]
@@ -3659,7 +3659,7 @@ graph TB
         E[**恢复时间<br/>分钟-小时级**]
     end
     
-    subgraph "**Aurora 快速恢复**"
+    subgraph "Aurora 快速恢复"
         F[**崩溃**]
         G[**存储层已有最新数据**]
         H[**重建Buffer Cache**]
@@ -3693,57 +3693,57 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **OLD** as **故障实例**
-    participant **RDS** as **RDS控制平面**
-    participant **NEW** as **新实例**
-    participant **ST** as **Aurora存储层**
-    participant **BC** as **Buffer Cache**
-    participant **APP** as **应用程序**
+    participant OLD as "故障实例"
+    participant RDS as "RDS控制平面"
+    participant NEW as "新实例"
+    participant ST as "Aurora存储层"
+    participant BC as "Buffer Cache"
+    participant APP as "应用程序"
     
-    **OLD**->>**OLD**: **1. 实例崩溃/故障**
-    **RDS**->>**RDS**: **2. 检测到故障<br/>(心跳超时 < 10s)**
+    OLD->>OLD: **1. 实例崩溃/故障**
+    RDS->>RDS: **2. 检测到故障<br/>(心跳超时 < 10s)**
     
-    **RDS**->>**NEW**: **3. 启动新实例<br/>（无状态启动）**
-    **NEW**->>**ST**: **4. 连接存储层<br/>读取 VDL**
-    **ST**-->>**NEW**: **5. 返回 VDL=5000**
+    RDS->>NEW: **3. 启动新实例<br/>（无状态启动）**
+    NEW->>ST: **4. 连接存储层<br/>读取 VDL**
+    ST-->>NEW: **5. 返回 VDL=5000**
     
-    Note over **NEW**,**ST**: **ADSM (Asynchronous Database Storage Management)**
+    Note over NEW,ST: **ADSM (Asynchronous Database Storage Management)**
     
-    **NEW**->>**NEW**: **6. 读取 Mini-Transaction Log<br/>（MTR Log）**
-    **NEW**->>**NEW**: **7. 构建页面级LSN映射<br/>Page-LSN Table**
+    NEW->>NEW: **6. 读取 Mini-Transaction Log<br/>（MTR Log）**
+    NEW->>NEW: **7. 构建页面级LSN映射<br/>Page-LSN Table**
     
     rect rgb(255, 250, 205)
-    Note over **NEW**: **关键：不需要重放所有Redo Log<br/>只需要构建元数据**
+    Note over NEW: **关键：不需要重放所有Redo Log<br/>只需要构建元数据**
     end
     
-    **NEW**->>**BC**: **8. 初始化 Buffer Cache**
-    **NEW**->>**BC**: **9. 启动预热进程<br/>（根据历史访问模式）**
+    NEW->>BC: **8. 初始化 Buffer Cache**
+    NEW->>BC: **9. 启动预热进程<br/>（根据历史访问模式）**
     
     par **异步预热热点页**
-        **BC**->>**ST**: **10a. 异步读取热点页1**
-        **BC**->>**ST**: **10b. 异步读取热点页2**
-        **BC**->>**ST**: **10c. 异步读取热点页N**
+        BC->>ST: **10a. 异步读取热点页1**
+        BC->>ST: **10b. 异步读取热点页2**
+        BC->>ST: **10c. 异步读取热点页N**
     end
     
-    **NEW**-->>**RDS**: **11. 实例就绪<br/>(启动时间 < 10秒)**
-    **RDS**->>**RDS**: **12. 更新DNS/端点**
-    **RDS**-->>**APP**: **13. 通知连接可用**
+    NEW-->>RDS: **11. 实例就绪<br/>(启动时间 < 10秒)**
+    RDS->>RDS: **12. 更新DNS/端点**
+    RDS-->>APP: **13. 通知连接可用**
     
-    **APP**->>**NEW**: **14. 发送查询请求**
+    APP->>NEW: **14. 发送查询请求**
     
     alt **页面在Buffer Cache**
-        **NEW**->>**BC**: **15a. 命中缓存**
-        **BC**-->>**NEW**: **16a. 返回数据**
+        NEW->>BC: **15a. 命中缓存**
+        BC-->>NEW: **16a. 返回数据**
     else **页面不在Buffer Cache**
-        **NEW**->>**ST**: **15b. 按需读取页面**
-        **ST**-->>**NEW**: **16b. 返回页面<br/>(懒加载)**
-        **NEW**->>**BC**: **17b. 加载到缓存**
+        NEW->>ST: **15b. 按需读取页面**
+        ST-->>NEW: **16b. 返回页面<br/>(懒加载)**
+        NEW->>BC: **17b. 加载到缓存**
     end
     
-    **NEW**-->>**APP**: **18. 返回查询结果**
+    NEW-->>APP: **18. 返回查询结果**
     
     rect rgb(255, 250, 205)
-    Note over **NEW**,**ST**: **ADSM: 按需加载，避免大量I/O**
+    Note over NEW,ST: **ADSM: 按需加载，避免大量I/O**
     end
 ```
 
@@ -3751,20 +3751,20 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**ADSM 核心组件**"
+    subgraph "ADSM 核心组件"
         A[**Page-LSN<br/>Mapping Table<br/>页面LSN映射表**]
         B[**MTR Log Reader<br/>Mini-Transaction<br/>日志读取器**]
         C[**On-Demand<br/>Page Loader<br/>按需页面加载器**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         D[**1. 读取 VDL<br/>Volume Durable LSN**]
         E[**2. 扫描 MTR Log<br/>构建页面映射**]
         F[**3. 标记 Dirty Pages<br/>脏页标记**]
         G[**4. 启动服务<br/>接受请求**]
     end
     
-    subgraph "**懒加载机制**"
+    subgraph "懒加载机制"
         H[**首次访问页面**]
         I[**检查Page-LSN表**]
         J[**从存储层读取<br/>最新版本页面**]
@@ -3810,19 +3810,19 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**预热数据来源**"
+    subgraph "预热数据来源"
         A[**访问模式历史<br/>Access Pattern History**]
         B[**热点页面统计<br/>Hot Page Statistics**]
         C[**索引根节点<br/>Index Root Pages**]
     end
     
-    subgraph "**预热策略**"
+    subgraph "预热策略"
         D[**优先级队列<br/>Priority Queue**]
         E[**异步预取<br/>Async Prefetch**]
         F[**批量加载<br/>Batch Loading**]
     end
     
-    subgraph "**预热执行**"
+    subgraph "预热执行"
         G[**1. 计算优先级<br/>Score Calculation**]
         H[**2. 排序页面列表<br/>Sort by Score**]
         I[**3. 并行预取<br/>Parallel Fetch**]
@@ -3922,60 +3922,60 @@ Aurora 的主从同步采用基于共享存储的物理复制机制，与传统 
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **P** as **主实例**
-    participant **BC_P** as **主实例<br/>Buffer Cache**
-    participant **S1** as **存储节点1<br/>AZ-1**
-    participant **S2** as **存储节点2<br/>AZ-2**
-    participant **S3** as **存储节点3<br/>AZ-3**
-    participant **RO** as **只读副本**
-    participant **BC_RO** as **只读副本<br/>Buffer Cache**
+    participant C as "客户端"
+    participant P as "主实例"
+    participant BC_P as "主实例<br/>Buffer Cache"
+    participant S1 as "存储节点1<br/>AZ-1"
+    participant S2 as "存储节点2<br/>AZ-2"
+    participant S3 as "存储节点3<br/>AZ-3"
+    participant RO as "只读副本"
+    participant BC_RO as "只读副本<br/>Buffer Cache"
     
-    **C**->>**P**: **1. 提交事务 COMMIT**
-    **P**->>**BC_P**: **2. 修改 Buffer Cache**
-    **P**->>**P**: **3. 生成 Redo Log<br/>(LSN=1000)**
+    C->>P: **1. 提交事务 COMMIT**
+    P->>BC_P: **2. 修改 Buffer Cache**
+    P->>P: **3. 生成 Redo Log<br/>(LSN=1000)**
     
     par **并行发送到6个副本（跨3个AZ）**
-        **P**->>**S1**: **4. 发送 Redo Log<br/>+ VCL元数据**
-        **P**->>**S2**: **4. 发送 Redo Log<br/>+ VCL元数据**
-        **P**->>**S3**: **4. 发送 Redo Log<br/>+ VCL元数据**
+        P->>S1: **4. 发送 Redo Log<br/>+ VCL元数据**
+        P->>S2: **4. 发送 Redo Log<br/>+ VCL元数据**
+        P->>S3: **4. 发送 Redo Log<br/>+ VCL元数据**
     end
     
     par **存储层应用日志（4/6确认）**
-        **S1**->>**S1**: **5. 应用Redo到数据页**
-        **S2**->>**S2**: **5. 应用Redo到数据页**
-        **S3**->>**S3**: **5. 应用Redo到数据页**
+        S1->>S1: **5. 应用Redo到数据页**
+        S2->>S2: **5. 应用Redo到数据页**
+        S3->>S3: **5. 应用Redo到数据页**
     end
     
     par **Quorum 确认**
-        **S1**-->>**P**: **6. ACK (1/4)**
-        **S2**-->>**P**: **6. ACK (2/4)**
-        **S3**-->>**P**: **6. ACK (3/4)**
-        **S3**-->>**P**: **6. ACK (4/4) ✓**
+        S1-->>P: **6. ACK (1/4)**
+        S2-->>P: **6. ACK (2/4)**
+        S3-->>P: **6. ACK (3/4)**
+        S3-->>P: **6. ACK (4/4) ✓**
     end
     
-    **P**-->>**C**: **7. 事务提交成功**
+    P-->>C: **7. 事务提交成功**
     
-    Note over **P**,**RO**: **只读副本同步流程**
+    Note over P,RO: **只读副本同步流程**
     
-    **RO**->>**S1**: **8. 读取 VDL<br/>(Volume Durable LSN)**
-    **S1**-->>**RO**: **9. 返回 VDL=1000**
+    RO->>S1: **8. 读取 VDL<br/>(Volume Durable LSN)**
+    S1-->>RO: **9. 返回 VDL=1000**
     
-    **RO**->>**RO**: **10. 检查本地 VCL<br/>(Volume Complete LSN)**
+    RO->>RO: **10. 检查本地 VCL<br/>(Volume Complete LSN)**
     
     alt **VCL < VDL（有日志缺失）**
-        **RO**->>**S1**: **11a. 拉取缺失的 Redo Log**
-        **S1**-->>**RO**: **12a. 返回 Redo Log**
-        **RO**->>**BC_RO**: **13a. 应用Redo到Buffer Cache**
-        **RO**->>**RO**: **14a. 更新本地 VCL=1000**
+        RO->>S1: **11a. 拉取缺失的 Redo Log**
+        S1-->>RO: **12a. 返回 Redo Log**
+        RO->>BC_RO: **13a. 应用Redo到Buffer Cache**
+        RO->>RO: **14a. 更新本地 VCL=1000**
     else **VCL = VDL（已同步）**
-        **RO**->>**BC_RO**: **11b. 直接读取缓存**
+        RO->>BC_RO: **11b. 直接读取缓存**
     end
     
-    **RO**-->>**C**: **15. 返回查询结果**
+    RO-->>C: **15. 返回查询结果**
     
     rect rgb(255, 250, 205)
-    Note over **P**,**RO**: **关键：只读副本通过VDL/VCL机制判断是否需要应用日志**
+    Note over P,RO: **关键：只读副本通过VDL/VCL机制判断是否需要应用日志**
     end
 ```
 
@@ -3985,25 +3985,25 @@ Aurora 通过多种元数据机制确保主从数据一致性：
 
 ```mermaid
 graph TB
-    subgraph "**LSN（Log Sequence Number）元数据**"
+    subgraph "LSN（Log Sequence Number）元数据"
         A[**VDL<br/>Volume Durable LSN<br/>存储层持久化的最高LSN**]
         B[**VCL<br/>Volume Complete LSN<br/>只读副本应用的最高LSN**]
         C[**CPL<br/>Consistency Point LSN<br/>一致性检查点LSN**]
     end
     
-    subgraph "**事务元数据**"
+    subgraph "事务元数据"
         D[**Transaction ID<br/>事务标识符**]
         E[**Commit Timestamp<br/>提交时间戳**]
         F[**MVCC 版本信息<br/>Read View**]
     end
     
-    subgraph "**DDL 元数据**"
+    subgraph "DDL 元数据"
         G[**Table Schema<br/>表结构定义**]
         H[**Index Metadata<br/>索引元数据**]
         I[**Partition Info<br/>分区信息**]
     end
     
-    subgraph "**保护组元数据**"
+    subgraph "保护组元数据"
         J[**PG Membership<br/>保护组成员**]
         K[**Segment ID<br/>数据段标识**]
         L[**Min/Max LSN<br/>段内LSN范围**]
@@ -4090,25 +4090,25 @@ Redo Log Record:
 
 ```mermaid
 graph TB
-    subgraph "**高可用场景**"
+    subgraph "高可用场景"
         A[**金融交易系统**]
         B[**电商核心数据库**]
         C[**SaaS 平台**]
     end
     
-    subgraph "**全球化场景**"
+    subgraph "全球化场景"
         D[**Global Database**]
         E[**跨区域复制**]
         F[**低延迟访问**]
     end
     
-    subgraph "**弹性负载**"
+    subgraph "弹性负载"
         G[**Serverless 应用**]
         H[**开发测试环境**]
         I[**波动业务**]
     end
     
-    subgraph "**大规模数据**"
+    subgraph "大规模数据"
         J[**128TB 存储**]
         K[**百万级QPS**]
         L[**实时分析**]
@@ -4145,7 +4145,7 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**RDS MySQL 成本**"
+    subgraph "RDS MySQL 成本"
         A[**计算<br/>100%**]
         B[**存储<br/>100%**]
         C[**备份<br/>100%**]
@@ -4153,7 +4153,7 @@ graph LR
         E[**总计<br/>400%**]
     end
     
-    subgraph "**Aurora 成本**"
+    subgraph "Aurora 成本"
         F[**计算<br/>70%**]
         G[**存储<br/>60%**]
         H[**备份<br/>0%**]
@@ -4203,7 +4203,7 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**MySQL Redo Log 流程**"
+    subgraph "MySQL Redo Log 流程"
         A[**1. 生成Redo Log**]
         B[**2. 写入Log Buffer**]
         C[**3. fsync到磁盘**]
@@ -4212,7 +4212,7 @@ graph TB
         F[**6. Binlog复制到从库**]
     end
     
-    subgraph "**性能瓶颈**"
+    subgraph "性能瓶颈"
         G[**磁盘I/O瓶颈**]
         H[**双重写入开销**]
         I[**主从同步延迟**]
@@ -4243,20 +4243,20 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**Aurora Redo Log 流程**"
+    subgraph "Aurora Redo Log 流程"
         A[**1. 生成Redo Log**]
         B[**2. 并行发送到6个副本**]
         C[**3. Quorum 4/6确认**]
         D[**4. 事务提交成功**]
     end
     
-    subgraph "**存储层处理**"
+    subgraph "存储层处理"
         E[**异步应用到数据页**]
         F[**持续合并Redo Log**]
         G[**后台生成数据页**]
     end
     
-    subgraph "**性能提升**"
+    subgraph "性能提升"
         H[**减少75%网络流量**]
         I[**消除磁盘I/O瓶颈**]
         J[**主从延迟 < 20ms**]
@@ -4306,28 +4306,28 @@ Aurora在传统MySQL Redo Log基础上，扩展了多种新的日志类型以支
 
 ```mermaid
 graph TB
-    subgraph "**物理Redo（Physical Redo）**"
+    subgraph "物理Redo（Physical Redo）"
         P1[**Page Modification<br/>页面修改**]
         P2[**Index Update<br/>索引更新**]
         P3[**Record Insert/Delete<br/>记录插入删除**]
         P4[**Page Split/Merge<br/>页面分裂合并**]
     end
     
-    subgraph "**逻辑Redo（Logical Redo）**"
+    subgraph "逻辑Redo（Logical Redo）"
         L1[**Row Insert<br/>行插入**]
         L2[**Row Update<br/>行更新**]
         L3[**Row Delete<br/>行删除**]
         L4[**DDL Operation<br/>DDL操作**]
     end
     
-    subgraph "**元数据Redo（Metadata Redo）**"
+    subgraph "元数据Redo（Metadata Redo）"
         M1[**Table Schema Change<br/>表结构变更**]
         M2[**Index Creation<br/>索引创建**]
         M3[**Checkpoint Info<br/>检查点信息**]
         M4[**Volume Info<br/>卷信息**]
     end
     
-    subgraph "**Aurora扩展Redo（Extended Redo）**"
+    subgraph "Aurora扩展Redo（Extended Redo）"
         E1[**LSN Mapping<br/>LSN映射**]
         E2[**Read View<br/>读视图**]
         E3[**Quorum Metadata<br/>Quorum元数据**]
@@ -4649,25 +4649,25 @@ Aurora Redo Log Record (平均 100 bytes物理 + 150 bytes逻辑):
 
 ```mermaid
 sequenceDiagram
-    participant **Compute** as **计算层<br/>（生成）**
-    participant **Storage** as **存储层<br/>（应用）**
-    participant **S3** as **S3<br/>（归档）**
+    participant Compute as "计算层<br/>（生成）"
+    participant Storage as "存储层<br/>（应用）"
+    participant S3 as "S3<br/>（归档）"
     
-    **Compute**->>**Storage**: **1. 生成Redo Log<br/>（物理+逻辑）**
-    **Storage**->>**Storage**: **2. 持久化到PG<br/>LSN=10000**
-    **Storage**->>**Storage**: **3. 应用到数据页<br/>（异步物化）**
+    Compute->>Storage: **1. 生成Redo Log<br/>（物理+逻辑）**
+    Storage->>Storage: **2. 持久化到PG<br/>LSN=10000**
+    Storage->>Storage: **3. 应用到数据页<br/>（异步物化）**
     
-    Note over **Storage**: **Redo Log保留在存储层<br/>用于恢复和PITR**
+    Note over Storage: **Redo Log保留在存储层<br/>用于恢复和PITR**
     
-    **Storage**->>**S3**: **4. 增量备份到S3<br/>（每5分钟）**
-    **S3**->>**S3**: **5. 长期归档<br/>（保留35天）**
+    Storage->>S3: **4. 增量备份到S3<br/>（每5分钟）**
+    S3->>S3: **5. 长期归档<br/>（保留35天）**
     
-    Note over **Storage**: **Checkpoint后，<br/>旧Redo可以清理**
+    Note over Storage: **Checkpoint后，<br/>旧Redo可以清理**
     
-    **Storage**->>**Storage**: **6. GC清理旧Redo<br/>（< Checkpoint LSN）**
+    Storage->>Storage: **6. GC清理旧Redo<br/>（< Checkpoint LSN）**
     
     rect rgb(255, 250, 205)
-    Note over **Compute**,**S3**: **Redo从生成到归档再到清理的完整生命周期**
+    Note over Compute,S3: **Redo从生成到归档再到清理的完整生命周期**
     end
 ```
 
@@ -4722,13 +4722,13 @@ Aurora Quorum：
 
 ```mermaid
 graph LR
-    subgraph "**传统架构**"
+    subgraph "传统架构"
         A[**Redo Log<br/>是辅助**]
         B[**数据页<br/>是主体**]
         C[**日志用于恢复**]
     end
     
-    subgraph "**Aurora架构**"
+    subgraph "Aurora架构"
         D[**Redo Log<br/>是主体**]
         E[**数据页<br/>是缓存**]
         F[**日志即数据库**]
@@ -4760,19 +4760,19 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**传输层优化**"
+    subgraph "传输层优化"
         A[**只传输Redo Log 减少75%数据量**]
         B[**批量传输 合并小I/O**]
         C[**并行传输 6副本并发**]
     end
     
-    subgraph "**协议层优化**"
+    subgraph "协议层优化"
         D[**Quorum协议 4/6快速确认**]
         E[**Pipeline 无需等待ACK**]
         F[**RDMA可选 绕过内核栈**]
     end
     
-    subgraph "**架构层优化**"
+    subgraph "架构层优化"
         G[**共享存储 无数据复制**]
         H[**就近访问 区域内低延迟**]
         I[**智能路由 选择最快路径**]
@@ -4880,13 +4880,13 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    subgraph "**优化前（MySQL）**"
+    subgraph "优化前（MySQL）"
         A[**网络I/O: 100%**]
         B[**延迟: 100ms**]
         C[**吞吐: 1000 TPS**]
     end
     
-    subgraph "**优化后（Aurora）**"
+    subgraph "优化后（Aurora）"
         D[**网络I/O: 25%**]
         E[**延迟: 5ms**]
         F[**吞吐: 50000 TPS**]
@@ -4927,21 +4927,21 @@ Aurora的主实例和只读副本都需要CBO统计数据来生成最优执行�
 
 ```mermaid
 graph TB
-    subgraph "**主实例（Primary）**"
+    subgraph "主实例（Primary）"
         P1[**写入事务<br/>数据变更**]
         P2[**自动统计更新<br/>（后台线程）**]
         P3[**手动ANALYZE**]
         P4[**统计数据表<br/>（mysql.innodb_table_stats）**]
     end
     
-    subgraph "**只读副本（Replica）**"
+    subgraph "只读副本（Replica）"
         R1[**应用Redo Log<br/>（只读）**]
         R2[**同步统计数据<br/>（从主实例）**]
         R3[**本地采样统计<br/>（可选）**]
         R4[**统计数据缓存<br/>（内存）**]
     end
     
-    subgraph "**统计数据同步**"
+    subgraph "统计数据同步"
         S1[**主实例统计表Redo**]
         S2[**存储层传播**]
         S3[**副本应用统计Redo**]
@@ -5010,32 +5010,32 @@ SELECT * FROM mysql.column_stats;
 
 ```mermaid
 sequenceDiagram
-    participant **App** as **应用程序**
-    participant **Primary** as **主实例**
-    participant **Stats** as **统计数据表<br/>（InnoDB表）**
-    participant **Redo** as **Redo Log**
-    participant **Storage** as **存储层**
-    participant **Replica** as **只读副本**
+    participant App as "应用程序"
+    participant Primary as "主实例"
+    participant Stats as "统计数据表<br/>（InnoDB表）"
+    participant Redo as "Redo Log"
+    participant Storage as "存储层"
+    participant Replica as "只读副本"
     
-    **App**->>**Primary**: **1. 大量写入数据**
-    **Primary**->>**Primary**: **2. 检测：表变更>10%<br/>触发统计更新**
+    App->>Primary: **1. 大量写入数据**
+    Primary->>Primary: **2. 检测：表变更>10%<br/>触发统计更新**
     
-    **Primary**->>**Stats**: **3. UPDATE innodb_table_stats<br/>SET n_rows=100000<br/>WHERE table_name='users'**
+    Primary->>Stats: **3. UPDATE innodb_table_stats<br/>SET n_rows=100000<br/>WHERE table_name='users'**
     
-    **Stats**->>**Redo**: **4. 生成Redo Log<br/>（统计表变更）**
+    Stats->>Redo: **4. 生成Redo Log<br/>（统计表变更）**
     
-    **Redo**->>**Storage**: **5. Redo传播到存储层<br/>（包含统计表Redo）**
+    Redo->>Storage: **5. Redo传播到存储层<br/>（包含统计表Redo）**
     
-    **Storage**-->>**Replica**: **6. 推送Redo Log**
+    Storage-->>Replica: **6. 推送Redo Log**
     
-    **Replica**->>**Replica**: **7. 应用Redo<br/>更新本地统计数据表**
+    Replica->>Replica: **7. 应用Redo<br/>更新本地统计数据表**
     
-    **Replica**->>**Replica**: **8. 刷新CBO统计缓存**
+    Replica->>Replica: **8. 刷新CBO统计缓存**
     
-    Note over **Primary**,**Replica**: **关键：统计数据通过Redo Log同步，<br/>副本无需重新计算**
+    Note over Primary,Replica: **关键：统计数据通过Redo Log同步，<br/>副本无需重新计算**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Replica**: **统计数据像普通数据一样通过Redo同步**
+    Note over Primary,Replica: **统计数据像普通数据一样通过Redo同步**
     end
 ```
 
@@ -5113,27 +5113,27 @@ def apply_redo_log(redo_entry):
 
 ```mermaid
 sequenceDiagram
-    participant **QO** as **查询优化器**
-    participant **Replica** as **只读副本**
-    participant **Storage** as **存储层**
+    participant QO as "查询优化器"
+    participant Replica as "只读副本"
+    participant Storage as "存储层"
     
-    **QO**->>**Replica**: **1. 需要执行查询<br/>SELECT * FROM users WHERE age > 30**
+    QO->>Replica: **1. 需要执行查询<br/>SELECT * FROM users WHERE age > 30**
     
-    **Replica**->>**Replica**: **2. 检查统计数据<br/>发现age列没有直方图**
+    Replica->>Replica: **2. 检查统计数据<br/>发现age列没有直方图**
     
-    **Replica**->>**Storage**: **3. 发起只读扫描<br/>采样1000行**
-    **Storage**-->>**Replica**: **4. 返回采样数据**
+    Replica->>Storage: **3. 发起只读扫描<br/>采样1000行**
+    Storage-->>Replica: **4. 返回采样数据**
     
-    **Replica**->>**Replica**: **5. 计算本地统计<br/>age列分布：[18-25: 30%, 26-35: 40%, 36+: 30%]**
+    Replica->>Replica: **5. 计算本地统计<br/>age列分布：[18-25: 30%, 26-35: 40%, 36+: 30%]**
     
-    **Replica**->>**Replica**: **6. 缓存到内存<br/>不写入持久化表**
+    Replica->>Replica: **6. 缓存到内存<br/>不写入持久化表**
     
-    **QO**->>**Replica**: **7. 使用新统计生成执行计划**
+    QO->>Replica: **7. 使用新统计生成执行计划**
     
-    Note over **Replica**: **本地统计仅缓存在内存<br/>重启后丢失**
+    Note over Replica: **本地统计仅缓存在内存<br/>重启后丢失**
     
     rect rgb(255, 250, 205)
-    Note over **QO**,**Storage**: **只读副本可以本地采样统计，但不持久化**
+    Note over QO,Storage: **只读副本可以本地采样统计，但不持久化**
     end
 ```
 
@@ -5155,24 +5155,24 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **Stats_P** as **主统计表**
-    participant **Storage** as **存储层**
-    participant **Stats_R** as **副本统计表**
-    participant **Replica** as **只读副本**
+    participant Primary as "主实例"
+    participant Stats_P as "主统计表"
+    participant Storage as "存储层"
+    participant Stats_R as "副本统计表"
+    participant Replica as "只读副本"
     
-    **Primary**->>**Stats_P**: **T0: UPDATE统计数据<br/>n_rows=100000**
-    **Stats_P**->>**Storage**: **T1: Redo Log LSN=50000**
-    **Storage**->>**Storage**: **T1+10ms: VDL=50000达成**
-    **Storage**-->>**Stats_R**: **T1+50ms: 推送Redo**
-    **Stats_R**->>**Replica**: **T1+80ms: 应用Redo<br/>n_rows=100000**
+    Primary->>Stats_P: **T0: UPDATE统计数据<br/>n_rows=100000**
+    Stats_P->>Storage: **T1: Redo Log LSN=50000**
+    Storage->>Storage: **T1+10ms: VDL=50000达成**
+    Storage-->>Stats_R: **T1+50ms: 推送Redo**
+    Stats_R->>Replica: **T1+80ms: 应用Redo<br/>n_rows=100000**
     
-    Note over **Primary**,**Replica**: **延迟约80ms（p99）**
+    Note over Primary,Replica: **延迟约80ms（p99）**
     
-    **Replica**->>**Replica**: **T1+81ms: 刷新统计缓存**
+    Replica->>Replica: **T1+81ms: 刷新统计缓存**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Replica**: **统计数据最终一致性（< 100ms延迟）**
+    Note over Primary,Replica: **统计数据最终一致性（< 100ms延迟）**
     end
 ```
 
@@ -5208,61 +5208,61 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Sys** as **操作系统**
-    participant **Mysqld** as **mysqld进程**
-    participant **InnoDB** as **InnoDB引擎**
-    participant **BP** as **Buffer Pool**
-    participant **Storage** as **存储层**
-    participant **ADSM** as **ADSM模块**
+    participant Sys as "操作系统"
+    participant Mysqld as "mysqld进程"
+    participant InnoDB as "InnoDB引擎"
+    participant BP as "Buffer Pool"
+    participant Storage as "存储层"
+    participant ADSM as "ADSM模块"
     
-    Note over **Sys**: **主库崩溃/重启**
+    Note over Sys: **主库崩溃/重启**
     
-    **Sys**->>**Mysqld**: **1. 启动mysqld进程**
-    **Mysqld**->>**InnoDB**: **2. 初始化InnoDB引擎**
+    Sys->>Mysqld: **1. 启动mysqld进程**
+    Mysqld->>InnoDB: **2. 初始化InnoDB引擎**
     
-    **InnoDB**->>**Storage**: **3. 连接存储层<br/>查询VDL和VCL**
-    **Storage**-->>**InnoDB**: **4. VDL=50000, VCL=49995**
+    InnoDB->>Storage: **3. 连接存储层<br/>查询VDL和VCL**
+    Storage-->>InnoDB: **4. VDL=50000, VCL=49995**
     
-    **InnoDB**->>**InnoDB**: **5. 读取本地控制文件<br/>Last Checkpoint LSN=49000**
+    InnoDB->>InnoDB: **5. 读取本地控制文件<br/>Last Checkpoint LSN=49000**
     
-    **InnoDB**->>**InnoDB**: **6. 计算恢复范围<br/>LSN 49000-50000（1000条）**
+    InnoDB->>InnoDB: **6. 计算恢复范围<br/>LSN 49000-50000（1000条）**
     
-    Note over **InnoDB**: **开始崩溃恢复（Crash Recovery）**
+    Note over InnoDB: **开始崩溃恢复（Crash Recovery）**
     
-    **InnoDB**->>**Storage**: **7. 请求Redo Log<br/>LSN 49000-50000**
-    **Storage**-->>**InnoDB**: **8. 返回1000条Redo**
+    InnoDB->>Storage: **7. 请求Redo Log<br/>LSN 49000-50000**
+    Storage-->>InnoDB: **8. 返回1000条Redo**
     
-    **InnoDB**->>**BP**: **9. 初始化Buffer Pool**
+    InnoDB->>BP: **9. 初始化Buffer Pool**
     
     loop **应用Redo Log（并行）**
-        **InnoDB**->>**BP**: **10. 应用Redo到Buffer Pool<br/>（8个并行线程）**
-        **BP**->>**BP**: **重建页面状态**
+        InnoDB->>BP: **10. 应用Redo到Buffer Pool<br/>（8个并行线程）**
+        BP->>BP: **重建页面状态**
     end
     
-    **InnoDB**->>**InnoDB**: **11. 恢复完成<br/>Applied LSN=50000**
+    InnoDB->>InnoDB: **11. 恢复完成<br/>Applied LSN=50000**
     
-    Note over **ADSM**: **ADSM预热关键数据**
+    Note over ADSM: **ADSM预热关键数据**
     
-    **InnoDB**->>**ADSM**: **12. 启动ADSM模块**
-    **ADSM**->>**Storage**: **13. 读取热页面列表<br/>（上次记录的hot pages）**
-    **Storage**-->>**ADSM**: **14. 返回热页面列表（1000个页面）**
+    InnoDB->>ADSM: **12. 启动ADSM模块**
+    ADSM->>Storage: **13. 读取热页面列表<br/>（上次记录的hot pages）**
+    Storage-->>ADSM: **14. 返回热页面列表（1000个页面）**
     
     par **并行预热Buffer Pool**
-        **ADSM**->>**BP**: **15a. 加载热页面1-250**
-        **ADSM**->>**BP**: **15b. 加载热页面251-500**
-        **ADSM**->>**BP**: **15c. 加载热页面501-750**
-        **ADSM**->>**BP**: **15d. 加载热页面751-1000**
+        ADSM->>BP: **15a. 加载热页面1-250**
+        ADSM->>BP: **15b. 加载热页面251-500**
+        ADSM->>BP: **15c. 加载热页面501-750**
+        ADSM->>BP: **15d. 加载热页面751-1000**
     end
     
-    **ADSM**-->>**InnoDB**: **16. 预热完成<br/>Buffer Pool命中率：85%**
+    ADSM-->>InnoDB: **16. 预热完成<br/>Buffer Pool命中率：85%**
     
-    **InnoDB**->>**InnoDB**: **17. 标记实例为READ_WRITE**
-    **InnoDB**-->>**Mysqld**: **18. InnoDB就绪**
+    InnoDB->>InnoDB: **17. 标记实例为READ_WRITE**
+    InnoDB-->>Mysqld: **18. InnoDB就绪**
     
-    **Mysqld**->>**Mysqld**: **19. 开始接受连接**
+    Mysqld->>Mysqld: **19. 开始接受连接**
     
     rect rgb(255, 250, 205)
-    Note over **Sys**,**ADSM**: **主库重启：< 10秒恢复 + < 5秒预热 = < 15秒总时间**
+    Note over Sys,ADSM: **主库重启：< 10秒恢复 + < 5秒预热 = < 15秒总时间**
     end
 ```
 
@@ -5280,71 +5280,71 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Sys** as **操作系统**
-    participant **Mysqld** as **mysqld进程**
-    participant **InnoDB** as **InnoDB引擎**
-    participant **BP** as **Buffer Pool**
-    participant **Storage** as **存储层**
-    participant **ApplyThread** as **Redo应用线程**
+    participant Sys as "操作系统"
+    participant Mysqld as "mysqld进程"
+    participant InnoDB as "InnoDB引擎"
+    participant BP as "Buffer Pool"
+    participant Storage as "存储层"
+    participant ApplyThread as "Redo应用线程"
     
-    Note over **Sys**: **从库重启**
+    Note over Sys: **从库重启**
     
-    **Sys**->>**Mysqld**: **1. 启动mysqld进程**
-    **Mysqld**->>**InnoDB**: **2. 初始化InnoDB引擎**
+    Sys->>Mysqld: **1. 启动mysqld进程**
+    Mysqld->>InnoDB: **2. 初始化InnoDB引擎**
     
-    **InnoDB**->>**Storage**: **3. 连接存储层<br/>查询VDL**
-    **Storage**-->>**InnoDB**: **4. VDL=50000（主库最新LSN）**
+    InnoDB->>Storage: **3. 连接存储层<br/>查询VDL**
+    Storage-->>InnoDB: **4. VDL=50000（主库最新LSN）**
     
-    **InnoDB**->>**InnoDB**: **5. 读取本地控制文件<br/>Last Applied LSN=48000**
+    InnoDB->>InnoDB: **5. 读取本地控制文件<br/>Last Applied LSN=48000**
     
-    **InnoDB**->>**InnoDB**: **6. 计算追赶范围<br/>LSN 48000-50000（2000条）**
+    InnoDB->>InnoDB: **6. 计算追赶范围<br/>LSN 48000-50000（2000条）**
     
     alt **Gap较小（< 5000条）**
-        **InnoDB**->>**Storage**: **7a. 顺序读取Redo<br/>LSN 48000-50000**
-        **Storage**-->>**InnoDB**: **8a. 返回2000条Redo**
+        InnoDB->>Storage: **7a. 顺序读取Redo<br/>LSN 48000-50000**
+        Storage-->>InnoDB: **8a. 返回2000条Redo**
         
-        **InnoDB**->>**BP**: **9a. 初始化Buffer Pool**
+        InnoDB->>BP: **9a. 初始化Buffer Pool**
         
         loop **应用Redo（追赶）**
-            **InnoDB**->>**BP**: **10a. 应用Redo**
-            **BP**->>**BP**: **更新页面**
+            InnoDB->>BP: **10a. 应用Redo**
+            BP->>BP: **更新页面**
         end
         
-        **InnoDB**->>**InnoDB**: **11a. 追赶完成<br/>Applied LSN=50000**
+        InnoDB->>InnoDB: **11a. 追赶完成<br/>Applied LSN=50000**
         
     else **Gap较大（>= 5000条）**
-        **InnoDB**->>**Storage**: **7b. 请求最新快照<br/>Snapshot at LSN=49500**
-        **Storage**-->>**InnoDB**: **8b. 返回快照（Base Pages）**
+        InnoDB->>Storage: **7b. 请求最新快照<br/>Snapshot at LSN=49500**
+        Storage-->>InnoDB: **8b. 返回快照（Base Pages）**
         
-        **InnoDB**->>**BP**: **9b. 加载快照到Buffer Pool**
+        InnoDB->>BP: **9b. 加载快照到Buffer Pool**
         
-        **InnoDB**->>**Storage**: **10b. 读取增量Redo<br/>LSN 49500-50000**
-        **Storage**-->>**InnoDB**: **11b. 返回500条Redo**
+        InnoDB->>Storage: **10b. 读取增量Redo<br/>LSN 49500-50000**
+        Storage-->>InnoDB: **11b. 返回500条Redo**
         
-        **InnoDB**->>**BP**: **12b. 应用增量Redo**
+        InnoDB->>BP: **12b. 应用增量Redo**
         
-        **InnoDB**->>**InnoDB**: **13b. 追赶完成<br/>Applied LSN=50000**
+        InnoDB->>InnoDB: **13b. 追赶完成<br/>Applied LSN=50000**
     end
     
-    **InnoDB**->>**ApplyThread**: **14. 启动Redo应用线程**
+    InnoDB->>ApplyThread: **14. 启动Redo应用线程**
     
-    **ApplyThread**->>**Storage**: **15. 订阅Redo Log流<br/>Starting LSN=50000**
-    **Storage**-->>**ApplyThread**: **16. 确认订阅，开始推送**
+    ApplyThread->>Storage: **15. 订阅Redo Log流<br/>Starting LSN=50000**
+    Storage-->>ApplyThread: **16. 确认订阅，开始推送**
     
-    **InnoDB**->>**InnoDB**: **17. 标记实例为READ_ONLY**
-    **InnoDB**-->>**Mysqld**: **18. InnoDB就绪**
+    InnoDB->>InnoDB: **17. 标记实例为READ_ONLY**
+    InnoDB-->>Mysqld: **18. InnoDB就绪**
     
-    **Mysqld**->>**Mysqld**: **19. 开始接受只读连接**
+    Mysqld->>Mysqld: **19. 开始接受只读连接**
     
-    Note over **ApplyThread**: **后台持续应用Redo**
+    Note over ApplyThread: **后台持续应用Redo**
     
     loop **实时应用新Redo**
-        **Storage**-->>**ApplyThread**: **20. 推送新Redo**
-        **ApplyThread**->>**BP**: **21. 应用到Buffer Pool**
+        Storage-->>ApplyThread: **20. 推送新Redo**
+        ApplyThread->>BP: **21. 应用到Buffer Pool**
     end
     
     rect rgb(255, 250, 205)
-    Note over **Sys**,**ApplyThread**: **从库重启：< 10秒追赶 + 立即接受查询**
+    Note over Sys,ApplyThread: **从库重启：< 10秒追赶 + 立即接受查询**
     end
 ```
 
@@ -5408,52 +5408,52 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **App** as **应用程序**
-    participant **Primary** as **主实例**
-    participant **Replica** as **只读副本**
-    participant **Storage** as **存储层**
-    participant **Metadata** as **元数据服务**
+    participant App as "应用程序"
+    participant Primary as "主实例"
+    participant Replica as "只读副本"
+    participant Storage as "存储层"
+    participant Metadata as "元数据服务"
     
-    Note over **Primary**,**Replica**: **1. 读视图（Read View）同步**
+    Note over Primary,Replica: **1. 读视图（Read View）同步**
     
-    **Primary**->>**Primary**: **T1: 开启事务<br/>生成Read View<br/>TrxID=100, ActiveList=[99,98]**
+    Primary->>Primary: **T1: 开启事务<br/>生成Read View<br/>TrxID=100, ActiveList=[99,98]**
     
-    **Primary**->>**Storage**: **T2: 写入Read View Redo<br/>MLOG_READ_VIEW**
-    **Storage**->>**Storage**: **T3: 持久化Read View**
-    **Storage**-->>**Replica**: **T4: 推送Read View Redo**
+    Primary->>Storage: **T2: 写入Read View Redo<br/>MLOG_READ_VIEW**
+    Storage->>Storage: **T3: 持久化Read View**
+    Storage-->>Replica: **T4: 推送Read View Redo**
     
-    **Replica**->>**Replica**: **T5: 应用Read View<br/>构建本地MVCC**
+    Replica->>Replica: **T5: 应用Read View<br/>构建本地MVCC**
     
-    Note over **Primary**,**Replica**: **2. 统计信息同步**
+    Note over Primary,Replica: **2. 统计信息同步**
     
-    **Primary**->>**Primary**: **T6: 后台统计更新<br/>UPDATE innodb_table_stats**
-    **Primary**->>**Storage**: **T7: 统计表Redo**
-    **Storage**-->>**Replica**: **T8: 推送统计Redo**
-    **Replica**->>**Replica**: **T9: 更新本地统计缓存**
+    Primary->>Primary: **T6: 后台统计更新<br/>UPDATE innodb_table_stats**
+    Primary->>Storage: **T7: 统计表Redo**
+    Storage-->>Replica: **T8: 推送统计Redo**
+    Replica->>Replica: **T9: 更新本地统计缓存**
     
-    Note over **Primary**,**Replica**: **3. DDL变更同步**
+    Note over Primary,Replica: **3. DDL变更同步**
     
-    **Primary**->>**Primary**: **T10: 执行DDL<br/>ALTER TABLE users ADD COLUMN email**
-    **Primary**->>**Storage**: **T11: DDL Redo + Schema Version++**
-    **Storage**-->>**Replica**: **T12: 推送DDL Redo**
-    **Replica**->>**Replica**: **T13: 更新Schema Cache<br/>SchemaVersion=N+1**
+    Primary->>Primary: **T10: 执行DDL<br/>ALTER TABLE users ADD COLUMN email**
+    Primary->>Storage: **T11: DDL Redo + Schema Version++**
+    Storage-->>Replica: **T12: 推送DDL Redo**
+    Replica->>Replica: **T13: 更新Schema Cache<br/>SchemaVersion=N+1**
     
-    Note over **Primary**,**Replica**: **4. VDL/VCL元数据同步**
+    Note over Primary,Replica: **4. VDL/VCL元数据同步**
     
-    **Primary**->>**Storage**: **T14: 写入数据（LSN=5000）**
-    **Storage**->>**Storage**: **T15: 更新VDL=5000**
-    **Replica**->>**Storage**: **T16: 查询VDL**
-    **Storage**-->>**Replica**: **T17: 返回VDL=5000**
-    **Replica**->>**Replica**: **T18: 检查本地Applied LSN=4950<br/>需要追赶**
+    Primary->>Storage: **T14: 写入数据（LSN=5000）**
+    Storage->>Storage: **T15: 更新VDL=5000**
+    Replica->>Storage: **T16: 查询VDL**
+    Storage-->>Replica: **T17: 返回VDL=5000**
+    Replica->>Replica: **T18: 检查本地Applied LSN=4950<br/>需要追赶**
     
-    Note over **Primary**,**Replica**: **5. 故障切换通知（通过RDS控制平面）**
+    Note over Primary,Replica: **5. 故障切换通知（通过RDS控制平面）**
     
-    **Metadata**->>**Primary**: **T19: 心跳检测失败**
-    **Metadata**->>**Replica**: **T20: 通知提升为主**
-    **Replica**->>**Replica**: **T21: 升主流程**
+    Metadata->>Primary: **T19: 心跳检测失败**
+    Metadata->>Replica: **T20: 通知提升为主**
+    Replica->>Replica: **T21: 升主流程**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Storage**: **关键：读节点与主实例不直接交互，<br/>通过共享存储层间接同步**
+    Note over Primary,Storage: **关键：读节点与主实例不直接交互，<br/>通过共享存储层间接同步**
     end
 ```
 
@@ -5501,7 +5501,7 @@ Aurora的Read View（MVCC读视图）同步**不是从主实例直接获取的**
 
 ```mermaid
 graph TB
-    subgraph "**MySQL传统写入流程**"
+    subgraph "MySQL传统写入流程"
         A[**修改Buffer Pool中的页<br/>16KB数据页**]
         B[**写入DoubleWrite Buffer<br/>（2MB共享空间）**]
         C[**fsync DoubleWrite**]
@@ -5509,7 +5509,7 @@ graph TB
         E[**fsync数据文件**]
     end
     
-    subgraph "**问题：为什么需要DoubleWrite？**"
+    subgraph "问题：为什么需要DoubleWrite？"
         F[**磁盘扇区512B/4KB<br/>页面16KB需要多次写**]
         G[**崩溃时可能只写了部分<br/>（8KB/12KB）**]
         H[**页面损坏<br/>Checksum失败**]
@@ -5550,29 +5550,29 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **Storage** as **存储节点**
-    participant **Disk** as **SSD/NVMe磁盘**
+    participant Primary as "主实例"
+    participant Storage as "存储节点"
+    participant Disk as "SSD/NVMe磁盘"
     
-    Note over **Primary**: **计算层：只写Redo Log**
+    Note over Primary: **计算层：只写Redo Log**
     
-    **Primary**->>**Storage**: **1. 发送Redo Log<br/>（不发送完整页面）**
-    **Storage**->>**Storage**: **2. 接收Redo到内存<br/>Log Buffer**
+    Primary->>Storage: **1. 发送Redo Log<br/>（不发送完整页面）**
+    Storage->>Storage: **2. 接收Redo到内存<br/>Log Buffer**
     
-    **Storage**->>**Disk**: **3. 写入Redo Log<br/>（顺序写，原子操作）**
-    **Disk**-->>**Storage**: **4. 确认持久化**
+    Storage->>Disk: **3. 写入Redo Log<br/>（顺序写，原子操作）**
+    Disk-->>Storage: **4. 确认持久化**
     
-    Note over **Storage**: **存储层：延迟物化页面**
+    Note over Storage: **存储层：延迟物化页面**
     
-    **Storage**->>**Storage**: **5. 后台异步：<br/>应用Redo到页面**
+    Storage->>Storage: **5. 后台异步：<br/>应用Redo到页面**
     
-    **Storage**->>**Disk**: **6. 写入物化后的页面<br/>（使用原子写API）**
-    **Disk**-->>**Storage**: **7. 原子写完成**
+    Storage->>Disk: **6. 写入物化后的页面<br/>（使用原子写API）**
+    Disk-->>Storage: **7. 原子写完成**
     
-    Note over **Storage**: **原子写保证：<br/>要么全部写入，要么全部失败**
+    Note over Storage: **原子写保证：<br/>要么全部写入，要么全部失败**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Disk**: **关键：存储层使用SSD原子写API，<br/>无需DoubleWrite**
+    Note over Primary,Disk: **关键：存储层使用SSD原子写API，<br/>无需DoubleWrite**
     end
 ```
 
@@ -5689,30 +5689,30 @@ def read_page(page_id):
 
 ```mermaid
 graph TB
-    subgraph "**元数据服务集群（多AZ）**"
-        subgraph "**AZ1**"
+    subgraph "元数据服务集群（多AZ）"
+        subgraph "AZ1"
             M1[**元数据节点1<br/>（Leader）**]
             M2[**元数据节点2<br/>（Follower）**]
         end
         
-        subgraph "**AZ2**"
+        subgraph "AZ2"
             M3[**元数据节点3<br/>（Follower）**]
             M4[**元数据节点4<br/>（Follower）**]
         end
         
-        subgraph "**AZ3**"
+        subgraph "AZ3"
             M5[**元数据节点5<br/>（Follower）**]
         end
     end
     
-    subgraph "**持久化存储（DynamoDB）**"
+    subgraph "持久化存储（DynamoDB）"
         D1[**Volume表**]
         D2[**PG映射表**]
         D3[**Segment表**]
         D4[**实例注册表**]
     end
     
-    subgraph "**缓存层（ElastiCache）**"
+    subgraph "缓存层（ElastiCache）"
         C1[**热点元数据缓存**]
     end
     
@@ -5794,37 +5794,37 @@ class SegmentReplica:
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **计算节点**
-    participant **L** as **Leader<br/>元数据节点**
-    participant **F1** as **Follower1**
-    participant **F2** as **Follower2**
-    participant **DB** as **DynamoDB**
+    participant C as "计算节点"
+    participant L as "Leader<br/>元数据节点"
+    participant F1 as "Follower1"
+    participant F2 as "Follower2"
+    participant DB as "DynamoDB"
     
-    Note over **C**,**L**: **正常情况：读取元数据**
+    Note over C,L: **正常情况：读取元数据**
     
-    **C**->>**L**: **查询PG位置<br/>PageID=12345**
-    **L**->>**L**: **检查本地缓存<br/>命中率>95%**
-    **L**-->>**C**: **返回：PG19, Nodes=[N1-N6]<br/>延迟<1ms**
+    C->>L: **查询PG位置<br/>PageID=12345**
+    L->>L: **检查本地缓存<br/>命中率>95%**
+    L-->>C: **返回：PG19, Nodes=[N1-N6]<br/>延迟<1ms**
     
-    Note over **L**,**F2**: **Leader故障场景**
+    Note over L,F2: **Leader故障场景**
     
     **L**-x**L**: **Leader崩溃**
     
-    **F1**->>**F2**: **检测心跳超时<br/>触发选举**
-    **F1**->>**F2**: **RequestVote（Term=10）**
-    **F2**-->>**F1**: **VoteGranted**
+    F1->>F2: **检测心跳超时<br/>触发选举**
+    F1->>F2: **RequestVote（Term=10）**
+    F2-->>F1: **VoteGranted**
     
-    **F1**->>**F1**: **成为新Leader<br/>Term=10**
-    **F1**->>**DB**: **读取最新元数据<br/>（恢复缓存）**
-    **DB**-->>**F1**: **返回所有元数据**
+    F1->>F1: **成为新Leader<br/>Term=10**
+    F1->>DB: **读取最新元数据<br/>（恢复缓存）**
+    DB-->>F1: **返回所有元数据**
     
-    Note over **C**,**F1**: **客户端自动重试**
+    Note over C,F1: **客户端自动重试**
     
-    **C**->>**F1**: **重试查询<br/>PageID=12345**
-    **F1**-->>**C**: **返回：PG19, Nodes=[N1-N6]<br/>总延迟<30ms（含切换）**
+    C->>F1: **重试查询<br/>PageID=12345**
+    F1-->>C: **返回：PG19, Nodes=[N1-N6]<br/>总延迟<30ms（含切换）**
     
     rect rgb(255, 250, 205)
-    Note over **L**,**DB**: **Leader切换<5秒，查询成功率>99.99%**
+    Note over L,DB: **Leader切换<5秒，查询成功率>99.99%**
     end
 ```
 
@@ -5838,19 +5838,19 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**流量控制层**"
+    subgraph "流量控制层"
         T1[**令牌桶<br/>（100万QPS）**]
         T2[**优先级队列<br/>（3级）**]
         T3[**过载保护<br/>（熔断）**]
     end
     
-    subgraph "**请求优先级**"
+    subgraph "请求优先级"
         P1[**P0：关键路径<br/>（写入、故障切换）**]
         P2[**P1：正常查询<br/>（读取元数据）**]
         P3[**P2：后台任务<br/>（GC、统计）**]
     end
     
-    subgraph "**限流策略**"
+    subgraph "限流策略"
         L1[**单实例限流<br/>（10000 QPS）**]
         L2[**全局限流<br/>（100万QPS）**]
         L3[**按优先级限流**]
@@ -5888,37 +5888,37 @@ Aurora的主从实例是在运行时动态确定的，不是配置文件中静�
 
 ```mermaid
 sequenceDiagram
-    participant **RDS** as **RDS控制平面**
-    participant **Instance** as **数据库实例**
-    participant **Metadata** as **元数据服务**
-    participant **Storage** as **存储层**
+    participant RDS as "RDS控制平面"
+    participant Instance as "数据库实例"
+    participant Metadata as "元数据服务"
+    participant Storage as "存储层"
     
-    Note over **RDS**: **实例启动时**
+    Note over RDS: **实例启动时**
     
-    **RDS**->>**Instance**: **1. 启动实例<br/>参数：cluster_id, instance_id**
-    **Instance**->>**Instance**: **2. 初始化引擎<br/>角色：UNKNOWN**
+    RDS->>Instance: **1. 启动实例<br/>参数：cluster_id, instance_id**
+    Instance->>Instance: **2. 初始化引擎<br/>角色：UNKNOWN**
     
-    **Instance**->>**Metadata**: **3. 查询实例角色<br/>instance_id=db-inst-1**
-    **Metadata**-->>**Instance**: **4. 返回角色：READ_REPLICA**
+    Instance->>Metadata: **3. 查询实例角色<br/>instance_id=db-inst-1**
+    Metadata-->>Instance: **4. 返回角色：READ_REPLICA**
     
-    **Instance**->>**Instance**: **5. 配置为只读副本<br/>read_only=ON**
+    Instance->>Instance: **5. 配置为只读副本<br/>read_only=ON**
     
-    **Instance**->>**Storage**: **6. 订阅Redo流<br/>Starting LSN=从控制文件读取**
-    **Storage**-->>**Instance**: **7. 确认订阅**
+    Instance->>Storage: **6. 订阅Redo流<br/>Starting LSN=从控制文件读取**
+    Storage-->>Instance: **7. 确认订阅**
     
-    **Instance**->>**Metadata**: **8. 注册实例<br/>status=ACTIVE, role=REPLICA**
+    Instance->>Metadata: **8. 注册实例<br/>status=ACTIVE, role=REPLICA**
     
-    Note over **RDS**: **故障切换：提升为主**
+    Note over RDS: **故障切换：提升为主**
     
-    **RDS**->>**Instance**: **9. 发送Promotion命令<br/>PROMOTE_TO_MASTER**
+    RDS->>Instance: **9. 发送Promotion命令<br/>PROMOTE_TO_MASTER**
     
-    **Instance**->>**Metadata**: **10. 更新角色<br/>role=PRIMARY**
-    **Metadata**->>**Storage**: **11. 注册主实例<br/>master=db-inst-1**
+    Instance->>Metadata: **10. 更新角色<br/>role=PRIMARY**
+    Metadata->>Storage: **11. 注册主实例<br/>master=db-inst-1**
     
-    **Instance**->>**Instance**: **12. 切换角色<br/>read_only=OFF<br/>开始接受写入**
+    Instance->>Instance: **12. 切换角色<br/>read_only=OFF<br/>开始接受写入**
     
     rect rgb(255, 250, 205)
-    Note over **RDS**,**Storage**: **关键：角色是动态的，由元数据服务管理**
+    Note over RDS,Storage: **关键：角色是动态的，由元数据服务管理**
     end
 ```
 
@@ -6031,19 +6031,19 @@ class InstanceRegistry:
 
 ```mermaid
 graph TB
-    subgraph "**正常运行状态**"
+    subgraph "正常运行状态"
         A1[**主实例<br/>role=PRIMARY<br/>read_only=OFF**]
         A2[**副本1<br/>role=REPLICA<br/>read_only=ON**]
         A3[**副本2<br/>role=REPLICA<br/>read_only=ON**]
     end
     
-    subgraph "**主实例故障**"
+    subgraph "主实例故障"
         B1[**检测故障<br/>心跳超时**]
         B2[**选举新主<br/>选择副本1**]
         B3[**发送Promotion**]
     end
     
-    subgraph "**副本1提升**"
+    subgraph "副本1提升"
         C1[**收到Promotion命令**]
         C2[**追赶到VDL**]
         C3[**注册为主实例**]
@@ -6051,7 +6051,7 @@ graph TB
         C5[**role=PRIMARY**]
     end
     
-    subgraph "**其他副本调整**"
+    subgraph "其他副本调整"
         D1[**副本2继续运行**]
         D2[**更新主实例端点<br/>指向副本1**]
         D3[**继续从存储层拉取Redo**]
@@ -6098,11 +6098,11 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**Aurora Volume（逻辑卷）**"
+    subgraph "Aurora Volume（逻辑卷）"
         V1[**Volume<br/>最大128TB**]
     end
     
-    subgraph "**Protection Group（PG层）**"
+    subgraph "Protection Group（PG层）"
         PG1[**PG-1<br/>10GB<br/>Page 0-655359**]
         PG2[**PG-2<br/>10GB<br/>Page 655360-1310719**]
         PG3[**PG-3<br/>10GB<br/>Page 1310720-1966079**]
@@ -6110,8 +6110,8 @@ graph TB
         PGN[**PG-N<br/>10GB<br/>Page ...**]
     end
     
-    subgraph "**Segment（物理副本）**"
-        subgraph "**PG-1的6个Segment**"
+    subgraph "Segment（物理副本）"
+        subgraph "PG-1的6个Segment"
             S11[**Segment-1<br/>Node1/AZ1**]
             S12[**Segment-2<br/>Node2/AZ1**]
             S13[**Segment-3<br/>Node3/AZ2**]
@@ -6184,49 +6184,49 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **Meta** as **元数据服务**
-    participant **Provisioner** as **存储供应器**
-    participant **Storage** as **存储节点集群**
+    participant Primary as "主实例"
+    participant Meta as "元数据服务"
+    participant Provisioner as "存储供应器"
+    participant Storage as "存储节点集群"
     
-    Note over **Primary**: **检测PG即将写满**
+    Note over Primary: **检测PG即将写满**
     
-    **Primary**->>**Meta**: **1. 查询PG-100使用情况**
-    **Meta**-->>**Primary**: **2. 返回：已使用9.5GB/10GB<br/>剩余500MB**
+    Primary->>Meta: **1. 查询PG-100使用情况**
+    Meta-->>Primary: **2. 返回：已使用9.5GB/10GB<br/>剩余500MB**
     
-    **Primary**->>**Primary**: **3. 触发扩展阈值<br/>（剩余<5%）**
+    Primary->>Primary: **3. 触发扩展阈值<br/>（剩余<5%）**
     
-    **Primary**->>**Meta**: **4. 请求扩展Volume<br/>申请新PG**
+    Primary->>Meta: **4. 请求扩展Volume<br/>申请新PG**
     
-    **Meta**->>**Meta**: **5. 检查Volume限制<br/>当前：1TB，最大：128TB**
+    Meta->>Meta: **5. 检查Volume限制<br/>当前：1TB，最大：128TB**
     
-    **Meta**->>**Provisioner**: **6. 分配新PG<br/>PG-101（10GB）**
+    Meta->>Provisioner: **6. 分配新PG<br/>PG-101（10GB）**
     
-    **Provisioner**->>**Provisioner**: **7. 选择6个存储节点<br/>（跨3个AZ）**
+    Provisioner->>Provisioner: **7. 选择6个存储节点<br/>（跨3个AZ）**
     
     par **并行创建6个Segment**
-        **Provisioner**->>**Storage**: **8a. 创建Segment-1<br/>Node1/AZ1**
-        **Provisioner**->>**Storage**: **8b. 创建Segment-2<br/>Node2/AZ1**
-        **Provisioner**->>**Storage**: **8c. 创建Segment-3<br/>Node3/AZ2**
-        **Provisioner**->>**Storage**: **8d. 创建Segment-4<br/>Node4/AZ2**
-        **Provisioner**->>**Storage**: **8e. 创建Segment-5<br/>Node5/AZ3**
-        **Provisioner**->>**Storage**: **8f. 创建Segment-6<br/>Node6/AZ3**
+        Provisioner->>Storage: **8a. 创建Segment-1<br/>Node1/AZ1**
+        Provisioner->>Storage: **8b. 创建Segment-2<br/>Node2/AZ1**
+        Provisioner->>Storage: **8c. 创建Segment-3<br/>Node3/AZ2**
+        Provisioner->>Storage: **8d. 创建Segment-4<br/>Node4/AZ2**
+        Provisioner->>Storage: **8e. 创建Segment-5<br/>Node5/AZ3**
+        Provisioner->>Storage: **8f. 创建Segment-6<br/>Node6/AZ3**
     end
     
-    **Storage**-->>**Provisioner**: **9. 所有Segment创建成功**
+    Storage-->>Provisioner: **9. 所有Segment创建成功**
     
-    **Provisioner**->>**Meta**: **10. 注册PG-101到元数据<br/>start_page=67108864<br/>end_page=67764223**
+    Provisioner->>Meta: **10. 注册PG-101到元数据<br/>start_page=67108864<br/>end_page=67764223**
     
-    **Meta**->>**Meta**: **11. 更新Volume元数据<br/>PG数量：100→101<br/>大小：1000GB→1010GB**
+    Meta->>Meta: **11. 更新Volume元数据<br/>PG数量：100→101<br/>大小：1000GB→1010GB**
     
-    **Meta**-->>**Primary**: **12. 扩展完成<br/>新PG可用**
+    Meta-->>Primary: **12. 扩展完成<br/>新PG可用**
     
-    **Primary**->>**Primary**: **13. 更新本地缓存<br/>新Page范围可写**
+    Primary->>Primary: **13. 更新本地缓存<br/>新Page范围可写**
     
-    **Primary**->>**Storage**: **14. 写入数据到PG-101<br/>（新页面）**
+    Primary->>Storage: **14. 写入数据到PG-101<br/>（新页面）**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Storage**: **关键：扩展自动且透明，<br/>用户无感知，耗时<1秒**
+    Note over Primary,Storage: **关键：扩展自动且透明，<br/>用户无感知，耗时<1秒**
     end
 ```
 
@@ -6254,24 +6254,24 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**PG-100（即将写满）**"
+    subgraph "PG-100（即将写满）"
         P100[**Page Range<br/>Page 65,536,000 - 66,191,359<br/>（655,360个页面）**]
         P100_Used[**已使用：654,848页<br/>剩余：512页（8MB）**]
     end
     
-    subgraph "**Page分配检测**"
-        D1{**检查：当前Page ID<br/>65,536,000 + 654,848<br/>= 66,190,848**}
-        D2{**是否超过PG范围？<br/>66,190,848 < 66,191,359**}
+    subgraph "Page分配检测"
+        D1{"检查：当前Page ID<br/>65,536,000 + 654,848<br/>= 66,190,848"}
+        D2{"是否超过PG范围？<br/>66,190,848 < 66,191,359"}
         D3[**在范围内<br/>继续使用PG-100**]
         D4[**超出范围<br/>需要新PG**]
     end
     
-    subgraph "**新PG-101创建**"
+    subgraph "新PG-101创建"
         P101[**新Page Range<br/>Page 66,191,360 - 66,846,719**]
         P101_Meta[**元数据注册<br/>start_page=66,191,360<br/>end_page=66,846,719**]
     end
     
-    subgraph "**关键：无需数据拷贝**"
+    subgraph "关键：无需数据拷贝"
         N1[**旧数据保持在PG-100**]
         N2[**新数据写入PG-101**]
         N3[**通过Page ID路由**]
@@ -6385,46 +6385,46 @@ page655361 = allocator.allocate_new_page()
 
 ```mermaid
 sequenceDiagram
-    participant **App** as **应用程序**
-    participant **Primary** as **主实例**
-    participant **Meta** as **元数据服务**
-    participant **PG0** as **PG-0<br/>（旧PG）**
-    participant **PG1** as **PG-1<br/>（新PG）**
+    participant App as "应用程序"
+    participant Primary as "主实例"
+    participant Meta as "元数据服务"
+    participant PG0 as "PG-0<br/>（旧PG）"
+    participant PG1 as "PG-1<br/>（新PG）"
     
-    Note over **App**: **写入新数据**
+    Note over App: **写入新数据**
     
-    **App**->>**Primary**: **INSERT INTO t1 VALUES (1, 'test')**
+    App->>Primary: **INSERT INTO t1 VALUES (1, 'test')**
     
-    **Primary**->>**Primary**: **1. 分配新Page ID<br/>Current: 655,360（PG-0满了）<br/>Next: 655,361**
+    Primary->>Primary: **1. 分配新Page ID<br/>Current: 655,360（PG-0满了）<br/>Next: 655,361**
     
-    **Primary**->>**Primary**: **2. 计算PG索引<br/>pg_index = 655,361 / 655,360 = 1<br/>需要PG-1**
+    Primary->>Primary: **2. 计算PG索引<br/>pg_index = 655,361 / 655,360 = 1<br/>需要PG-1**
     
-    **Primary**->>**Meta**: **3. 查询PG-1<br/>是否存在？**
-    **Meta**-->>**Primary**: **4. 不存在<br/>需要创建**
+    Primary->>Meta: **3. 查询PG-1<br/>是否存在？**
+    Meta-->>Primary: **4. 不存在<br/>需要创建**
     
-    **Primary**->>**Meta**: **5. 请求创建PG-1<br/>Page范围：655,360 - 1,310,719**
+    Primary->>Meta: **5. 请求创建PG-1<br/>Page范围：655,360 - 1,310,719**
     
-    **Meta**->>**Meta**: **6. 分配6个Segment<br/>跨3个AZ**
-    **Meta**->>**PG1**: **7. 创建PG-1**
-    **PG1**-->>**Meta**: **8. 创建成功**
+    Meta->>Meta: **6. 分配6个Segment<br/>跨3个AZ**
+    Meta->>PG1: **7. 创建PG-1**
+    PG1-->>Meta: **8. 创建成功**
     
-    **Meta**-->>**Primary**: **9. PG-1已就绪<br/>Segment列表：[S1-S6]**
+    Meta-->>Primary: **9. PG-1已就绪<br/>Segment列表：[S1-S6]**
     
-    **Primary**->>**Primary**: **10. 生成Redo Log<br/>Page ID=655,361**
+    Primary->>Primary: **10. 生成Redo Log<br/>Page ID=655,361**
     
-    **Primary**->>**PG1**: **11. 写入Redo到PG-1<br/>（Quorum 4/6）**
-    **PG1**-->>**Primary**: **12. ACK**
+    Primary->>PG1: **11. 写入Redo到PG-1<br/>（Quorum 4/6）**
+    PG1-->>Primary: **12. ACK**
     
-    Note over **PG0**: **旧数据不受影响**
+    Note over PG0: **旧数据不受影响**
     
-    **App**->>**Primary**: **SELECT * FROM t1 WHERE id=0<br/>（旧数据，在PG-0）**
-    **Primary**->>**Primary**: **13. 查询Page ID=100<br/>pg_index = 100 / 655,360 = 0<br/>属于PG-0**
-    **Primary**->>**PG0**: **14. 读取Page 100**
-    **PG0**-->>**Primary**: **15. 返回数据**
-    **Primary**-->>**App**: **16. 返回结果**
+    App->>Primary: **SELECT * FROM t1 WHERE id=0<br/>（旧数据，在PG-0）**
+    Primary->>Primary: **13. 查询Page ID=100<br/>pg_index = 100 / 655,360 = 0<br/>属于PG-0**
+    Primary->>PG0: **14. 读取Page 100**
+    PG0-->>Primary: **15. 返回数据**
+    Primary-->>App: **16. 返回结果**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**PG1**: **关键：通过Page ID自动路由到正确的PG<br/>无需数据拷贝**
+    Note over Primary,PG1: **关键：通过Page ID自动路由到正确的PG<br/>无需数据拷贝**
     end
 ```
 
@@ -6501,27 +6501,27 @@ segments = mapping_table.get_segment_locations(page_id=1000000)
 
 ```mermaid
 graph TB
-    subgraph "**阶段1：检测即将写满**"
+    subgraph "阶段1：检测即将写满"
         A1[**当前：PG-0<br/>Page 0-655,359**]
         A2[**已分配：655,000个页面**]
         A3[**剩余：359个页面**]
         A4[**触发预分配阈值**]
     end
     
-    subgraph "**阶段2：创建新PG**"
+    subgraph "阶段2：创建新PG"
         B1[**请求创建PG-1**]
         B2[**分配Page范围<br/>655,360 - 1,310,719**]
         B3[**创建6个Segment**]
         B4[**注册元数据**]
     end
     
-    subgraph "**阶段3：无缝切换**"
+    subgraph "阶段3：无缝切换"
         C1[**Page 655,359<br/>最后一个页面写入PG-0**]
         C2[**Page 655,360<br/>第一个页面写入PG-1**]
         C3[**用户无感知切换**]
     end
     
-    subgraph "**阶段4：并行运行**"
+    subgraph "阶段4：并行运行"
         D1[**PG-0：保存Page 0-655,359<br/>继续提供读取服务**]
         D2[**PG-1：接收新写入<br/>Page 655,360+**]
         D3[**两个PG独立运行**]
@@ -6569,14 +6569,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**传统数据库（如MySQL）**"
+    subgraph "传统数据库（如MySQL）"
         T1[**Page 1<br/>完整数据：16KB**]
         T2[**修改后<br/>完整数据：16KB**]
         T3[**再次修改<br/>完整数据：16KB**]
         T_Note[**每次都覆盖写<br/>存储开销：16KB**]
     end
     
-    subgraph "**Aurora存储层**"
+    subgraph "Aurora存储层"
         A1[**Page 1 Base Version<br/>完整数据：16KB**]
         A2[**Redo Log 1<br/>只记录修改：500B**]
         A3[**Redo Log 2<br/>只记录修改：300B**]
@@ -6646,37 +6646,37 @@ Aurora的关键设计：**一个Page的Redo Log可以分布在多个PG中**！
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **PG0** as **PG-0<br/>（存储Page 1基础版本）**
-    participant **PG1** as **PG-1<br/>（存储Page 1的部分Redo）**
-    participant **PG2** as **PG-2<br/>（存储Page 1的部分Redo）**
+    participant Primary as "主实例"
+    participant PG0 as "PG-0<br/>（存储Page 1基础版本）"
+    participant PG1 as "PG-1<br/>（存储Page 1的部分Redo）"
+    participant PG2 as "PG-2<br/>（存储Page 1的部分Redo）"
     
-    Note over **Primary**: **初始状态：Page 1在PG-0**
+    Note over Primary: **初始状态：Page 1在PG-0**
     
-    **Primary**->>**PG0**: **1. 初始化Page 1<br/>Base Version: 16KB<br/>LSN: 1000**
+    Primary->>PG0: **1. 初始化Page 1<br/>Base Version: 16KB<br/>LSN: 1000**
     
-    Note over **Primary**: **开始大量修改Page 1**
+    Note over Primary: **开始大量修改Page 1**
     
     loop **前5GB的修改**
-        **Primary**->>**PG0**: **2. 写入Redo Log<br/>Page 1, LSN: 1001-5000<br/>累积：5GB**
+        Primary->>PG0: **2. 写入Redo Log<br/>Page 1, LSN: 1001-5000<br/>累积：5GB**
     end
     
-    **PG0**->>**PG0**: **3. 检测PG即将写满<br/>已使用：9.5GB/10GB**
+    PG0->>PG0: **3. 检测PG即将写满<br/>已使用：9.5GB/10GB**
     
-    **PG0**->>**Primary**: **4. 通知：PG-0接近容量上限**
+    PG0->>Primary: **4. 通知：PG-0接近容量上限**
     
-    **Primary**->>**Primary**: **5. 创建新PG-1<br/>继续写入Page 1的Redo**
+    Primary->>Primary: **5. 创建新PG-1<br/>继续写入Page 1的Redo**
     
     loop **后3GB的修改**
-        **Primary**->>**PG1**: **6. 写入Redo Log<br/>Page 1, LSN: 5001-8000<br/>累积：3GB**
+        Primary->>PG1: **6. 写入Redo Log<br/>Page 1, LSN: 5001-8000<br/>累积：3GB**
     end
     
-    **PG1**->>**PG1**: **7. PG-1也快写满<br/>已使用：9GB/10GB**
+    PG1->>PG1: **7. PG-1也快写满<br/>已使用：9GB/10GB**
     
-    **Primary**->>**PG2**: **8. 继续写入Redo到PG-2<br/>Page 1, LSN: 8001+**
+    Primary->>PG2: **8. 继续写入Redo到PG-2<br/>Page 1, LSN: 8001+**
     
     rect rgb(255, 250, 205)
-    Note over **PG0**,**PG2**: **关键：Page 1的Redo分布在3个PG中<br/>PG-0: Base + 5GB Redo<br/>PG-1: 3GB Redo<br/>PG-2: 后续Redo**
+    Note over PG0,PG2: **关键：Page 1的Redo分布在3个PG中<br/>PG-0: Base + 5GB Redo<br/>PG-1: 3GB Redo<br/>PG-2: 后续Redo**
     end
 ```
 
@@ -6773,14 +6773,14 @@ page1 = storage.materialize_page(page_id=1, target_lsn=10000)
 
 ```mermaid
 graph TB
-    subgraph "**Coalescing前：Redo链过长**"
+    subgraph "Coalescing前：Redo链过长"
         B1[**Base Page<br/>LSN: 1000<br/>16KB**]
         R1[**Redo 1<br/>LSN: 1001-2000<br/>2GB**]
         R2[**Redo 2<br/>LSN: 2001-3000<br/>3GB**]
         R3[**Redo 3<br/>LSN: 3001-4000<br/>3GB**]
     end
     
-    subgraph "**Coalescing后：新Base Version**"
+    subgraph "Coalescing后：新Base Version"
         B2[**New Base Page<br/>LSN: 4000<br/>16KB<br/>（已应用所有Redo）**]
         R4[**后续Redo<br/>LSN: 4001+**]
     end
@@ -6865,17 +6865,17 @@ class PageCoalescingManager:
 
 ```mermaid
 graph TB
-    subgraph "**存储结构**"
-        subgraph "**PG-0**"
+    subgraph "存储结构"
+        subgraph "PG-0"
             P0_Base[**Page 1 Base Version<br/>LSN: 1000<br/>大小：16KB（固定）**]
             P0_Redo1[**Page 1 Redo<br/>LSN: 1001-5000<br/>大小：5GB**]
         end
         
-        subgraph "**PG-1**"
+        subgraph "PG-1"
             P1_Redo2[**Page 1 Redo<br/>LSN: 5001-8000<br/>大小：3GB**]
         end
         
-        subgraph "**PG-2（Coalescing后）**"
+        subgraph "PG-2（Coalescing后）"
             P2_NewBase[**Page 1 New Base<br/>LSN: 8000<br/>大小：16KB（固定）**]
             P2_NewRedo[**Page 1 New Redo<br/>LSN: 8001+**]
         end
@@ -6977,48 +6977,48 @@ print(f"Base Page是否膨胀：{info['is_base_page_bloated']}")  # 输出：Fal
 
 ```mermaid
 sequenceDiagram
-    participant **Client** as **客户端**
-    participant **Primary** as **主实例**
-    participant **PG0** as **PG-0<br/>（Base + 5GB Redo）**
-    participant **PG1** as **PG-1<br/>（3GB Redo）**
-    participant **PG2** as **PG-2<br/>（新Base）**
-    participant **Coalescing** as **后台Coalescing**
+    participant Client as "客户端"
+    participant Primary as "主实例"
+    participant PG0 as "PG-0<br/>（Base + 5GB Redo）"
+    participant PG1 as "PG-1<br/>（3GB Redo）"
+    participant PG2 as "PG-2<br/>（新Base）"
+    participant Coalescing as "后台Coalescing"
     
-    Note over **Client**: **场景1：读取Page 1**
+    Note over Client: **场景1：读取Page 1**
     
-    **Client**->>**Primary**: **1. SELECT查询<br/>需要读取Page 1**
+    Client->>Primary: **1. SELECT查询<br/>需要读取Page 1**
     
-    **Primary**->>**PG0**: **2. 读取Base Page<br/>LSN: 1000**
-    **PG0**-->>**Primary**: **3. 返回Base（16KB）**
+    Primary->>PG0: **2. 读取Base Page<br/>LSN: 1000**
+    PG0-->>Primary: **3. 返回Base（16KB）**
     
-    **Primary**->>**PG0**: **4. 读取Redo<br/>LSN: 1001-5000**
-    **PG0**-->>**Primary**: **5. 返回Redo（5GB）**
+    Primary->>PG0: **4. 读取Redo<br/>LSN: 1001-5000**
+    PG0-->>Primary: **5. 返回Redo（5GB）**
     
-    **Primary**->>**PG1**: **6. 读取Redo<br/>LSN: 5001-8000**
-    **PG1**-->>**Primary**: **7. 返回Redo（3GB）**
+    Primary->>PG1: **6. 读取Redo<br/>LSN: 5001-8000**
+    PG1-->>Primary: **7. 返回Redo（3GB）**
     
-    **Primary**->>**Primary**: **8. 物化Page<br/>Base（16KB）+ Redo（8GB）<br/>= 物化Page（16KB）**
+    Primary->>Primary: **8. 物化Page<br/>Base（16KB）+ Redo（8GB）<br/>= 物化Page（16KB）**
     
-    **Primary**-->>**Client**: **9. 返回查询结果<br/>（基于物化Page）**
+    Primary-->>Client: **9. 返回查询结果<br/>（基于物化Page）**
     
-    Note over **Coalescing**: **场景2：后台Coalescing**
+    Note over Coalescing: **场景2：后台Coalescing**
     
-    **Coalescing**->>**Coalescing**: **10. 检测到Redo过多<br/>Base + 8GB Redo**
+    Coalescing->>Coalescing: **10. 检测到Redo过多<br/>Base + 8GB Redo**
     
-    **Coalescing**->>**PG0**: **11. 读取Base + Redo**
-    **Coalescing**->>**PG1**: **12. 读取Redo**
+    Coalescing->>PG0: **11. 读取Base + Redo**
+    Coalescing->>PG1: **12. 读取Redo**
     
-    **Coalescing**->>**Coalescing**: **13. 物化为新Base<br/>仍然是16KB！**
+    Coalescing->>Coalescing: **13. 物化为新Base<br/>仍然是16KB！**
     
-    **Coalescing**->>**PG2**: **14. 写入新Base Page<br/>LSN: 8000, 大小：16KB**
+    Coalescing->>PG2: **14. 写入新Base Page<br/>LSN: 8000, 大小：16KB**
     
-    **Coalescing**->>**Coalescing**: **15. 标记旧Base+Redo<br/>可GC**
+    Coalescing->>Coalescing: **15. 标记旧Base+Redo<br/>可GC**
     
-    **Coalescing**->>**PG0**: **16. 垃圾回收<br/>删除旧Base和Redo**
-    **Coalescing**->>**PG1**: **17. 垃圾回收<br/>删除Redo**
+    Coalescing->>PG0: **16. 垃圾回收<br/>删除旧Base和Redo**
+    Coalescing->>PG1: **17. 垃圾回收<br/>删除Redo**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**PG2**: **关键：<br/>1. Base Page永远是16KB（不膨胀）<br/>2. Redo会累积但可Coalescing<br/>3. 新Base替换旧Base，大小不变**
+    Note over Primary,PG2: **关键：<br/>1. Base Page永远是16KB（不膨胀）<br/>2. Redo会累积但可Coalescing<br/>3. 新Base替换旧Base，大小不变**
     end
 ```
 
@@ -7175,8 +7175,8 @@ print(f"新Base Page大小：{location['base_version']['size']} Bytes（仍是16
 
 ```mermaid
 graph TB
-    subgraph "**单个PG（10GB）的内部结构**"
-        subgraph "**区域1：Page Data区（~60%）**"
+    subgraph "单个PG（10GB）的内部结构"
+        subgraph "区域1：Page Data区（~60%）"
             PD1[**Base Page 存储**]
             PD2[**Page 1: 16KB**]
             PD3[**Page 2: 16KB**]
@@ -7184,14 +7184,14 @@ graph TB
             PD5[**Page N: 16KB**]
         end
         
-        subgraph "**区域2：Redo Log区（~35%）**"
+        subgraph "区域2：Redo Log区（~35%）"
             RL1[**Redo Log 存储**]
             RL2[**Redo Batch 1**]
             RL3[**Redo Batch 2**]
             RL4[**...**]
         end
         
-        subgraph "**区域3：元数据区（~5%）**"
+        subgraph "区域3：元数据区（~5%）"
             M1[**PG Header**]
             M2[**Page索引**]
             M3[**LSN映射**]
@@ -7327,19 +7327,19 @@ print(f"Redo Log是否接近满：{info['is_redo_log_full']}")
 
 ```mermaid
 graph TB
-    subgraph "**MySQL Page（逻辑概念）**"
+    subgraph "MySQL Page（逻辑概念）"
         MP1[**Page ID: 全局唯一标识**]
         MP2[**Page Size: 固定16KB**]
         MP3[**Page Content: 用户数据**]
     end
     
-    subgraph "**PG中的Page Data区**"
+    subgraph "PG中的Page Data区"
         PG1[**物理存储位置<br/>Offset: 0-6GB**]
         PG2[**存储多个Page<br/>每个16KB**]
         PG3[**Page 1: Offset 0-16KB<br/>Page 2: Offset 16KB-32KB<br/>...**]
     end
     
-    subgraph "**Page范围管理**"
+    subgraph "Page范围管理"
         PR1[**PG-0管理<br/>Page ID: 0-393,215**]
         PR2[**PG-1管理<br/>Page ID: 393,216-786,431**]
     end
@@ -7460,17 +7460,17 @@ print(f"记录大小: {len(full_record)} Bytes")  # 输出：102,400 Bytes
 
 ```mermaid
 graph TB
-    subgraph "**情况1：Page Data区写满**"
+    subgraph "情况1：Page Data区写满"
         C1_1[**已分配393,216个Page<br/>Page Data区：6GB/6GB**]
         C1_2[**Redo Log区：2GB/3.5GB<br/>仍有空间**]
-        C1_3{**需要分配新Page？**}
+        C1_3{"需要分配新Page？"}
         C1_4[**分配新PG-1<br/>管理新的Page ID范围**]
     end
     
-    subgraph "**情况2：Redo Log区写满**"
+    subgraph "情况2：Redo Log区写满"
         C2_1[**Page Data区：4GB/6GB<br/>仍有空间**]
         C2_2[**Redo Log区：3.5GB/3.5GB<br/>已满**]
-        C2_3{**需要写入新Redo？**}
+        C2_3{"需要写入新Redo？"}
         C2_4[**切换到新PG-1<br/>继续写入Redo**]
     end
     
@@ -7499,7 +7499,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**存储节点服务组件**"
+    subgraph "存储节点服务组件"
         A[**Redo Receiver<br/>接收Redo日志**]
         B[**Log Applicator<br/>应用Redo到页面**]
         C[**Page Materializer<br/>页面物化**]
@@ -7512,7 +7512,7 @@ graph TB
         J[**Page Server<br/>读取服务**]
     end
     
-    subgraph "**对外提供的API**"
+    subgraph "对外提供的API"
         API1[**WriteRedo<br/>写入Redo**]
         API2[**ReadPage<br/>读取页面**]
         API3[**GetVDL/VCL<br/>查询LSN**]
@@ -7571,7 +7571,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**场景1：完全基于Redo恢复（理论可行）**"
+    subgraph "场景1：完全基于Redo恢复（理论可行）"
         A1[**旧主降级<br/>不刷脏页**]
         A2[**Buffer Pool中的脏页<br/>未持久化**]
         A3[**新主启动<br/>从Checkpoint LSN开始**]
@@ -7579,7 +7579,7 @@ graph TB
         A5[**数据一致性✓**]
     end
     
-    subgraph "**场景2：Aurora实际情况（需要考虑）**"
+    subgraph "场景2：Aurora实际情况（需要考虑）"
         B1[**旧主Buffer Pool<br/>有未生成Redo的修改？**]
         B2[**存储层的Page<br/>LSN可能不连续**]
         B3[**新主需要确定<br/>从哪个LSN开始**]
@@ -7614,31 +7614,31 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **OldPrimary** as **旧主**
-    participant **BP** as **Buffer Pool**
-    participant **Storage** as **存储层**
-    participant **NewPrimary** as **新主**
+    participant OldPrimary as "旧主"
+    participant BP as "Buffer Pool"
+    participant Storage as "存储层"
+    participant NewPrimary as "新主"
     
-    Note over **OldPrimary**: **计划内降级**
+    Note over OldPrimary: **计划内降级**
     
-    **OldPrimary**->>**OldPrimary**: **1. 停止接受新连接**
-    **OldPrimary**->>**OldPrimary**: **2. 等待活跃事务完成**
+    OldPrimary->>OldPrimary: **1. 停止接受新连接**
+    OldPrimary->>OldPrimary: **2. 等待活跃事务完成**
     
-    **OldPrimary**->>**BP**: **3. 获取所有脏页列表<br/>Dirty Pages: 10000个**
+    OldPrimary->>BP: **3. 获取所有脏页列表<br/>Dirty Pages: 10000个**
     
-    **OldPrimary**->>**Storage**: **4. 发送Flush命令<br/>强制物化这些脏页**
-    **Storage**->>**Storage**: **5. 应用Redo到页面<br/>更新Page LSN**
-    **Storage**-->>**OldPrimary**: **6. 刷脏完成<br/>VCL=VDL=5000**
+    OldPrimary->>Storage: **4. 发送Flush命令<br/>强制物化这些脏页**
+    Storage->>Storage: **5. 应用Redo到页面<br/>更新Page LSN**
+    Storage-->>OldPrimary: **6. 刷脏完成<br/>VCL=VDL=5000**
     
-    Note over **NewPrimary**: **新主提升**
+    Note over NewPrimary: **新主提升**
     
-    **NewPrimary**->>**Storage**: **7. 查询VDL**
-    **Storage**-->>**NewPrimary**: **8. VDL=5000<br/>所有页面已物化**
+    NewPrimary->>Storage: **7. 查询VDL**
+    Storage-->>NewPrimary: **8. VDL=5000<br/>所有页面已物化**
     
-    **NewPrimary**->>**NewPrimary**: **9. 无需应用Redo<br/>直接启动（< 5秒）**
+    NewPrimary->>NewPrimary: **9. 无需应用Redo<br/>直接启动（< 5秒）**
     
     rect rgb(255, 250, 205)
-    Note over **OldPrimary**,**NewPrimary**: **优势：新主快速启动，RTO< 5秒**
+    Note over OldPrimary,NewPrimary: **优势：新主快速启动，RTO< 5秒**
     end
 ```
 
@@ -7646,32 +7646,32 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **OldPrimary** as **旧主**
-    participant **Storage** as **存储层**
-    participant **NewPrimary** as **新主**
+    participant OldPrimary as "旧主"
+    participant Storage as "存储层"
+    participant NewPrimary as "新主"
     
-    Note over **OldPrimary**: **旧主突然崩溃**
+    Note over OldPrimary: **旧主突然崩溃**
     
     **OldPrimary**-x**OldPrimary**: **崩溃，无法刷脏**
     
-    **Storage**->>**Storage**: **1. 最后的VDL=5000<br/>VCL=4500（有gap）**
+    Storage->>Storage: **1. 最后的VDL=5000<br/>VCL=4500（有gap）**
     
-    Note over **NewPrimary**: **新主提升**
+    Note over NewPrimary: **新主提升**
     
-    **NewPrimary**->>**Storage**: **2. 查询VDL**
-    **Storage**-->>**NewPrimary**: **3. VDL=5000, VCL=4500**
+    NewPrimary->>Storage: **2. 查询VDL**
+    Storage-->>NewPrimary: **3. VDL=5000, VCL=4500**
     
-    **NewPrimary**->>**NewPrimary**: **4. Checkpoint LSN=4000<br/>需要应用LSN 4000-5000**
+    NewPrimary->>NewPrimary: **4. Checkpoint LSN=4000<br/>需要应用LSN 4000-5000**
     
-    **NewPrimary**->>**Storage**: **5. 读取Redo LSN 4000-5000<br/>（1000条）**
-    **Storage**-->>**NewPrimary**: **6. 返回Redo日志**
+    NewPrimary->>Storage: **5. 读取Redo LSN 4000-5000<br/>（1000条）**
+    Storage-->>NewPrimary: **6. 返回Redo日志**
     
-    **NewPrimary**->>**NewPrimary**: **7. 并行应用Redo<br/>重建页面状态（10-20秒）**
+    NewPrimary->>NewPrimary: **7. 并行应用Redo<br/>重建页面状态（10-20秒）**
     
-    **NewPrimary**->>**NewPrimary**: **8. 恢复完成<br/>Applied LSN=5000**
+    NewPrimary->>NewPrimary: **8. 恢复完成<br/>Applied LSN=5000**
     
     rect rgb(255, 250, 205)
-    Note over **Storage**,**NewPrimary**: **劣势：新主启动慢，RTO=10-20秒<br/>但数据一致性完全正确✓**
+    Note over Storage,NewPrimary: **劣势：新主启动慢，RTO=10-20秒<br/>但数据一致性完全正确✓**
     end
 ```
 
@@ -7701,35 +7701,35 @@ Schema Versioning是Aurora在DMS和DDL处理中的关键机制，用于管理表
 
 ```mermaid
 sequenceDiagram
-    participant **Client** as **客户端**
-    participant **Primary** as **主实例**
-    participant **DDL_Mgr** as **DDL管理器**
-    participant **Schema_Cache** as **Schema缓存**
-    participant **Storage** as **存储层**
+    participant Client as "客户端"
+    participant Primary as "主实例"
+    participant DDL_Mgr as "DDL管理器"
+    participant Schema_Cache as "Schema缓存"
+    participant Storage as "存储层"
     
-    Note over **Client**: **执行DDL操作**
+    Note over Client: **执行DDL操作**
     
-    **Client**->>**Primary**: **ALTER TABLE users<br/>ADD COLUMN email VARCHAR(255)**
+    Client->>Primary: **ALTER TABLE users<br/>ADD COLUMN email VARCHAR(255)**
     
-    **Primary**->>**DDL_Mgr**: **1. 解析DDL语句**
-    **DDL_Mgr**->>**DDL_Mgr**: **2. 验证DDL合法性**
+    Primary->>DDL_Mgr: **1. 解析DDL语句**
+    DDL_Mgr->>DDL_Mgr: **2. 验证DDL合法性**
     
-    **DDL_Mgr**->>**Schema_Cache**: **3. 读取当前Schema<br/>Version=N**
+    DDL_Mgr->>Schema_Cache: **3. 读取当前Schema<br/>Version=N**
     
-    **DDL_Mgr**->>**DDL_Mgr**: **4. 生成新Schema Version<br/>Version=N+1<br/>Timestamp=T1**
+    DDL_Mgr->>DDL_Mgr: **4. 生成新Schema Version<br/>Version=N+1<br/>Timestamp=T1**
     
-    **DDL_Mgr**->>**Primary**: **5. 执行DDL<br/>修改数据字典**
+    DDL_Mgr->>Primary: **5. 执行DDL<br/>修改数据字典**
     
-    **Primary**->>**Storage**: **6. 写入DDL Redo<br/>MLOG_DDL_SCHEMA_CHANGE<br/>SchemaVersion=N+1**
-    **Storage**->>**Storage**: **7. 持久化DDL Redo**
-    **Storage**-->>**Primary**: **8. ACK**
+    Primary->>Storage: **6. 写入DDL Redo<br/>MLOG_DDL_SCHEMA_CHANGE<br/>SchemaVersion=N+1**
+    Storage->>Storage: **7. 持久化DDL Redo**
+    Storage-->>Primary: **8. ACK**
     
-    **Primary**->>**Schema_Cache**: **9. 更新本地缓存<br/>users: Version N→N+1**
+    Primary->>Schema_Cache: **9. 更新本地缓存<br/>users: Version N→N+1**
     
-    **Primary**-->>**Client**: **10. DDL完成<br/>Query OK**
+    Primary-->>Client: **10. DDL完成<br/>Query OK**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Storage**: **关键：Schema Version随每次DDL递增**
+    Note over Primary,Storage: **关键：Schema Version随每次DDL递增**
     end
 ```
 
@@ -7796,14 +7796,14 @@ class SchemaVersion:
 
 ```mermaid
 graph TB
-    subgraph "**Schema版本存储**"
+    subgraph "Schema版本存储"
         A[**mysql.innodb_table_stats<br/>（统计表）**]
         B[**InnoDB数据字典<br/>（SYS_TABLES/SYS_COLUMNS）**]
         C[**内存缓存<br/>（Dictionary Cache）**]
         D[**Redo Log<br/>（Schema变更记录）**]
     end
     
-    subgraph "**版本维护操作**"
+    subgraph "版本维护操作"
         E[**生成新版本<br/>（DDL时）**]
         F[**查询版本<br/>（DMS/应用）**]
         G[**清理旧版本<br/>（GC）**]
@@ -7844,37 +7844,37 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **DMS** as **DMS任务**
-    participant **Primary** as **主实例**
-    participant **SchemaCache** as **Schema缓存**
-    participant **Storage** as **存储层**
+    participant DMS as "DMS任务"
+    participant Primary as "主实例"
+    participant SchemaCache as "Schema缓存"
+    participant Storage as "存储层"
     
-    Note over **DMS**: **启动CDC任务**
+    Note over DMS: **启动CDC任务**
     
-    **DMS**->>**Primary**: **1. 连接到主实例**
+    DMS->>Primary: **1. 连接到主实例**
     
-    **DMS**->>**Primary**: **2. 查询当前LSN<br/>GetCurrentLSN()**
-    **Primary**-->>**DMS**: **3. 返回LSN=10000**
+    DMS->>Primary: **2. 查询当前LSN<br/>GetCurrentLSN()**
+    Primary-->>DMS: **3. 返回LSN=10000**
     
-    **DMS**->>**Primary**: **4. 查询表Schema<br/>GetSchema(table=users, lsn=10000)**
+    DMS->>Primary: **4. 查询表Schema<br/>GetSchema(table=users, lsn=10000)**
     
-    **Primary**->>**SchemaCache**: **5. 查找Schema Version<br/>at LSN 10000**
-    **SchemaCache**-->>**Primary**: **6. 返回Schema Version=5<br/>包含3列：id, name, email**
+    Primary->>SchemaCache: **5. 查找Schema Version<br/>at LSN 10000**
+    SchemaCache-->>Primary: **6. 返回Schema Version=5<br/>包含3列：id, name, email**
     
-    **Primary**-->>**DMS**: **7. 返回Schema定义**
+    Primary-->>DMS: **7. 返回Schema定义**
     
-    **DMS**->>**DMS**: **8. 保存Schema Version=5<br/>作为基准**
+    DMS->>DMS: **8. 保存Schema Version=5<br/>作为基准**
     
-    **DMS**->>**Storage**: **9. 订阅Redo流<br/>Starting LSN=10000**
+    DMS->>Storage: **9. 订阅Redo流<br/>Starting LSN=10000**
     
-    Note over **DMS**: **持续监听Schema变更**
+    Note over DMS: **持续监听Schema变更**
     
-    **Storage**-->>**DMS**: **10. 推送DDL Redo<br/>ALTER TABLE users ADD age INT**
+    Storage-->>DMS: **10. 推送DDL Redo<br/>ALTER TABLE users ADD age INT**
     
-    **DMS**->>**DMS**: **11. 更新本地Schema<br/>Version 5→6**
+    DMS->>DMS: **11. 更新本地Schema<br/>Version 5→6**
     
     rect rgb(255, 250, 205)
-    Note over **DMS**,**Storage**: **关键：DMS根据LSN获取一致的Schema版本**
+    Note over DMS,Storage: **关键：DMS根据LSN获取一致的Schema版本**
     end
 ```
 
@@ -7882,29 +7882,29 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例**
-    participant **Storage** as **存储层**
-    participant **Replica** as **只读副本**
-    participant **SchemaCache** as **副本Schema缓存**
+    participant Primary as "主实例"
+    participant Storage as "存储层"
+    participant Replica as "只读副本"
+    participant SchemaCache as "副本Schema缓存"
     
-    Note over **Primary**: **执行DDL**
+    Note over Primary: **执行DDL**
     
-    **Primary**->>**Storage**: **1. DDL Redo<br/>ALTER TABLE users DROP COLUMN email<br/>LSN=15000, Version 6→7**
+    Primary->>Storage: **1. DDL Redo<br/>ALTER TABLE users DROP COLUMN email<br/>LSN=15000, Version 6→7**
     
-    **Storage**->>**Storage**: **2. 持久化DDL Redo**
+    Storage->>Storage: **2. 持久化DDL Redo**
     
-    **Storage**-->>**Replica**: **3. 推送DDL Redo<br/>LSN=15000**
+    Storage-->>Replica: **3. 推送DDL Redo<br/>LSN=15000**
     
-    **Replica**->>**Replica**: **4. 应用DDL Redo<br/>修改本地数据字典**
+    Replica->>Replica: **4. 应用DDL Redo<br/>修改本地数据字典**
     
-    **Replica**->>**SchemaCache**: **5. 更新Schema缓存<br/>users: Version 6→7**
+    Replica->>SchemaCache: **5. 更新Schema缓存<br/>users: Version 6→7**
     
-    **SchemaCache**->>**SchemaCache**: **6. 标记旧版本<br/>Version 6已过期**
+    SchemaCache->>SchemaCache: **6. 标记旧版本<br/>Version 6已过期**
     
-    **Replica**->>**Replica**: **7. 刷新查询计划缓存<br/>（涉及users表的查询）**
+    Replica->>Replica: **7. 刷新查询计划缓存<br/>（涉及users表的查询）**
     
     rect rgb(255, 250, 205)
-    Note over **Replica**,**SchemaCache**: **副本Schema与主实例保持一致**
+    Note over Replica,SchemaCache: **副本Schema与主实例保持一致**
     end
 ```
 
@@ -7973,20 +7973,20 @@ Aurora的Redo并行应用是提升恢复性能的关键技术：
 
 ```mermaid
 graph TB
-    subgraph "**Redo Log流**"
+    subgraph "Redo Log流"
         R1[**Redo 1<br/>LSN=1000<br/>Page 10**]
         R2[**Redo 2<br/>LSN=1001<br/>Page 20**]
         R3[**Redo 3<br/>LSN=1002<br/>Page 10**]
         R4[**Redo 4<br/>LSN=1003<br/>Page 30**]
     end
     
-    subgraph "**依赖分析**"
-        D1{**检查页面冲突**}
-        D2{**检查MTR边界**}
-        D3{**检查事务依赖**}
+    subgraph "依赖分析"
+        D1{"检查页面冲突"}
+        D2{"检查MTR边界"}
+        D3{"检查事务依赖"}
     end
     
-    subgraph "**并行应用**"
+    subgraph "并行应用"
         T1[**线程1<br/>应用Redo 1**]
         T2[**线程2<br/>应用Redo 2**]
         T3[**线程1<br/>等待，应用Redo 3**]
@@ -8121,13 +8121,13 @@ class RedoParallelApplicator:
 
 ```mermaid
 graph LR
-    subgraph "**MTR（Mini-Transaction）**"
+    subgraph "MTR（Mini-Transaction）"
         M1[**MTR-1<br/>插入B+树节点**]
         M2[**MTR-2<br/>更新用户数据**]
         M3[**MTR-3<br/>分裂B+树节点**]
     end
     
-    subgraph "**数据页（Page）**"
+    subgraph "数据页（Page）"
         P1[**Page-1<br/>索引根页**]
         P2[**Page-2<br/>索引叶子页**]
         P3[**Page-3<br/>用户数据页**]
@@ -8325,36 +8325,36 @@ dberr_t btr_page_split_and_insert(
 
 ```mermaid
 sequenceDiagram
-    participant **Trx** as **事务线程**
-    participant **MTR1** as **MTR-1<br/>分配页面**
-    participant **MTR2** as **MTR-2<br/>执行分裂**
-    participant **Storage** as **存储层**
-    participant **Recovery** as **恢复线程**
+    participant Trx as "事务线程"
+    participant MTR1 as "MTR-1<br/>分配页面"
+    participant MTR2 as "MTR-2<br/>执行分裂"
+    participant Storage as "存储层"
+    participant Recovery as "恢复线程"
     
-    Note over **Trx**: **执行B+树分裂**
+    Note over Trx: **执行B+树分裂**
     
-    **Trx**->>**MTR1**: **1. 启动MTR-1**
-    **MTR1**->>**MTR1**: **2. 分配新页面<br/>new_page_no=1001**
-    **MTR1**->>**Storage**: **3. 写入Redo<br/>MLOG_PAGE_ALLOC<br/>page_no=1001**
-    **Storage**-->>**MTR1**: **4. ACK**
-    **MTR1**->>**Trx**: **5. 提交MTR-1<br/>返回page_no=1001**
+    Trx->>MTR1: **1. 启动MTR-1**
+    MTR1->>MTR1: **2. 分配新页面<br/>new_page_no=1001**
+    MTR1->>Storage: **3. 写入Redo<br/>MLOG_PAGE_ALLOC<br/>page_no=1001**
+    Storage-->>MTR1: **4. ACK**
+    MTR1->>Trx: **5. 提交MTR-1<br/>返回page_no=1001**
     
-    **Trx**->>**MTR2**: **6. 启动MTR-2<br/>（使用page_no=1001）**
-    **MTR2**->>**MTR2**: **7. 执行分裂<br/>涉及3个页面：<br/>Parent(100), Old(200), New(1001)**
-    **MTR2**->>**Storage**: **8. 写入Redo（批量）<br/>MLOG_SPLIT<br/>pages=[100,200,1001]**
-    **Storage**-->>**MTR2**: **9. ACK**
-    **MTR2**->>**Trx**: **10. 提交MTR-2**
+    Trx->>MTR2: **6. 启动MTR-2<br/>（使用page_no=1001）**
+    MTR2->>MTR2: **7. 执行分裂<br/>涉及3个页面：<br/>Parent(100), Old(200), New(1001)**
+    MTR2->>Storage: **8. 写入Redo（批量）<br/>MLOG_SPLIT<br/>pages=[100,200,1001]**
+    Storage-->>MTR2: **9. ACK**
+    MTR2->>Trx: **10. 提交MTR-2**
     
-    Note over **Recovery**: **恢复时的并发应用**
+    Note over Recovery: **恢复时的并发应用**
     
-    **Recovery**->>**Recovery**: **11. 读取Redo流<br/>发现MTR-1和MTR-2**
+    Recovery->>Recovery: **11. 读取Redo流<br/>发现MTR-1和MTR-2**
     
-    **Recovery**->>**Recovery**: **12. 分析依赖<br/>MTR-1: page=1001<br/>MTR-2: pages=[100,200,1001]<br/>冲突：page=1001**
+    Recovery->>Recovery: **12. 分析依赖<br/>MTR-1: page=1001<br/>MTR-2: pages=[100,200,1001]<br/>冲突：page=1001**
     
-    **Recovery**->>**Recovery**: **13. 顺序应用<br/>先MTR-1，后MTR-2**
+    Recovery->>Recovery: **13. 顺序应用<br/>先MTR-1，后MTR-2**
     
     rect rgb(255, 250, 205)
-    Note over **Trx**,**Recovery**: **关键：虽然是多个MTR，<br/>但通过Page冲突检测保证顺序**
+    Note over Trx,Recovery: **关键：虽然是多个MTR，<br/>但通过Page冲突检测保证顺序**
     end
 ```
 
@@ -8413,12 +8413,12 @@ class GlobalRedo:
 
 ```mermaid
 graph TB
-    subgraph "**Redo分类**"
+    subgraph "Redo分类"
         R1[**有Page的Redo<br/>（可并行）**]
         R2[**无Page的Redo<br/>（串行）**]
     end
     
-    subgraph "**有Page Redo的并行**"
+    subgraph "有Page Redo的并行"
         P1[**Redo A<br/>Page 100**]
         P2[**Redo B<br/>Page 200**]
         P3[**Redo C<br/>Page 100**]
@@ -8428,7 +8428,7 @@ graph TB
         T3[**线程1<br/>等待，应用Redo C**]
     end
     
-    subgraph "**无Page Redo的串行**"
+    subgraph "无Page Redo的串行"
         G1[**Global Redo 1<br/>CHECKPOINT**]
         G2[**Global Redo 2<br/>TRX_COMMIT**]
         
@@ -8544,24 +8544,24 @@ for redo in redos:
 
 ```mermaid
 graph TB
-    subgraph "**Redo流分析**"
+    subgraph "Redo流分析"
         A[**读取Redo流**]
-        B{**是否有Page？**}
+        B{"是否有Page？"}
         C[**有Page分支**]
         D[**无Page分支**]
     end
     
-    subgraph "**有Page分支处理**"
-        C1{**检查Page冲突**}
+    subgraph "有Page分支处理"
+        C1{"检查Page冲突"}
         C2[**无冲突<br/>并行应用**]
         C3[**有冲突<br/>串行应用**]
         
-        C4{**检查MTR边界**}
+        C4{"检查MTR边界"}
         C5[**MTR内<br/>顺序应用**]
         C6[**不同MTR<br/>可并行**]
     end
     
-    subgraph "**无Page分支处理**"
+    subgraph "无Page分支处理"
         D1[**全局串行队列**]
         D2[**等待前序<br/>Page Redo**]
         D3[**串行应用**]
@@ -8678,13 +8678,13 @@ dberr_t btr_page_split_and_insert(
 
 ```mermaid
 graph TB
-    subgraph "**MTR-1：分配新页面**"
+    subgraph "MTR-1：分配新页面"
         M1_P1[**FSP Header Page<br/>Page 0<br/>（空间头页）**]
         M1_P2[**XDES Page<br/>（区段描述符）**]
         M1_P3[**New Page<br/>Page 1001<br/>（新分配）**]
     end
     
-    subgraph "**MTR-2：执行分裂**"
+    subgraph "MTR-2：执行分裂"
         M2_P1[**Parent Page<br/>Page 100<br/>（父节点）**]
         M2_P2[**Old Page<br/>Page 200<br/>（旧节点）**]
         M2_P3[**New Page<br/>Page 1001<br/>（重新锁定）**]
@@ -8868,21 +8868,21 @@ buf_block_t* fsp_alloc_free_page(
 
 ```mermaid
 graph TB
-    subgraph "**逻辑Redo（Logical Redo）**"
+    subgraph "逻辑Redo（Logical Redo）"
         L1[**INSERT<br/>逻辑操作记录**]
         L2[**UPDATE<br/>行级变更**]
         L3[**DELETE<br/>逻辑删除**]
         L4[**DDL操作的逻辑意图<br/>（用于DMS转换）**]
     end
     
-    subgraph "**元数据Redo（Metadata Redo）**"
+    subgraph "元数据Redo（Metadata Redo）"
         M1[**表结构变更<br/>SYS_TABLES**]
         M2[**索引创建<br/>SYS_INDEXES**]
         M3[**列定义修改<br/>SYS_COLUMNS**]
         M4[**Schema Version更新**]
     end
     
-    subgraph "**物理Redo（Physical Redo）**"
+    subgraph "物理Redo（Physical Redo）"
         P1[**页面级修改<br/>字节偏移**]
         P2[**数据字典页面<br/>物理写入**]
     end
@@ -9019,7 +9019,7 @@ Page-LSN映射表是Aurora快速恢复的关键机制，用于记录每个页面
 
 ```mermaid
 graph TB
-    subgraph "**Page-LSN映射表结构**"
+    subgraph "Page-LSN映射表结构"
         M[**Page-LSN Mapping Table<br/>（存储在内存）**]
         M --> E1[**Page 1 → LSN 1000**]
         M --> E2[**Page 2 → LSN 1005**]
@@ -9028,13 +9028,13 @@ graph TB
         M --> EN[**Page N → LSN 5000**]
     end
     
-    subgraph "**存储形式**"
+    subgraph "存储形式"
         S1[**内存哈希表<br/>快速查找**]
         S2[**持久化到Redo<br/>MLOG_LSN_MAPPING**]
         S3[**定期Checkpoint<br/>写入元数据**]
     end
     
-    subgraph "**用途**"
+    subgraph "用途"
         U1[**快速恢复<br/>跳过已应用Redo**]
         U2[**读取优化<br/>判断页面是否最新**]
         U3[**故障诊断<br/>检测LSN不一致**]
@@ -9144,35 +9144,35 @@ class PageLSNMapping:
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例（恢复中）**
-    participant **Mapping** as **Page-LSN映射表**
-    participant **Storage** as **存储层**
+    participant Primary as "主实例（恢复中）"
+    participant Mapping as "Page-LSN映射表"
+    participant Storage as "存储层"
     
-    Note over **Primary**: **从崩溃中恢复**
+    Note over Primary: **从崩溃中恢复**
     
-    **Primary**->>**Storage**: **1. 读取Checkpoint LSN=10000**
+    Primary->>Storage: **1. 读取Checkpoint LSN=10000**
     
-    **Primary**->>**Storage**: **2. 读取Redo Log<br/>LSN 10000-15000**
-    **Storage**-->>**Primary**: **3. 返回5000条Redo**
+    Primary->>Storage: **2. 读取Redo Log<br/>LSN 10000-15000**
+    Storage-->>Primary: **3. 返回5000条Redo**
     
-    **Primary**->>**Mapping**: **4. 加载Checkpoint时的<br/>Page-LSN映射表**
+    Primary->>Mapping: **4. 加载Checkpoint时的<br/>Page-LSN映射表**
     
     loop **遍历每条Redo**
-        **Primary**->>**Mapping**: **5. 查询Page LSN<br/>Redo: Page 100, LSN 10500**
-        **Mapping**-->>**Primary**: **6. 返回：Page 100<br/>当前LSN=10800**
+        Primary->>Mapping: **5. 查询Page LSN<br/>Redo: Page 100, LSN 10500**
+        Mapping-->>Primary: **6. 返回：Page 100<br/>当前LSN=10800**
         
         alt **Redo LSN <= Page LSN**
-            **Primary**->>**Primary**: **7. 跳过此Redo<br/>（已应用过）**
+            Primary->>Primary: **7. 跳过此Redo<br/>（已应用过）**
         else **Redo LSN > Page LSN**
-            **Primary**->>**Primary**: **8. 应用Redo**
-            **Primary**->>**Mapping**: **9. 更新Page LSN<br/>Page 100 → LSN 10500**
+            Primary->>Primary: **8. 应用Redo**
+            Primary->>Mapping: **9. 更新Page LSN<br/>Page 100 → LSN 10500**
         end
     end
     
-    **Primary**->>**Primary**: **10. 恢复完成<br/>跳过70%的Redo**
+    Primary->>Primary: **10. 恢复完成<br/>跳过70%的Redo**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**Storage**: **关键：通过Page-LSN跳过大量已应用的Redo**
+    Note over Primary,Storage: **关键：通过Page-LSN跳过大量已应用的Redo**
     end
 ```
 
@@ -9180,29 +9180,29 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **Replica** as **只读副本**
-    participant **Mapping** as **Page-LSN映射表**
-    participant **Storage** as **存储节点**
+    participant Replica as "只读副本"
+    participant Mapping as "Page-LSN映射表"
+    participant Storage as "存储节点"
     
-    Note over **Replica**: **读取页面**
+    Note over Replica: **读取页面**
     
-    **Replica**->>**Storage**: **1. 请求读取Page 500**
-    **Storage**-->>**Replica**: **2. 返回页面<br/>Page LSN=9500**
+    Replica->>Storage: **1. 请求读取Page 500**
+    Storage-->>Replica: **2. 返回页面<br/>Page LSN=9500**
     
-    **Replica**->>**Mapping**: **3. 查询最新的Page LSN**
-    **Mapping**-->>**Replica**: **4. 返回：Page 500<br/>最新LSN=10000**
+    Replica->>Mapping: **3. 查询最新的Page LSN**
+    Mapping-->>Replica: **4. 返回：Page 500<br/>最新LSN=10000**
     
-    **Replica**->>**Replica**: **5. 比较LSN<br/>9500 < 10000<br/>页面过期**
+    Replica->>Replica: **5. 比较LSN<br/>9500 < 10000<br/>页面过期**
     
-    **Replica**->>**Storage**: **6. 请求Redo Log<br/>Page 500, LSN 9500-10000**
-    **Storage**-->>**Replica**: **7. 返回500条Redo**
+    Replica->>Storage: **6. 请求Redo Log<br/>Page 500, LSN 9500-10000**
+    Storage-->>Replica: **7. 返回500条Redo**
     
-    **Replica**->>**Replica**: **8. 应用Redo到页面<br/>更新到LSN 10000**
+    Replica->>Replica: **8. 应用Redo到页面<br/>更新到LSN 10000**
     
-    **Replica**->>**Replica**: **9. 使用最新页面**
+    Replica->>Replica: **9. 使用最新页面**
     
     rect rgb(255, 250, 205)
-    Note over **Replica**,**Storage**: **Page-LSN用于检测页面是否最新**
+    Note over Replica,Storage: **Page-LSN用于检测页面是否最新**
     end
 ```
 
@@ -9222,11 +9222,11 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**MTR（Mini-Transaction）**"
+    subgraph "MTR（Mini-Transaction）"
         MTR[**MTR实例<br/>修改多个页面**]
     end
     
-    subgraph "**生成的Redo Log**"
+    subgraph "生成的Redo Log"
         R1[**MLOG_MTR_START<br/>MTR开始标记**]
         R2[**MLOG_WRITE<br/>Page 1修改**]
         R3[**MLOG_INSERT<br/>Page 2插入**]
@@ -9234,7 +9234,7 @@ graph TB
         R5[**MLOG_MTR_END<br/>MTR结束标记**]
     end
     
-    subgraph "**MTR-log元数据**"
+    subgraph "MTR-log元数据"
         M1[**MTR ID**]
         M2[**修改的页面列表**]
         M3[**Redo数量**]
@@ -9479,10 +9479,10 @@ Insert Buffer是InnoDB的优化技术，用于延迟二级索引的更新。在A
 
 ```mermaid
 graph TB
-    subgraph "**MySQL InnoDB Insert Buffer**"
+    subgraph "MySQL InnoDB Insert Buffer"
         A[**随机插入<br/>二级索引**]
         B[**检查索引页<br/>是否在Buffer Pool**]
-        C{**在内存？**}
+        C{"在内存？"}
         D[**直接更新<br/>索引页**]
         E[**写入Insert Buffer<br/>（延迟更新）**]
         F[**后台合并<br/>（Merge）**]
@@ -9513,14 +9513,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**Aurora不需要Insert Buffer的原因**"
+    subgraph "Aurora不需要Insert Buffer的原因"
         R1[**存储计算分离<br/>写入只是Redo**]
         R2[**Redo是顺序写<br/>无随机I/O问题**]
         R3[**存储层延迟物化<br/>自带批量优化**]
         R4[**网络I/O优化<br/>批量发送Redo**]
     end
     
-    subgraph "**Insert Buffer的问题**"
+    subgraph "Insert Buffer的问题"
         P1[**增加复杂性<br/>需要额外空间**]
         P2[**恢复时间增加<br/>需要Merge**]
         P3[**与Log-is-Database<br/>理念冲突**]
@@ -9661,121 +9661,121 @@ Aurora:
 
 ```mermaid
 sequenceDiagram
-    participant **Monitor** as **监控系统<br/>（RDS控制平面）**
-    participant **OldPrimary** as **旧主实例**
-    participant **NewPrimary** as **候选副本**
-    participant **Storage** as **存储层（6副本）**
-    participant **Meta** as **元数据服务**
-    participant **Clients** as **客户端连接**
+    participant Monitor as "监控系统<br/>（RDS控制平面）"
+    participant OldPrimary as "旧主实例"
+    participant NewPrimary as "候选副本"
+    participant Storage as "存储层（6副本）"
+    participant Meta as "元数据服务"
+    participant Clients as "客户端连接"
     
     rect rgb(255, 240, 240)
-    Note over **Monitor**,**OldPrimary**: **阶段1：检测主实例故障**
+    Note over Monitor,OldPrimary: **阶段1：检测主实例故障**
     end
     
     loop **每3秒心跳**
-        **Monitor**->>**OldPrimary**: **1. 发送心跳<br/>Heartbeat(seq=100)**
-        **OldPrimary**-->>**Monitor**: **2. 心跳响应<br/>HeartbeatACK(seq=100)**
+        Monitor->>OldPrimary: **1. 发送心跳<br/>Heartbeat(seq=100)**
+        OldPrimary-->>Monitor: **2. 心跳响应<br/>HeartbeatACK(seq=100)**
     end
     
-    **Monitor**->>**OldPrimary**: **3. 发送心跳<br/>Heartbeat(seq=101)**
-    Note over **OldPrimary**: **❌ 旧主崩溃，无响应**
+    Monitor->>OldPrimary: **3. 发送心跳<br/>Heartbeat(seq=101)**
+    Note over OldPrimary: **❌ 旧主崩溃，无响应**
     
-    **Monitor**->>**Monitor**: **4. 超时检测<br/>等待15秒（5次心跳）**
+    Monitor->>Monitor: **4. 超时检测<br/>等待15秒（5次心跳）**
     
-    **Monitor**->>**OldPrimary**: **5. 再次尝试心跳<br/>多路径探测**
-    Note over **OldPrimary**: **❌ 仍无响应**
+    Monitor->>OldPrimary: **5. 再次尝试心跳<br/>多路径探测**
+    Note over OldPrimary: **❌ 仍无响应**
     
-    **Monitor**->>**Monitor**: **6. 确认故障<br/>开始故障切换**
+    Monitor->>Monitor: **6. 确认故障<br/>开始故障切换**
     
     rect rgb(255, 250, 220)
-    Note over **Monitor**,**NewPrimary**: **阶段2：选择新主节点**
+    Note over Monitor,NewPrimary: **阶段2：选择新主节点**
     end
     
-    **Monitor**->>**Storage**: **7. 查询所有副本的LSN**
-    **Storage**-->>**Monitor**: **8. 返回副本状态<br/>Replica1: LSN=10000<br/>Replica2: LSN=9999<br/>Replica3: LSN=10000**
+    Monitor->>Storage: **7. 查询所有副本的LSN**
+    Storage-->>Monitor: **8. 返回副本状态<br/>Replica1: LSN=10000<br/>Replica2: LSN=9999<br/>Replica3: LSN=10000**
     
-    **Monitor**->>**Monitor**: **9. 选择最新LSN副本<br/>选中：Replica1（LSN=10000）**
+    Monitor->>Monitor: **9. 选择最新LSN副本<br/>选中：Replica1（LSN=10000）**
     
     rect rgb(240, 255, 240)
-    Note over **Monitor**,**Storage**: **阶段3：执行写入隔离（Write Fence）**
+    Note over Monitor,Storage: **阶段3：执行写入隔离（Write Fence）**
     end
     
-    **Monitor**->>**Storage**: **10. 发送Fence命令<br/>Instance: OldPrimary<br/>Generation: G1**
+    Monitor->>Storage: **10. 发送Fence命令<br/>Instance: OldPrimary<br/>Generation: G1**
     
     par **存储层6个副本并行Fence**
-        **Storage**->>**Storage**: **11a. Segment-1<br/>记录Fence：G1已失效**
-        **Storage**->>**Storage**: **11b. Segment-2<br/>记录Fence：G1已失效**
-        **Storage**->>**Storage**: **11c. Segment-3<br/>记录Fence：G1已失效**
-        **Storage**->>**Storage**: **11d. Segment-4<br/>记录Fence：G1已失效**
-        **Storage**->>**Storage**: **11e. Segment-5<br/>记录Fence：G1已失效**
-        **Storage**->>**Storage**: **11f. Segment-6<br/>记录Fence：G1已失效**
+        Storage->>Storage: **11a. Segment-1<br/>记录Fence：G1已失效**
+        Storage->>Storage: **11b. Segment-2<br/>记录Fence：G1已失效**
+        Storage->>Storage: **11c. Segment-3<br/>记录Fence：G1已失效**
+        Storage->>Storage: **11d. Segment-4<br/>记录Fence：G1已失效**
+        Storage->>Storage: **11e. Segment-5<br/>记录Fence：G1已失效**
+        Storage->>Storage: **11f. Segment-6<br/>记录Fence：G1已失效**
     end
     
-    **Storage**-->>**Monitor**: **12. Fence成功<br/>Quorum: 6/6确认**
+    Storage-->>Monitor: **12. Fence成功<br/>Quorum: 6/6确认**
     
     rect rgb(240, 240, 255)
-    Note over **Monitor**,**NewPrimary**: **阶段4：提升新主实例**
+    Note over Monitor,NewPrimary: **阶段4：提升新主实例**
     end
     
-    **Monitor**->>**Meta**: **13. 更新元数据<br/>Primary: Replica1<br/>Generation: G2（递增）**
-    **Meta**-->>**Monitor**: **14. 元数据更新成功**
+    Monitor->>Meta: **13. 更新元数据<br/>Primary: Replica1<br/>Generation: G2（递增）**
+    Meta-->>Monitor: **14. 元数据更新成功**
     
-    **Monitor**->>**NewPrimary**: **15. 发送Promotion命令<br/>Generation=G2**
+    Monitor->>NewPrimary: **15. 发送Promotion命令<br/>Generation=G2**
     
-    **NewPrimary**->>**NewPrimary**: **16. 保存新Generation<br/>Generation=G2**
+    NewPrimary->>NewPrimary: **16. 保存新Generation<br/>Generation=G2**
     
-    **NewPrimary**->>**Storage**: **17. 查询VDL<br/>GetVDL()**
-    **Storage**-->>**NewPrimary**: **18. 返回VDL=10000**
+    NewPrimary->>Storage: **17. 查询VDL<br/>GetVDL()**
+    Storage-->>NewPrimary: **18. 返回VDL=10000**
     
-    **NewPrimary**->>**NewPrimary**: **19. 应用Redo追赶<br/>Applied LSN: 9950→10000**
+    NewPrimary->>NewPrimary: **19. 应用Redo追赶<br/>Applied LSN: 9950→10000**
     
-    **NewPrimary**->>**Storage**: **20. 注册为主实例<br/>Instance: NewPrimary<br/>Generation: G2**
-    **Storage**-->>**NewPrimary**: **21. 注册成功<br/>存储层识别新主**
+    NewPrimary->>Storage: **20. 注册为主实例<br/>Instance: NewPrimary<br/>Generation: G2**
+    Storage-->>NewPrimary: **21. 注册成功<br/>存储层识别新主**
     
-    **NewPrimary**->>**NewPrimary**: **22. 切换为读写模式<br/>read_only=OFF**
+    NewPrimary->>NewPrimary: **22. 切换为读写模式<br/>read_only=OFF**
     
-    **NewPrimary**-->>**Monitor**: **23. Promotion完成<br/>Ready to serve**
+    NewPrimary-->>Monitor: **23. Promotion完成<br/>Ready to serve**
     
-    **Monitor**->>**Clients**: **24. 更新连接端点<br/>New Primary: Replica1**
+    Monitor->>Clients: **24. 更新连接端点<br/>New Primary: Replica1**
     
     rect rgb(255, 240, 255)
-    Note over **OldPrimary**,**Storage**: **阶段5：旧主复活的保护机制**
+    Note over OldPrimary,Storage: **阶段5：旧主复活的保护机制**
     end
     
-    Note over **OldPrimary**: **⚠️ 旧主恢复（假死场景）**
+    Note over OldPrimary: **⚠️ 旧主恢复（假死场景）**
     
-    **OldPrimary**->>**OldPrimary**: **25. 从假死恢复<br/>仍认为自己是主<br/>Generation=G1**
+    OldPrimary->>OldPrimary: **25. 从假死恢复<br/>仍认为自己是主<br/>Generation=G1**
     
-    **OldPrimary**->>**Storage**: **26. 尝试写入Redo<br/>Instance: OldPrimary<br/>Generation: G1**
+    OldPrimary->>Storage: **26. 尝试写入Redo<br/>Instance: OldPrimary<br/>Generation: G1**
     
-    **Storage**->>**Storage**: **27. 检查Generation<br/>记录中G1已被Fence<br/>当前有效：G2**
+    Storage->>Storage: **27. 检查Generation<br/>记录中G1已被Fence<br/>当前有效：G2**
     
-    **Storage**-->>**OldPrimary**: **28. 拒绝写入❌<br/>Error: FENCED_INSTANCE<br/>"Generation G1 is fenced"**
+    Storage-->>OldPrimary: **28. 拒绝写入❌<br/>Error: FENCED_INSTANCE<br/>"Generation G1 is fenced"**
     
-    **OldPrimary**->>**OldPrimary**: **29. 检测到Fence<br/>触发自杀程序**
+    OldPrimary->>OldPrimary: **29. 检测到Fence<br/>触发自杀程序**
     
-    **OldPrimary**->>**OldPrimary**: **30. STONITH执行<br/>强制关闭自己**
+    OldPrimary->>OldPrimary: **30. STONITH执行<br/>强制关闭自己**
     
-    **OldPrimary**->>**Monitor**: **31. 报告状态<br/>"I was fenced, shutting down"**
+    OldPrimary->>Monitor: **31. 报告状态<br/>"I was fenced, shutting down"**
     
-    **Monitor**-->>**OldPrimary**: **32. 确认关闭<br/>Deregister Instance**
+    Monitor-->>OldPrimary: **32. 确认关闭<br/>Deregister Instance**
     
     rect rgb(220, 255, 220)
-    Note over **NewPrimary**,**Clients**: **阶段6：正常服务恢复**
+    Note over NewPrimary,Clients: **阶段6：正常服务恢复**
     end
     
-    **Clients**->>**NewPrimary**: **33. 建立新连接<br/>（自动重连）**
-    **NewPrimary**-->>**Clients**: **34. 连接成功**
+    Clients->>NewPrimary: **33. 建立新连接<br/>（自动重连）**
+    NewPrimary-->>Clients: **34. 连接成功**
     
-    **Clients**->>**NewPrimary**: **35. 发送写入请求<br/>INSERT INTO t1 ...**
+    Clients->>NewPrimary: **35. 发送写入请求<br/>INSERT INTO t1 ...**
     
-    **NewPrimary**->>**Storage**: **36. 写入Redo<br/>Instance: NewPrimary<br/>Generation: G2<br/>LSN: 10001**
-    **Storage**-->>**NewPrimary**: **37. 写入成功✓<br/>Quorum: 4/6**
+    NewPrimary->>Storage: **36. 写入Redo<br/>Instance: NewPrimary<br/>Generation: G2<br/>LSN: 10001**
+    Storage-->>NewPrimary: **37. 写入成功✓<br/>Quorum: 4/6**
     
-    **NewPrimary**-->>**Clients**: **38. 提交成功**
+    NewPrimary-->>Clients: **38. 提交成功**
     
     rect rgb(255, 250, 205)
-    Note over **Monitor**,**Clients**: **关键保护机制：<br/>1. 心跳检测（15秒确认故障）<br/>2. 存储层Fence（拒绝旧主写入）<br/>3. Generation递增（版本控制）<br/>4. Quorum确认（防止网络分区）<br/>5. STONITH自杀（旧主主动关闭）**
+    Note over Monitor,Clients: **关键保护机制：<br/>1. 心跳检测（15秒确认故障）<br/>2. 存储层Fence（拒绝旧主写入）<br/>3. Generation递增（版本控制）<br/>4. Quorum确认（防止网络分区）<br/>5. STONITH自杀（旧主主动关闭）**
     end
 ```
 
@@ -9783,31 +9783,31 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**第1层：心跳检测层**"
+    subgraph "第1层：心跳检测层"
         L1A[**多路径探测<br/>（3条网络路径）**]
         L1B[**超时确认<br/>（15秒，5次心跳）**]
         L1C[**Quorum确认<br/>（多数监控节点同意）**]
     end
     
-    subgraph "**第2层：元数据锁层**"
+    subgraph "第2层：元数据锁层"
         L2A[**DynamoDB条件更新<br/>（CAS操作）**]
         L2B[**Leader租约<br/>（Lease机制）**]
         L2C[**代数递增<br/>（Generation Number）**]
     end
     
-    subgraph "**第3层：存储层Fence**"
+    subgraph "第3层：存储层Fence"
         L3A[**记录Fence状态<br/>（持久化到6副本）**]
         L3B[**Generation验证<br/>（每次写入检查）**]
         L3C[**拒绝旧Generation写入<br/>（Write Fence）**]
     end
     
-    subgraph "**第4层：实例自检层**"
+    subgraph "第4层：实例自检层"
         L4A[**检测Fence错误<br/>（FENCED_INSTANCE）**]
         L4B[**触发STONITH<br/>（Shoot The Other Node In The Head）**]
         L4C[**主动关闭<br/>（避免继续服务）**]
     end
     
-    subgraph "**第5层：客户端保护层**"
+    subgraph "第5层：客户端保护层"
         L5A[**连接超时<br/>（30秒自动重连）**]
         L5B[**端点更新<br/>（DNS/负载均衡）**]
         L5C[**事务重试<br/>（应用层）**]
@@ -9855,35 +9855,35 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **Primary** as **主实例<br/>（网络隔离）**
-    participant **Storage** as **存储层**
-    participant **Monitor** as **监控系统**
-    participant **NewPrimary** as **新主实例**
+    participant Primary as "主实例<br/>（网络隔离）"
+    participant Storage as "存储层"
+    participant Monitor as "监控系统"
+    participant NewPrimary as "新主实例"
     
-    Note over **Primary**: **网络分区发生**
+    Note over Primary: **网络分区发生**
     
-    **Primary**->>**Storage**: **1. 尝试写入Redo<br/>Generation=G1**
-    Note over **Primary**,**Storage**: **❌ 网络不通，超时**
+    Primary->>Storage: **1. 尝试写入Redo<br/>Generation=G1**
+    Note over Primary,Storage: **❌ 网络不通，超时**
     
-    **Monitor**->>**Primary**: **2. 心跳超时<br/>15秒无响应**
-    **Monitor**->>**Monitor**: **3. 确认故障<br/>开始切换**
+    Monitor->>Primary: **2. 心跳超时<br/>15秒无响应**
+    Monitor->>Monitor: **3. 确认故障<br/>开始切换**
     
-    **Monitor**->>**Storage**: **4. Fence旧主<br/>Generation G1**
-    **Storage**-->>**Monitor**: **5. Fence成功**
+    Monitor->>Storage: **4. Fence旧主<br/>Generation G1**
+    Storage-->>Monitor: **5. Fence成功**
     
-    **Monitor**->>**NewPrimary**: **6. 提升新主<br/>Generation=G2**
-    **NewPrimary**->>**Storage**: **7. 注册新主<br/>Generation=G2**
+    Monitor->>NewPrimary: **6. 提升新主<br/>Generation=G2**
+    NewPrimary->>Storage: **7. 注册新主<br/>Generation=G2**
     
-    Note over **Primary**: **网络恢复**
+    Note over Primary: **网络恢复**
     
-    **Primary**->>**Storage**: **8. 恢复连接<br/>尝试写入Generation=G1**
-    **Storage**->>**Storage**: **9. 检查Generation<br/>G1已被Fence**
-    **Storage**-->>**Primary**: **10. 拒绝写入❌<br/>FENCED_INSTANCE**
+    Primary->>Storage: **8. 恢复连接<br/>尝试写入Generation=G1**
+    Storage->>Storage: **9. 检查Generation<br/>G1已被Fence**
+    Storage-->>Primary: **10. 拒绝写入❌<br/>FENCED_INSTANCE**
     
-    **Primary**->>**Primary**: **11. STONITH自杀**
+    Primary->>Primary: **11. STONITH自杀**
     
     rect rgb(255, 250, 205)
-    Note over **Primary**,**NewPrimary**: **防护成功：旧主无法写入，<br/>新主正常服务**
+    Note over Primary,NewPrimary: **防护成功：旧主无法写入，<br/>新主正常服务**
     end
 ```
 
@@ -10120,14 +10120,14 @@ class PageAccessStat:
 
 ```mermaid
 graph TB
-    subgraph "**MySQL Buffer Pool Dump**"
+    subgraph "MySQL Buffer Pool Dump"
         M1[**关闭时<br/>Dump所有页面**]
         M2[**记录：space_id, page_no**]
         M3[**启动时<br/>顺序加载**]
         M4[**无优先级**]
     end
     
-    subgraph "**Aurora ADSM预热**"
+    subgraph "Aurora ADSM预热"
         A1[**运行时<br/>持续统计**]
         A2[**记录：热度分数<br/>访问类型<br/>时间戳**]
         A3[**启动时<br/>优先级加载**]
@@ -10167,48 +10167,48 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **RT** as **运行时<br/>（持续统计）**
-    participant **ADSM** as **ADSM模块**
-    participant **Stats** as **统计存储<br/>（内存+持久化）**
-    participant **BP** as **Buffer Pool**
-    participant **Storage** as **存储层**
+    participant RT as "运行时<br/>（持续统计）"
+    participant ADSM as "ADSM模块"
+    participant Stats as "统计存储<br/>（内存+持久化）"
+    participant BP as "Buffer Pool"
+    participant Storage as "存储层"
     
-    Note over **RT**: **正常运行期间**
+    Note over RT: **正常运行期间**
     
     loop **每次页面访问**
-        **RT**->>**ADSM**: **1. 页面访问事件<br/>page_id=100, type=READ**
-        **ADSM**->>**ADSM**: **2. 更新统计<br/>access_count++<br/>计算heat_score**
-        **ADSM**->>**Stats**: **3. 更新内存统计**
+        RT->>ADSM: **1. 页面访问事件<br/>page_id=100, type=READ**
+        ADSM->>ADSM: **2. 更新统计<br/>access_count++<br/>计算heat_score**
+        ADSM->>Stats: **3. 更新内存统计**
     end
     
-    **ADSM**->>**Stats**: **4. 定期持久化<br/>每5分钟一次**
-    **Stats**->>**Storage**: **5. 写入存储层<br/>（Redo Log方式）**
+    ADSM->>Stats: **4. 定期持久化<br/>每5分钟一次**
+    Stats->>Storage: **5. 写入存储层<br/>（Redo Log方式）**
     
-    Note over **RT**: **实例重启**
+    Note over RT: **实例重启**
     
-    **BP**->>**ADSM**: **6. 启动时<br/>请求预热列表**
+    BP->>ADSM: **6. 启动时<br/>请求预热列表**
     
-    **ADSM**->>**Stats**: **7. 读取持久化统计**
-    **Stats**-->>**ADSM**: **8. 返回统计数据**
+    ADSM->>Stats: **7. 读取持久化统计**
+    Stats-->>ADSM: **8. 返回统计数据**
     
-    **ADSM**->>**ADSM**: **9. 生成预热列表<br/>计算热度分数<br/>排序Top 70%**
+    ADSM->>ADSM: **9. 生成预热列表<br/>计算热度分数<br/>排序Top 70%**
     
-    **ADSM**->>**ADSM**: **10. 按优先级分组<br/>High: 1000页<br/>Mid: 5000页<br/>Low: 10000页**
+    ADSM->>ADSM: **10. 按优先级分组<br/>High: 1000页<br/>Mid: 5000页<br/>Low: 10000页**
     
-    **ADSM**-->>**BP**: **11. 返回预热列表**
+    ADSM-->>BP: **11. 返回预热列表**
     
     par **并行预热加载**
-        **BP**->>**Storage**: **12a. 批量读取<br/>High Priority**
-        **BP**->>**Storage**: **12b. 批量读取<br/>Mid Priority**
-        **BP**->>**Storage**: **12c. 批量读取<br/>Low Priority**
+        BP->>Storage: **12a. 批量读取<br/>High Priority**
+        BP->>Storage: **12b. 批量读取<br/>Mid Priority**
+        BP->>Storage: **12c. 批量读取<br/>Low Priority**
     end
     
-    **Storage**-->>**BP**: **13. 页面数据返回**
+    Storage-->>BP: **13. 页面数据返回**
     
-    **BP**->>**BP**: **14. 预热完成<br/>Buffer Pool命中率：90%+**
+    BP->>BP: **14. 预热完成<br/>Buffer Pool命中率：90%+**
     
     rect rgb(255, 250, 205)
-    Note over **ADSM**,**Storage**: **关键：智能预热，优先加载热页面<br/>启动时间减少60%**
+    Note over ADSM,Storage: **关键：智能预热，优先加载热页面<br/>启动时间减少60%**
     end
 ```
 
@@ -10295,17 +10295,17 @@ class AuroraVolume:
 
 ```mermaid
 graph TB
-    subgraph "**AWS宿主机（存储节点）**"
+    subgraph "AWS宿主机（存储节点）"
         H[**宿主机<br/>CPU: 64核<br/>MEM: 256GB<br/>IO: 10GB/s**]
     end
     
-    subgraph "**cgroup资源隔离**"
+    subgraph "cgroup资源隔离"
         CG1[**cgroup: cluster-1<br/>CPU: 16核<br/>MEM: 64GB<br/>IO: 2GB/s**]
         CG2[**cgroup: cluster-2<br/>CPU: 8核<br/>MEM: 32GB<br/>IO: 1GB/s**]
         CG3[**cgroup: cluster-3<br/>CPU: 16核<br/>MEM: 64GB<br/>IO: 2GB/s**]
     end
     
-    subgraph "**Cluster进程**"
+    subgraph "Cluster进程"
         P1[**Cluster-1的<br/>存储进程**]
         P2[**Cluster-2的<br/>存储进程**]
         P3[**Cluster-3的<br/>存储进程**]
@@ -10495,13 +10495,13 @@ Aurora的快照功能是其备份和恢复机制的核心组成部分。与传�
 
 ```mermaid
 graph TB
-    subgraph "**Aurora Volume（快照对象）**"
+    subgraph "Aurora Volume（快照对象）"
         V1[**所有Page的Base Version**]
         V2[**所有Redo Log<br/>up to VDL**]
         V3[**元数据信息<br/>Volume结构、PG映射**]
     end
     
-    subgraph "**快照元数据**"
+    subgraph "快照元数据"
         S1[**快照ID**]
         S2[**快照时间点LSN<br/>VDL at T0**]
         S3[**Volume ID**]
@@ -10509,7 +10509,7 @@ graph TB
         S5[**S3链接<br/>指向实际数据**]
     end
     
-    subgraph "**不包含的数据**"
+    subgraph "不包含的数据"
         N1[**Buffer Pool内容**]
         N2[**连接状态**]
         N3[**临时表**]
@@ -10646,7 +10646,7 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**传统数据库快照（需要禁写）**"
+    subgraph "传统数据库快照（需要禁写）"
         T1[**1. 全局写锁<br/>FLUSH TABLES WITH READ LOCK**]
         T2[**2. 等待所有事务完成<br/>（可能数分钟）**]
         T3[**3. 开始数据拷贝<br/>（数小时）**]
@@ -10654,7 +10654,7 @@ graph TB
         T5[**业务受影响：数分钟到数小时**]
     end
     
-    subgraph "**Aurora快照（无需禁写）**"
+    subgraph "Aurora快照（无需禁写）"
         A1[**1. 查询当前VDL<br/>（< 1ms）**]
         A2[**2. 记录快照元数据<br/>（< 10ms）**]
         A3[**3. 快照创建完成<br/>（< 1秒）**]
@@ -10955,7 +10955,7 @@ class ApplicationConsistentSnapshot:
 
 ```mermaid
 graph TB
-    subgraph "**Aurora在线快照的关键特性**"
+    subgraph "Aurora在线快照的关键特性"
         F1[**无需禁写<br/>写入持续进行**]
         F2[**VDL保证一致性<br/>Quorum已持久化**]
         F3[**秒级创建<br/>只记录元数据**]
@@ -10980,14 +10980,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**问题场景**"
+    subgraph "问题场景"
         P1[**T0: 创建快照<br/>snapshot_lsn=10000**]
         P2[**T1: 继续运行<br/>current_lsn=20000**]
         P3[**T2: Base Page已更新<br/>Page 1 LSN=15000**]
         P4[**T3: 需要恢复到T0<br/>但Base Page已超前！**]
     end
     
-    subgraph "**解决方案**"
+    subgraph "解决方案"
         S1[**S3持续备份<br/>保存了历史Base Page**]
         S2[**恢复时读取<br/>LSN≤10000的Base Page版本**]
         S3[**或使用Redo Log<br/>反向回滚到LSN=10000**]
@@ -11293,14 +11293,14 @@ print(f"最早：{restore_points[-1]['time']}")
 
 ```mermaid
 graph TB
-    subgraph "**Aurora真实的备份机制**"
+    subgraph "Aurora真实的备份机制"
         B1[**存储层PG<br/>Base Page + Redo Log**]
         B2[**持续Redo备份到S3<br/>每5分钟一批**]
         B3[**定期Base快照<br/>COW零拷贝（每天/每周）**]
         B4[**快照元数据<br/>记录snapshot_lsn**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         R1[**1. 选择最近的Base快照<br/>LSN=5000（1天前）**]
         R2[**2. 从S3读取Redo Log<br/>LSN: 5000-10000**]
         R3[**3. 前向应用Redo<br/>到目标LSN=10000**]
@@ -11541,14 +11541,14 @@ new_volume = restorer.restore_to_point_in_time(
 
 ```mermaid
 graph LR
-    subgraph "**错误理解：需要反向回滚**"
+    subgraph "错误理解：需要反向回滚"
         W1[**当前Base LSN=15000**]
         W2[**目标LSN=10000**]
         W3[**❌ 需要倒着应用Redo<br/>15000 -> 10000**]
         W4[**复杂、低效**]
     end
     
-    subgraph "**正确机制：前向应用**"
+    subgraph "正确机制：前向应用"
         C1[**最近快照LSN=5000**]
         C2[**目标LSN=10000**]
         C3[**✅ 前向应用Redo<br/>5000 -> 10000**]
@@ -11690,13 +11690,13 @@ class StorageLayerCOWSnapshot:
 
 ```mermaid
 graph TB
-    subgraph "**三层备份机制**"
+    subgraph "三层备份机制"
         L1[**Layer 1: 持续Redo备份<br/>S3（每5分钟，轻量）**]
         L2[**Layer 2: COW快照<br/>存储层（每天，零拷贝）**]
         L3[**Layer 3: Base归档<br/>S3 Glacier（每周，可选）**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         R1[**选择最近快照<br/>COW或归档**]
         R2[**克隆/下载Base**]
         R3[**前向应用Redo<br/>从S3读取**]
@@ -11756,14 +11756,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**Aurora COW实现层次**"
+    subgraph "Aurora COW实现层次"
         L1[**应用层<br/>CREATE SNAPSHOT命令**]
         L2[**控制平面<br/>快照协调**]
         L3[**存储层软件<br/>COW实现（关键层）**]
         L4[**物理存储<br/>SSD/NVMe磁盘**]
     end
     
-    subgraph "**不依赖OS COW**"
+    subgraph "不依赖OS COW"
         N1[**❌ 不使用LVM快照**]
         N2[**❌ 不使用Btrfs/ZFS COW**]
         N3[**❌ 不使用OS文件系统**]
@@ -12279,25 +12279,25 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**1. COW实现层次**"
+    subgraph "1. COW实现层次"
         I1[**存储层软件实现**]
         I2[**不依赖OS/文件系统**]
         I3[**引用计数+物理块映射**]
     end
     
-    subgraph "**2. 快照数量管理**"
+    subgraph "2. 快照数量管理"
         M1[**手动快照：100个/集群**]
         M2[**COW引用：建议<100**]
         M3[**引用计数+GC**]
     end
     
-    subgraph "**3. 频繁快照处理**"
+    subgraph "3. 频繁快照处理"
         F1[**增量存储（只存修改）**]
         F2[**快照链合并**]
         F3[**分层归档到S3**]
     end
     
-    subgraph "**4. LSN对齐机制**"
+    subgraph "4. LSN对齐机制"
         L1[**对齐到VDL**]
         L2[**所有PG统一LSN**]
         L3[**应用Redo到落后PG**]
@@ -12337,13 +12337,13 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**问题场景**"
+    subgraph "问题场景"
         Q1[**主节点执行事务<br/>Trx ID=100, LSN=10000**]
         Q2[**从节点读取数据<br/>需要知道哪些事务可见**]
         Q3[**如果没有Read View<br/>可能读到未提交事务**]
     end
     
-    subgraph "**Read View的作用**"
+    subgraph "Read View的作用"
         R1[**定义事务可见性<br/>哪些事务已提交**]
         R2[**保证读一致性<br/>隔离级别保证**]
         R3[**MVCC实现<br/>多版本并发控制**]
@@ -12551,13 +12551,13 @@ print(f"结果：{result2}")  # age=25（正确！Trx 100还未提交）
 
 ```mermaid
 graph TB
-    subgraph "**Page 1的Redo分布**"
+    subgraph "Page 1的Redo分布"
         PG0[**PG-0<br/>Base Page LSN=1000<br/>Redo LSN: 1001-5000**]
         PG1[**PG-1<br/>Redo LSN: 5001-8000**]
         PG2[**PG-2<br/>Redo LSN: 8001-10000**]
     end
     
-    subgraph "**Coalescing过程**"
+    subgraph "Coalescing过程"
         C1[**1. 查询元数据<br/>Page 1的Redo在哪些PG？**]
         C2[**2. 从PG-0收集Redo<br/>LSN: 1001-5000**]
         C3[**3. 从PG-1收集Redo<br/>LSN: 5001-8000**]
@@ -12861,4 +12861,1162 @@ class OptimizedCrossPGCollection:
 - ✅ 主从重启恢复时序图（崩溃恢复、追赶主库、ADSM预热、快照恢复）
 - ✅ Page-LSN映射和MTR-log机制（已在ADSM和Redo章节详细覆盖）
 - ✅ Buffer Cache预热机制（已在10.4和18章详细覆盖）
+
+
+## 18. Aurora数据库实例启动流程详解
+
+### 18.1 启动流程概述
+
+Aurora的启动流程是理解其架构的关键。与传统MySQL不同，Aurora采用存储计算分离架构，这使得启动流程有其独特之处。本章将详细介绍：
+
+1. **初次部署时的冷启动**：存储层和计算层如何从零开始
+2. **主库的启动流程**：作为唯一的写入节点如何初始化
+3. **从库的启动流程**：如何从存储层同步状态并提供读服务
+4. **崩溃恢复启动**：实例崩溃后如何恢复并重新启动
+
+### 18.2 Aurora实例类型和启动场景
+
+```mermaid
+graph TB
+    subgraph "Aurora实例类型"
+        T1[**Writer Instance<br/>（主库/写节点）**]
+        T2[**Reader Instance<br/>（从库/读节点）**]
+    end
+    
+    subgraph "启动场景"
+        S1[**场景1：集群首次创建<br/>（全新部署）**]
+        S2[**场景2：正常重启<br/>（计划内维护）**]
+        S3[**场景3：崩溃恢复<br/>（故障后重启）**]
+        S4[**场景4：Failover<br/>（主从切换）**]
+    end
+    
+    T1 --> S1
+    T1 --> S2
+    T1 --> S3
+    T1 --> S4
+    T2 --> S1
+    T2 --> S2
+    T2 --> S3
+    
+    style T1 fill:#ff9999,stroke:#333,stroke-width:3px,color:#000
+    style T2 fill:#99ccff,stroke:#333,stroke-width:3px,color:#000
+    style S1 fill:#ffffcc,stroke:#333,stroke-width:2px,color:#000
+    style S3 fill:#ffcccc,stroke:#333,stroke-width:2px,color:#000
+```
+
+### 18.3 场景1：集群首次创建（全新部署）
+
+这是最基础的场景，回答了"没有元数据时如何启动"的问题。
+
+#### 18.3.1 首次部署的整体流程
+
+```mermaid
+sequenceDiagram
+    participant User as 用户/控制台
+    participant CP as 控制平面<br/>(Control Plane)
+    participant Storage as 存储层<br/>(6副本)
+    participant Writer as Writer实例<br/>(主库)
+    participant Reader as Reader实例<br/>(从库)
+    
+    rect rgb(255, 240, 200)
+    Note over User,Storage: 阶段1：资源准备（控制平面操作）
+    
+    User->>CP: 1. 创建Aurora集群请求<br/>create_db_cluster()
+    
+    CP->>CP: 2. 分配资源<br/>• Cluster ID<br/>• Volume ID<br/>• 网络配置
+    
+    CP->>Storage: 3. 初始化存储卷<br/>format_volume(volume_id)
+    
+    Storage->>Storage: 4. 创建6副本的空白卷<br/>• 分配存储空间<br/>• 初始化元数据<br/>• 设置PG分组
+    
+    Storage-->>CP: 5. 存储卷就绪<br/>volume_ready
+    end
+    
+    rect rgb(255, 220, 220)
+    Note over CP,Writer: 阶段2：主库初始化（Writer Instance启动）
+    
+    CP->>Writer: 6. 启动Writer实例<br/>start_writer_instance()
+    
+    activate Writer
+    
+    Writer->>Writer: 7. 实例启动前检查<br/>• 加载配置<br/>• 初始化内存
+    
+    Writer->>Storage: 8. 检查存储卷状态<br/>check_volume_metadata()
+    
+    Storage-->>Writer: 9. 返回卷信息<br/>volume_empty=true<br/>VCL=0, VDL=0
+    
+    Writer->>Writer: 10. 检测到空卷<br/>进入首次初始化流程
+    
+    Writer->>Writer: 11. 创建系统数据库<br/>• mysql系统库<br/>• information_schema<br/>• performance_schema
+    
+    Writer->>Writer: 12. 初始化系统表<br/>• user表<br/>• privilege表<br/>• 系统配置表
+    
+    Writer->>Storage: 13. 写入初始化Redo<br/>• CREATE DATABASE redo<br/>• CREATE TABLE redo<br/>• SYSTEM INIT redo<br/>LSN: 0 → 1000
+    
+    Storage->>Storage: 14. 持久化Redo<br/>• 写入6副本<br/>• 确认quorum(4/6)<br/>• 更新VDL=1000
+    
+    Storage-->>Writer: 15. Redo确认<br/>ack(LSN=1000)
+    
+    Writer->>Writer: 16. 更新本地VCL<br/>VCL=1000
+    
+    Writer->>Writer: 17. 完成初始化<br/>状态：READY
+    
+    deactivate Writer
+    
+    Writer-->>CP: 18. Writer就绪通知<br/>writer_ready
+    end
+    
+    rect rgb(220, 240, 255)
+    Note over CP,Reader: 阶段3：从库初始化（Reader Instance启动）
+    
+    CP->>Reader: 19. 启动Reader实例<br/>start_reader_instance()
+    
+    activate Reader
+    
+    Reader->>Reader: 20. 实例启动前检查<br/>• 加载配置（只读模式）<br/>• 初始化内存
+    
+    Reader->>Storage: 21. 连接存储层<br/>connect_to_volume()
+    
+    Storage-->>Reader: 22. 返回存储状态<br/>VDL=1000<br/>可用Redo范围[0, 1000]
+    
+    Reader->>Reader: 23. 初始化Read Point<br/>Read Point = 0<br/>（从头开始）
+    
+    Reader->>Storage: 24. 拉取初始化Redo<br/>get_redo_logs(0, 1000)
+    
+    Storage-->>Reader: 25. 返回Redo Log<br/>• CREATE DATABASE<br/>• CREATE TABLE<br/>• SYSTEM INIT
+    
+    Reader->>Reader: 26. 应用Redo构建Buffer Pool<br/>• 重建系统表结构<br/>• 加载元数据<br/>• 构建内存视图
+    
+    Reader->>Reader: 27. 更新Read Point<br/>Read Point = 1000
+    
+    Reader->>Reader: 28. 完成初始化<br/>状态：READY（只读）
+    
+    deactivate Reader
+    
+    Reader-->>CP: 29. Reader就绪通知<br/>reader_ready
+    end
+    
+    CP-->>User: 30. 集群创建完成<br/>• Writer Endpoint<br/>• Reader Endpoint<br/>• Cluster Endpoint
+```
+
+#### 18.3.2 存储层的初始化详解
+
+当存储卷首次创建时，存储层需要初始化关键的元数据结构：
+
+```python
+class AuroraStorageVolume:
+    """Aurora存储卷的初始化"""
+    
+    def __init__(self, volume_id, size_gb):
+        self.volume_id = volume_id
+        self.size_gb = size_gb
+        self.initialized = False
+        
+    def format_volume(self):
+        """格式化存储卷（首次创建时调用）"""
+        
+        # 1. 初始化Volume元数据
+        self.volume_metadata = {
+            "volume_id": self.volume_id,
+            "creation_time": time.now(),
+            "size_gb": self.size_gb,
+            "VDL": 0,  # Volume Durable LSN = 0（无任何持久化数据）
+            "VCL": 0,  # Volume Complete LSN = 0（无任何完整日志）
+            "protection_groups": []  # PG列表（稍后分配）
+        }
+        
+        # 2. 创建6个副本的存储空间
+        for i in range(6):
+            replica = StorageReplica(
+                replica_id=i,
+                az=self.get_az_for_replica(i),
+                size_gb=self.size_gb
+            )
+            replica.initialize_empty()
+            self.replicas.append(replica)
+            
+        # 3. 划分Protection Groups（默认6个PG）
+        for pg_id in range(6):
+            pg = ProtectionGroup(
+                pg_id=pg_id,
+                segment_range=(pg_id * 10GB, (pg_id + 1) * 10GB),
+                replicas=[r for r in self.replicas if pg_id in r.pg_list]
+            )
+            self.volume_metadata["protection_groups"].append(pg)
+            
+        # 4. 初始化Redo Log的存储结构
+        self.redo_log_storage = {
+            "segments": [],  # 空的Redo段列表
+            "head_lsn": 0,   # 当前最新LSN
+            "tail_lsn": 0,   # 最旧可用LSN（垃圾回收边界）
+            "index": {}      # LSN到存储位置的索引
+        }
+        
+        # 5. 初始化Page Cache（用于延迟物化）
+        self.page_cache = {}  # 空的页面缓存
+        
+        # 6. 标记卷为已初始化但为空
+        self.initialized = True
+        self.is_empty = True  # 关键标志：告诉Writer这是全新的卷
+        
+        print(f"Volume {self.volume_id} initialized: VDL=0, VCL=0, empty=true")
+        
+        return {
+            "status": "success",
+            "volume_id": self.volume_id,
+            "VDL": 0,
+            "VCL": 0,
+            "is_empty": True
+        }
+```
+
+#### 18.3.3 Writer实例的首次初始化流程
+
+```python
+class AuroraWriterInstance:
+    """Aurora Writer实例的启动逻辑"""
+    
+    def start_instance(self, volume_id):
+        """启动Writer实例"""
+        
+        print("=== Writer Instance Starting ===")
+        
+        # 1. 连接存储层
+        self.storage = connect_to_storage(volume_id)
+        
+        # 2. 检查存储卷状态
+        volume_info = self.storage.get_volume_metadata()
+        
+        print(f"Volume Info: VDL={volume_info['VDL']}, is_empty={volume_info['is_empty']}")
+        
+        # 3. 判断是否为首次启动（空卷）
+        if volume_info["is_empty"] and volume_info["VDL"] == 0:
+            print("Detected empty volume, starting first-time initialization")
+            self.first_time_initialization()
+        else:
+            print(f"Detected existing data, starting recovery from LSN {volume_info['VDL']}")
+            self.recovery_from_existing_data(volume_info["VDL"])
+        
+        # 4. 启动后台线程
+        self.start_background_threads()
+        
+        print("=== Writer Instance Ready ===")
+        
+    def first_time_initialization(self):
+        """首次初始化（空卷场景）"""
+        
+        print("\n--- First-Time Initialization ---")
+        
+        # 1. 初始化系统变量
+        self.next_lsn = 0
+        self.VCL = 0
+        self.transaction_id = 1
+        
+        # 2. 创建系统数据库（mysql, information_schema等）
+        print("Creating system databases...")
+        self.create_system_databases()
+        
+        # 3. 创建系统表（user, privilege等）
+        print("Creating system tables...")
+        self.create_system_tables()
+        
+        # 4. 初始化权限（root用户等）
+        print("Initializing privileges...")
+        self.initialize_privileges()
+        
+        # 5. 写入初始化完成标记
+        self.mark_initialization_complete()
+        
+        print(f"First-time initialization complete: VCL={self.VCL}")
+        
+    def create_system_databases(self):
+        """创建系统数据库"""
+        
+        # 模拟CREATE DATABASE语句
+        databases = ["mysql", "information_schema", "performance_schema", "sys"]
+        
+        for db_name in databases:
+            # 生成Redo Log
+            redo = RedoLog(
+                lsn=self.next_lsn,
+                type="MLOG_CREATE_DATABASE",
+                database_name=db_name,
+                timestamp=time.now()
+            )
+            
+            # 写入存储层
+            self.write_redo_to_storage(redo)
+            
+            # 更新LSN
+            self.next_lsn += len(redo.encode())
+            
+            print(f"  - Created database: {db_name}, LSN={self.next_lsn}")
+        
+    def create_system_tables(self):
+        """创建系统表"""
+        
+        # 模拟CREATE TABLE语句
+        tables = [
+            ("mysql", "user"),
+            ("mysql", "db"),
+            ("mysql", "tables_priv"),
+            ("mysql", "columns_priv"),
+            # ... 更多系统表
+        ]
+        
+        for db_name, table_name in tables:
+            # 生成Redo Log
+            redo = RedoLog(
+                lsn=self.next_lsn,
+                type="MLOG_CREATE_TABLE",
+                database_name=db_name,
+                table_name=table_name,
+                table_definition={...},  # 表结构
+                timestamp=time.now()
+            )
+            
+            # 写入存储层
+            self.write_redo_to_storage(redo)
+            
+            # 更新LSN
+            self.next_lsn += len(redo.encode())
+            
+            print(f"  - Created table: {db_name}.{table_name}, LSN={self.next_lsn}")
+            
+    def initialize_privileges(self):
+        """初始化权限"""
+        
+        # 插入root用户
+        redo = RedoLog(
+            lsn=self.next_lsn,
+            type="MLOG_INSERT",
+            table="mysql.user",
+            data={
+                "user": "root",
+                "host": "localhost",
+                "password": hash_password(""),
+                "privileges": "ALL"
+            },
+            timestamp=time.now()
+        )
+        
+        # 写入存储层
+        self.write_redo_to_storage(redo)
+        
+        self.next_lsn += len(redo.encode())
+        
+        print(f"  - Initialized root user, LSN={self.next_lsn}")
+        
+    def mark_initialization_complete(self):
+        """标记初始化完成"""
+        
+        # 写入一个特殊的Redo记录
+        redo = RedoLog(
+            lsn=self.next_lsn,
+            type="MLOG_SYSTEM_INIT_COMPLETE",
+            timestamp=time.now()
+        )
+        
+        # 写入存储层并等待持久化
+        self.write_redo_to_storage(redo, wait_durable=True)
+        
+        # 更新VCL
+        self.VCL = self.next_lsn
+        
+        print(f"  - Initialization complete marker written, VCL={self.VCL}")
+        
+    def write_redo_to_storage(self, redo, wait_durable=False):
+        """写入Redo到存储层"""
+        
+        # 批量发送到存储层
+        self.storage.write_redo(redo)
+        
+        if wait_durable:
+            # 等待Quorum确认（4/6副本）
+            self.storage.wait_for_quorum(redo.lsn)
+```
+
+#### 18.3.4 Reader实例的首次启动流程
+
+```python
+class AuroraReaderInstance:
+    """Aurora Reader实例的启动逻辑"""
+    
+    def start_instance(self, volume_id):
+        """启动Reader实例"""
+        
+        print("=== Reader Instance Starting ===")
+        
+        # 1. 连接存储层（只读连接）
+        self.storage = connect_to_storage_readonly(volume_id)
+        
+        # 2. 获取存储层当前状态
+        volume_info = self.storage.get_volume_metadata()
+        
+        print(f"Volume Info: VDL={volume_info['VDL']}")
+        
+        # 3. 初始化Read Point（从0开始）
+        self.read_point = 0
+        self.target_lsn = volume_info["VDL"]
+        
+        # 4. 拉取并应用Redo到最新状态
+        print(f"Catching up: Read Point {self.read_point} → Target LSN {self.target_lsn}")
+        self.catch_up_to_target()
+        
+        # 5. 启动后台线程（持续同步）
+        self.start_background_sync_thread()
+        
+        print("=== Reader Instance Ready (Read-Only) ===")
+        
+    def catch_up_to_target(self):
+        """追赶到目标LSN（首次启动时从0开始）"""
+        
+        print("\n--- Catching Up to Target LSN ---")
+        
+        while self.read_point < self.target_lsn:
+            # 1. 从存储层拉取Redo
+            batch_size = 1000  # 每次拉取1000条
+            redo_logs = self.storage.get_redo_logs(
+                start_lsn=self.read_point,
+                count=batch_size
+            )
+            
+            if not redo_logs:
+                break
+            
+            # 2. 应用Redo到Buffer Pool
+            for redo in redo_logs:
+                self.apply_redo_to_buffer_pool(redo)
+                self.read_point = redo.lsn + redo.length
+            
+            print(f"  - Applied {len(redo_logs)} redo logs, "
+                  f"Read Point: {self.read_point}/{self.target_lsn}")
+        
+        print(f"Catch-up complete: Read Point = {self.read_point}")
+        
+    def apply_redo_to_buffer_pool(self, redo):
+        """应用Redo到Buffer Pool（在内存中重建页面）"""
+        
+        if redo.type == "MLOG_CREATE_DATABASE":
+            # 在内存中记录数据库元数据
+            self.metadata["databases"][redo.database_name] = {
+                "created_lsn": redo.lsn
+            }
+            
+        elif redo.type == "MLOG_CREATE_TABLE":
+            # 在内存中记录表元数据
+            db = redo.database_name
+            table = redo.table_name
+            self.metadata["tables"][f"{db}.{table}"] = {
+                "created_lsn": redo.lsn,
+                "definition": redo.table_definition
+            }
+            
+        elif redo.type == "MLOG_INSERT":
+            # 应用数据插入（按需加载页面）
+            page_id = redo.page_id
+            
+            # 如果页面不在Buffer Pool，从存储层读取
+            if page_id not in self.buffer_pool:
+                self.load_page_from_storage(page_id)
+            
+            # 应用Redo到页面
+            page = self.buffer_pool[page_id]
+            page.apply_redo(redo)
+            
+        # ... 其他Redo类型
+        
+    def load_page_from_storage(self, page_id):
+        """从存储层加载页面（如果需要）"""
+        
+        # 请求存储层物化页面
+        page_data = self.storage.get_page(page_id, self.read_point)
+        
+        # 加载到Buffer Pool
+        self.buffer_pool[page_id] = Page(page_id, page_data)
+        
+    def start_background_sync_thread(self):
+        """启动后台同步线程（持续追赶Writer的写入）"""
+        
+        def sync_loop():
+            while self.running:
+                # 1. 获取最新的VDL
+                new_vdl = self.storage.get_vdl()
+                
+                # 2. 如果有新的Redo，拉取并应用
+                if new_vdl > self.read_point:
+                    self.target_lsn = new_vdl
+                    self.catch_up_to_target()
+                
+                # 3. 休眠一小段时间
+                time.sleep(0.01)  # 10ms
+        
+        self.sync_thread = Thread(target=sync_loop)
+        self.sync_thread.start()
+```
+
+### 18.4 场景2：正常重启（计划内维护）
+
+正常重启是最常见的场景，例如升级版本、修改配置等。
+
+#### 18.4.1 Writer正常重启流程
+
+```mermaid
+sequenceDiagram
+    participant Admin as 管理员
+    participant OldWriter as 当前Writer<br/>(即将停止)
+    participant Storage as 存储层
+    participant NewWriter as 新Writer<br/>(重启后)
+    
+    rect rgb(255, 220, 220)
+    Note over Admin,Storage: 阶段1：优雅关闭
+    
+    Admin->>OldWriter: 1. 发送SHUTDOWN命令<br/>shutdown_gracefully()
+    
+    activate OldWriter
+    
+    OldWriter->>OldWriter: 2. 停止接受新连接<br/>• 拒绝新事务<br/>• 等待现有事务完成
+    
+    OldWriter->>OldWriter: 3. 刷新脏页的Redo<br/>确保VCL到达安全点
+    
+    OldWriter->>Storage: 4. 最终Redo同步<br/>flush_all_pending_redo()
+    
+    Storage->>Storage: 5. 确认所有Redo持久化<br/>update_VDL
+    
+    Storage-->>OldWriter: 6. Redo确认<br/>ack(VDL=50000)
+    
+    OldWriter->>OldWriter: 7. 更新最终VCL<br/>VCL=50000
+    
+    OldWriter->>OldWriter: 8. 保存Checkpoint信息<br/>• 最后的VCL<br/>• 活跃事务列表<br/>• Buffer Pool状态
+    
+    OldWriter->>Storage: 9. 写入Checkpoint Redo<br/>MLOG_CHECKPOINT(VCL=50000)
+    
+    Storage-->>OldWriter: 10. Checkpoint确认<br/>ack
+    
+    OldWriter->>OldWriter: 11. 释放资源<br/>• 关闭连接<br/>• 释放内存
+    
+    deactivate OldWriter
+    
+    OldWriter-->>Admin: 12. 关闭完成<br/>shutdown_complete
+    end
+    
+    rect rgb(220, 255, 220)
+    Note over Admin,NewWriter: 阶段2：新Writer启动
+    
+    Admin->>NewWriter: 13. 启动新Writer实例<br/>start_writer_instance()
+    
+    activate NewWriter
+    
+    NewWriter->>NewWriter: 14. 初始化实例<br/>• 加载配置<br/>• 分配内存
+    
+    NewWriter->>Storage: 15. 连接存储层<br/>connect_to_volume()
+    
+    Storage-->>NewWriter: 16. 返回存储状态<br/>VDL=50000<br/>Checkpoint LSN=50000
+    
+    NewWriter->>NewWriter: 17. 检测到Checkpoint<br/>无需恢复（干净关闭）
+    
+    NewWriter->>NewWriter: 18. 初始化VCL<br/>VCL = 50000<br/>next_lsn = 50001
+    
+    NewWriter->>Storage: 19. 读取必要的元数据页面<br/>get_page(system_pages)
+    
+    Storage-->>NewWriter: 20. 返回元数据页面<br/>• 数据库列表<br/>• 表定义<br/>• 索引信息
+    
+    NewWriter->>NewWriter: 21. 重建内存结构<br/>• Buffer Pool<br/>• 事务系统<br/>• 锁管理器
+    
+    NewWriter->>NewWriter: 22. 启动后台线程<br/>• Log Writer<br/>• Page Cleaner<br/>• Checkpointer
+    
+    NewWriter->>NewWriter: 23. 开始接受连接<br/>状态：READY
+    
+    deactivate NewWriter
+    
+    NewWriter-->>Admin: 24. Writer就绪<br/>writer_ready
+    end
+```
+
+#### 18.4.2 Reader正常重启流程
+
+Reader的重启更简单，因为它不需要保证事务一致性：
+
+```python
+class AuroraReaderInstance:
+    """Reader的正常重启"""
+    
+    def restart_after_shutdown(self, volume_id):
+        """正常重启流程"""
+        
+        print("=== Reader Instance Restarting ===")
+        
+        # 1. 连接存储层
+        self.storage = connect_to_storage_readonly(volume_id)
+        
+        # 2. 获取当前VDL
+        current_vdl = self.storage.get_vdl()
+        print(f"Current VDL: {current_vdl}")
+        
+        # 3. Reader可以选择从任意一致性点启动
+        # 选项A：从VDL启动（最新数据，但需要更多恢复时间）
+        # 选项B：从最近的Checkpoint启动（快速启动，但数据稍旧）
+        
+        last_checkpoint = self.storage.get_last_checkpoint()
+        
+        if current_vdl - last_checkpoint.lsn < 10000:
+            # 如果差距不大，从VDL启动
+            self.read_point = current_vdl
+            print(f"Starting from VDL: {current_vdl}")
+        else:
+            # 如果差距太大，从Checkpoint启动，后台追赶
+            self.read_point = last_checkpoint.lsn
+            print(f"Starting from Checkpoint: {last_checkpoint.lsn}, "
+                  f"will catch up to {current_vdl}")
+        
+        # 4. 重建Buffer Pool（按需加载）
+        self.buffer_pool = {}
+        
+        # 5. 启动后台同步线程
+        self.start_background_sync_thread()
+        
+        # 6. 就绪（即使还在追赶，也可以提供服务）
+        self.ready = True
+        print("=== Reader Instance Ready ===")
+```
+
+### 18.5 场景3：崩溃恢复启动
+
+这是最复杂的场景，需要保证数据一致性。
+
+#### 18.5.1 Writer崩溃恢复的完整流程
+
+```mermaid
+sequenceDiagram
+    participant Monitor as 监控系统
+    participant Storage as 存储层
+    participant NewWriter as 新Writer<br/>(恢复中)
+    
+    rect rgb(255, 200, 200)
+    Note over Monitor,Storage: 阶段1：检测崩溃
+    
+    Monitor->>Monitor: 1. 检测到Writer心跳丢失<br/>timeout=30s
+    
+    Monitor->>Storage: 2. 查询存储层状态<br/>get_volume_status()
+    
+    Storage-->>Monitor: 3. 返回状态<br/>VDL=45678<br/>上次写入时间: 35s ago
+    
+    Monitor->>Monitor: 4. 确认Writer崩溃<br/>触发恢复流程
+    end
+    
+    rect rgb(220, 220, 255)
+    Note over Monitor,NewWriter: 阶段2：启动新Writer进行恢复
+    
+    Monitor->>NewWriter: 5. 启动新Writer（恢复模式）<br/>start_writer_recovery()
+    
+    activate NewWriter
+    
+    NewWriter->>Storage: 6. 连接存储层<br/>connect_to_volume()
+    
+    Storage-->>NewWriter: 7. 返回存储状态<br/>VDL=45678<br/>VCL=unknown<br/>last_checkpoint=40000
+    
+    NewWriter->>NewWriter: 8. 分析恢复范围<br/>• Checkpoint LSN: 40000<br/>• VDL: 45678<br/>• 需要恢复: [40000, 45678]
+    
+    NewWriter->>Storage: 9. 读取Checkpoint信息<br/>get_checkpoint(LSN=40000)
+    
+    Storage-->>NewWriter: 10. 返回Checkpoint<br/>• VCL=40000<br/>• 活跃事务列表<br/>• 页面LSN快照
+    
+    NewWriter->>Storage: 11. 拉取Redo Log<br/>get_redo_logs(40000, 45678)
+    
+    Storage-->>NewWriter: 12. 返回Redo Log<br/>• 5678条Redo记录<br/>• 包含MTR边界信息
+    
+    NewWriter->>NewWriter: 13. 解析MTR完整性<br/>• 完整MTR: 123个<br/>• 不完整MTR: 2个
+    
+    NewWriter->>NewWriter: 14. 恢复决策<br/>• 应用完整MTR<br/>• 忽略不完整MTR<br/>• 回滚未提交事务
+    
+    NewWriter->>NewWriter: 15. 应用Redo到Buffer Pool<br/>progress: 0% → 100%
+    
+    NewWriter->>NewWriter: 16. 更新VCL<br/>VCL = 45650<br/>（最后完整MTR的LSN）
+    
+    NewWriter->>Storage: 17. 写入恢复完成标记<br/>MLOG_RECOVERY_COMPLETE<br/>LSN=45650
+    
+    Storage-->>NewWriter: 18. 恢复确认<br/>ack
+    
+    NewWriter->>NewWriter: 19. 重建内存结构<br/>• 事务系统<br/>• 锁管理器<br/>• Buffer Pool
+    
+    NewWriter->>NewWriter: 20. 启动后台线程<br/>状态：READY
+    
+    deactivate NewWriter
+    
+    NewWriter-->>Monitor: 21. 恢复完成<br/>writer_recovered<br/>VCL=45650
+    end
+```
+
+#### 18.5.2 崩溃恢复的关键代码
+
+```python
+class AuroraWriterRecovery:
+    """Writer崩溃恢复逻辑"""
+    
+    def recover_from_crash(self, volume_id):
+        """从崩溃中恢复"""
+        
+        print("=== Writer Crash Recovery ===")
+        
+        # 1. 连接存储层
+        self.storage = connect_to_storage(volume_id)
+        
+        # 2. 获取存储层状态
+        volume_info = self.storage.get_volume_metadata()
+        vdl = volume_info["VDL"]
+        
+        print(f"Storage VDL: {vdl}")
+        
+        # 3. 查找最近的Checkpoint
+        checkpoint = self.storage.get_last_checkpoint()
+        checkpoint_lsn = checkpoint["lsn"]
+        
+        print(f"Last Checkpoint: {checkpoint_lsn}")
+        print(f"Recovery Range: [{checkpoint_lsn}, {vdl}]")
+        
+        # 4. 拉取需要恢复的Redo
+        redo_logs = self.storage.get_redo_logs(checkpoint_lsn, vdl)
+        
+        print(f"Fetched {len(redo_logs)} redo logs for recovery")
+        
+        # 5. 分析MTR完整性
+        complete_mtrs, incomplete_mtrs = self.analyze_mtr_completeness(redo_logs)
+        
+        print(f"Complete MTRs: {len(complete_mtrs)}")
+        print(f"Incomplete MTRs: {len(incomplete_mtrs)} (will be ignored)")
+        
+        # 6. 应用完整的MTR
+        recovered_lsn = checkpoint_lsn
+        
+        for mtr in complete_mtrs:
+            for redo in mtr.redo_list:
+                self.apply_redo_to_buffer_pool(redo)
+                recovered_lsn = max(recovered_lsn, redo.lsn + redo.length)
+        
+        print(f"Applied {len(complete_mtrs)} MTRs, recovered to LSN {recovered_lsn}")
+        
+        # 7. 更新VCL
+        self.VCL = recovered_lsn
+        self.next_lsn = recovered_lsn + 1
+        
+        # 8. 写入恢复完成标记
+        recovery_marker = RedoLog(
+            lsn=self.next_lsn,
+            type="MLOG_RECOVERY_COMPLETE",
+            recovered_from=checkpoint_lsn,
+            recovered_to=recovered_lsn,
+            timestamp=time.now()
+        )
+        
+        self.storage.write_redo(recovery_marker, wait_durable=True)
+        
+        print(f"Recovery complete: VCL={self.VCL}")
+        
+        return {
+            "status": "success",
+            "checkpoint_lsn": checkpoint_lsn,
+            "recovered_lsn": recovered_lsn,
+            "ignored_redos": len(incomplete_mtrs)
+        }
+        
+    def analyze_mtr_completeness(self, redo_logs):
+        """分析MTR完整性"""
+        
+        complete_mtrs = []
+        incomplete_mtrs = []
+        
+        current_mtr = None
+        
+        for redo in redo_logs:
+            if redo.type == "MLOG_MTR_START":
+                # MTR开始
+                current_mtr = MTR(
+                    mtr_id=redo.mtr_id,
+                    start_lsn=redo.lsn,
+                    expected_redo_count=redo.redo_count,
+                    redo_list=[]
+                )
+                
+            elif redo.type == "MLOG_MTR_END":
+                # MTR结束
+                if current_mtr:
+                    # 检查完整性
+                    if len(current_mtr.redo_list) == current_mtr.expected_redo_count:
+                        complete_mtrs.append(current_mtr)
+                    else:
+                        incomplete_mtrs.append(current_mtr)
+                    
+                    current_mtr = None
+                    
+            else:
+                # MTR内的普通Redo
+                if current_mtr:
+                    current_mtr.redo_list.append(redo)
+        
+        # 如果有MTR没有结束标记，也认为不完整
+        if current_mtr:
+            incomplete_mtrs.append(current_mtr)
+        
+        return complete_mtrs, incomplete_mtrs
+```
+
+### 18.6 场景4：Failover（主从切换）
+
+Failover是Reader被提升为Writer的过程。
+
+```mermaid
+sequenceDiagram
+    participant Monitor as 监控系统
+    participant OldWriter as 旧Writer<br/>(崩溃)
+    participant Storage as 存储层
+    participant Reader as Reader<br/>(将提升为Writer)
+    participant NewWriter as 新Writer<br/>(Reader提升后)
+    
+    rect rgb(255, 220, 220)
+    Note over Monitor,Storage: 阶段1：检测主库故障
+    
+    Monitor->>OldWriter: 1. 健康检查<br/>health_check()
+    
+    Note over OldWriter: Writer崩溃<br/>无响应
+    
+    Monitor->>Monitor: 2. Writer故障确认<br/>timeout=30s
+    
+    Monitor->>Storage: 3. 冻结存储层写入<br/>freeze_writes()
+    
+    Storage->>Storage: 4. 停止接受新Redo<br/>记录最终VDL=50000
+    
+    Storage-->>Monitor: 5. 写入冻结确认<br/>final_VDL=50000
+    end
+    
+    rect rgb(220, 240, 255)
+    Note over Monitor,Reader: 阶段2：选择新主库
+    
+    Monitor->>Monitor: 6. 选择Reader提升<br/>• 选择Read Point最接近VDL的Reader<br/>• 健康检查通过
+    
+    Monitor->>Reader: 7. 发送提升命令<br/>promote_to_writer()
+    
+    activate Reader
+    
+    Reader->>Reader: 8. 当前状态检查<br/>Read Point=49500<br/>Target: VDL=50000
+    
+    Reader->>Storage: 9. 追赶最新Redo<br/>get_redo_logs(49500, 50000)
+    
+    Storage-->>Reader: 10. 返回剩余Redo<br/>500条Redo记录
+    
+    Reader->>Reader: 11. 快速追赶<br/>• 应用500条Redo<br/>• Read Point: 49500→50000
+    
+    Reader->>Reader: 12. 分析MTR完整性<br/>（与崩溃恢复类似）
+    
+    Reader->>Reader: 13. 切换到写模式<br/>• 禁用只读<br/>• 初始化写入系统<br/>• VCL=50000
+    
+    deactivate Reader
+    end
+    
+    rect rgb(220, 255, 220)
+    Note over Monitor,NewWriter: 阶段3：新Writer接管
+    
+    activate NewWriter
+    
+    NewWriter->>Storage: 14. 解冻存储层<br/>unfreeze_writes()
+    
+    Storage->>Storage: 15. 恢复接受Redo<br/>from LSN 50001
+    
+    Storage-->>NewWriter: 16. 写入通道就绪<br/>ready_for_writes
+    
+    NewWriter->>NewWriter: 17. 启动写入线程<br/>• Log Writer<br/>• Page Cleaner<br/>• Checkpointer
+    
+    NewWriter->>Storage: 18. 写入提升标记<br/>MLOG_WRITER_PROMOTION<br/>LSN=50001
+    
+    Storage-->>NewWriter: 19. 提升确认<br/>ack
+    
+    NewWriter->>NewWriter: 20. 开始接受写入<br/>状态：WRITER_READY
+    
+    deactivate NewWriter
+    
+    NewWriter-->>Monitor: 21. Failover完成<br/>new_writer_ready<br/>VCL=50001
+    end
+    
+    rect rgb(255, 255, 220)
+    Note over Monitor,NewWriter: 阶段4：更新连接端点
+    
+    Monitor->>Monitor: 22. 更新DNS记录<br/>• Writer Endpoint → 新IP<br/>• 原Writer摘除
+    
+    Monitor-->>NewWriter: 23. 流量切换完成<br/>应用现在连接到新Writer
+    end
+```
+
+### 18.7 启动流程的关键差异总结
+
+#### 18.7.1 Writer vs Reader启动差异
+
+| **维度** | **Writer（主库）** | **Reader（从库）** |
+|---------|-------------------|-------------------|
+| **权限** | 读写权限 | 只读权限 |
+| **VCL管理** | 主动管理VCL（写入后更新） | 被动跟随（通过Read Point追踪） |
+| **Redo生成** | 生成并写入Redo到存储层 | 不生成Redo，只读取和应用 |
+| **首次启动** | 需要初始化系统数据库和表 | 从存储层拉取已有Redo进行重建 |
+| **恢复流程** | 复杂（MTR完整性检查、事务回滚） | 简单（追赶到最新VDL即可） |
+| **后台线程** | Log Writer、Page Cleaner、Checkpointer | 仅需Redo Sync Thread |
+| **启动速度** | 相对较慢（需要恢复检查） | 很快（可以从任意一致性点启动） |
+| **Checkpoint** | 主动写入Checkpoint | 不写入Checkpoint |
+
+#### 18.7.2 不同启动场景的流程对比
+
+```mermaid
+graph TB
+    subgraph "首次部署"
+        S1[存储层初始化<br/>VDL=0, VCL=0]
+        S2[Writer创建系统数据库]
+        S3[Writer初始化系统表]
+        S4[Reader从0开始追赶]
+    end
+    
+    subgraph "正常重启"
+        R1[Writer优雅关闭<br/>写入Checkpoint]
+        R2[Writer重启<br/>从Checkpoint恢复]
+        R3[Reader重启<br/>选择恢复点]
+    end
+    
+    subgraph "崩溃恢复"
+        C1[检测Writer崩溃]
+        C2[分析MTR完整性]
+        C3[应用完整MTR]
+        C4[忽略不完整MTR]
+    end
+    
+    subgraph "Failover"
+        F1[冻结存储层写入]
+        F2[选择Reader提升]
+        F3[Reader追赶到VDL]
+        F4[切换到写模式]
+    end
+    
+    S1 --> S2 --> S3 --> S4
+    R1 --> R2
+    R1 --> R3
+    C1 --> C2 --> C3 --> C4
+    F1 --> F2 --> F3 --> F4
+    
+    style S1 fill:#ffffcc,stroke:#333,stroke-width:2px,color:#000
+    style R1 fill:#ccffcc,stroke:#333,stroke-width:2px,color:#000
+    style C1 fill:#ffcccc,stroke:#333,stroke-width:2px,color:#000
+    style F1 fill:#ccccff,stroke:#333,stroke-width:2px,color:#000
+```
+
+### 18.8 启动流程中的关键问题解答
+
+#### Q1: 全新部署时，没有元数据，Writer如何知道要创建哪些系统库表？
+
+**答案**：Writer实例内部包含了系统初始化的代码（类似MySQL的`bootstrap`过程）：
+
+```python
+# Writer实例包含初始化脚本
+SYSTEM_INIT_SCRIPT = """
+CREATE DATABASE mysql;
+CREATE DATABASE information_schema;
+CREATE DATABASE performance_schema;
+
+USE mysql;
+CREATE TABLE user (...);
+CREATE TABLE db (...);
+CREATE TABLE tables_priv (...);
+...
+"""
+
+def first_time_init():
+    if storage.is_empty():
+        execute_init_script(SYSTEM_INIT_SCRIPT)
+```
+
+这些初始化脚本是硬编码在Writer实例中的，不依赖于存储层的元数据。
+
+#### Q2: Reader首次启动时，如何知道有哪些数据库和表？
+
+**答案**：Reader通过应用Writer写入的Redo来重建元数据：
+
+1. Reader从LSN=0开始拉取Redo
+2. 遇到`MLOG_CREATE_DATABASE`时，在内存中记录数据库信息
+3. 遇到`MLOG_CREATE_TABLE`时，在内存中记录表结构
+4. 需要访问数据时，按需从存储层物化对应的页面
+
+#### Q3: 崩溃恢复时，如何保证事务一致性？
+
+**答案**：通过MTR（Mini-Transaction）机制：
+
+1. 每个MTR有明确的开始标记（`MLOG_MTR_START`）和结束标记（`MLOG_MTR_END`）
+2. MTR开始标记包含元数据：预期的Redo数量、修改的页面列表
+3. 恢复时验证MTR完整性：
+   - 有结束标记 + Redo数量匹配 → 完整MTR，应用
+   - 没有结束标记或数量不匹配 → 不完整MTR，忽略
+4. 不完整的MTR对应未提交的事务，忽略即回滚
+
+#### Q4: Failover时，如何保证新Writer不会丢失数据？
+
+**答案**：通过三个关键步骤保证：
+
+1. **冻结写入**：在Failover开始前，冻结存储层的写入通道，记录最终的VDL
+2. **追赶VDL**：被提升的Reader必须追赶到VDL才能接管
+3. **MTR检查**：提升前检查最后的MTR完整性，确保不会在事务中间接管
+
+#### Q5: Reader追赶Writer的延迟如何控制？
+
+**答案**：Reader通过多种机制控制延迟：
+
+1. **批量拉取**：每次拉取1000+条Redo，减少网络往返
+2. **后台持续同步**：10ms一次的轮询，保持低延迟
+3. **优先级**：存储层对Reader的请求给予高优先级
+4. **预取**：根据VDL的增长速度预测并预取Redo
+
+典型的复制延迟：< 20ms（P99）
+
+### 18.9 启动流程性能优化
+
+#### 18.9.1 快速启动技术
+
+```python
+class FastStartup:
+    """快速启动优化"""
+    
+    def optimized_reader_startup(self):
+        """优化的Reader启动流程"""
+        
+        # 1. 并行化初始化
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = []
+            
+            # 并行连接存储层各PG
+            for pg in range(6):
+                future = executor.submit(self.connect_to_pg, pg)
+                futures.append(future)
+            
+            # 等待所有连接就绪
+            for future in futures:
+                future.result()
+        
+        # 2. 延迟物化（Lazy Materialization）
+        # 不需要在启动时加载所有页面，按需加载
+        self.buffer_pool = {}  # 空的Buffer Pool
+        
+        # 3. 快速追赶（Fast Catch-up）
+        # 使用并行读取和批量应用
+        self.parallel_catch_up()
+        
+        # 4. 提前返回（Early Ready）
+        # 即使还在追赶，也可以提供服务（带轻微延迟）
+        self.state = "READY"
+        
+        # 后台继续追赶
+        self.background_catch_up()
+        
+    def parallel_catch_up(self):
+        """并行追赶（加速恢复）"""
+        
+        target_lsn = self.storage.get_vdl()
+        redo_range = target_lsn - self.read_point
+        
+        # 将Redo范围分片
+        num_threads = 10
+        chunk_size = redo_range // num_threads
+        
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = []
+            
+            for i in range(num_threads):
+                start_lsn = self.read_point + i * chunk_size
+                end_lsn = start_lsn + chunk_size
+                
+                future = executor.submit(
+                    self.apply_redo_chunk,
+                    start_lsn,
+                    end_lsn
+                )
+                futures.append(future)
+            
+            # 等待所有线程完成
+            for future in futures:
+                future.result()
+        
+        self.read_point = target_lsn
+```
+
+#### 18.9.2 启动性能指标
+
+| **场景** | **启动时间** | **说明** |
+|---------|------------|---------|
+| **Writer首次启动** | 5-10秒 | 需要创建系统库表并写入Redo |
+| **Writer正常重启** | 2-5秒 | 从Checkpoint恢复，无需重放Redo |
+| **Writer崩溃恢复** | 10-30秒 | 取决于需要恢复的Redo数量 |
+| **Reader首次启动** | 1-3秒 | 并行追赶，延迟物化 |
+| **Reader正常重启** | < 1秒 | 可以从任意点启动 |
+| **Failover（Reader→Writer）** | 5-15秒 | 包括追赶、MTR检查、切换 |
+
+### 18.10 启动流程监控和诊断
+
+```python
+class StartupMonitor:
+    """启动流程监控"""
+    
+    def monitor_writer_startup(self, instance_id):
+        """监控Writer启动"""
+        
+        metrics = {
+            "start_time": time.now(),
+            "storage_connection_time": None,
+            "recovery_start_time": None,
+            "recovery_end_time": None,
+            "ready_time": None,
+            "redo_applied_count": 0,
+            "mtr_complete_count": 0,
+            "mtr_incomplete_count": 0
+        }
+        
+        # 实时监控启动各阶段
+        while not self.is_ready(instance_id):
+            status = self.get_instance_status(instance_id)
+            
+            if status.phase == "CONNECTING_STORAGE":
+                if not metrics["storage_connection_time"]:
+                    metrics["storage_connection_time"] = time.now()
+                    
+            elif status.phase == "RECOVERING":
+                if not metrics["recovery_start_time"]:
+                    metrics["recovery_start_time"] = time.now()
+                
+                metrics["redo_applied_count"] = status.redo_applied
+                metrics["mtr_complete_count"] = status.mtr_complete
+                metrics["mtr_incomplete_count"] = status.mtr_incomplete
+                
+            elif status.phase == "READY":
+                metrics["recovery_end_time"] = time.now()
+                metrics["ready_time"] = time.now()
+                break
+            
+            time.sleep(0.1)
+        
+        # 计算各阶段耗时
+        report = {
+            "total_startup_time": metrics["ready_time"] - metrics["start_time"],
+            "connection_time": metrics["storage_connection_time"] - metrics["start_time"],
+            "recovery_time": metrics["recovery_end_time"] - metrics["recovery_start_time"],
+            "redo_applied": metrics["redo_applied_count"],
+            "mtr_stats": {
+                "complete": metrics["mtr_complete_count"],
+                "incomplete": metrics["mtr_incomplete_count"]
+            }
+        }
+        
+        return report
+```
+
+---
+
+**本章小结**：
+
+1. **首次部署**：Writer从空存储卷开始，创建系统库表，Reader从LSN=0追赶
+2. **正常重启**：Writer从Checkpoint快速恢复，Reader可以从任意一致性点启动
+3. **崩溃恢复**：通过MTR完整性检查保证一致性，只应用完整的MTR
+4. **Failover**：Reader快速追赶到VDL后提升为Writer，保证零数据丢失
+5. **关键差异**：Writer需要恢复检查和事务回滚，Reader只需追赶即可
+
+这套启动机制是Aurora能够实现快速恢复和高可用的基础。
 

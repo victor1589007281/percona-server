@@ -10,14 +10,14 @@
 
 ```mermaid
 graph TB
-    subgraph "**MySQL MVD多版本数据架构**"
-        subgraph "**事务管理层**"
+    subgraph "MySQL MVD多版本数据架构"
+        subgraph "事务管理层"
             TXN_MGR[**事务管理器**<br/>**• 事务ID分配**<br/>**• ReadView生成**<br/>**• 事务状态跟踪**]
             
             READ_VIEW[**ReadView模块**<br/>**• 活跃事务快照**<br/>**• 可见性判断**<br/>**• 版本选择**]
         end
         
-        subgraph "**版本控制层**"
+        subgraph "版本控制层"
             VERSION_MGR[**版本管理器**<br/>**• 版本链维护**<br/>**• 版本创建删除**<br/>**• 版本链剪枝**]
             
             UNDO_LOG[**Undo Log系统**<br/>**• 回滚记录存储**<br/>**• 版本链构建**<br/>**• 历史版本重构**]
@@ -25,7 +25,7 @@ graph TB
             VERSION_CHAIN[**版本链存储**<br/>**• 链表结构管理**<br/>**• 版本指针维护**<br/>**• 内存优化**]
         end
         
-        subgraph "**存储引擎层**"
+        subgraph "存储引擎层"
             PAGE_MGR[**页面管理器**<br/>**• 聚簇索引页**<br/>**• 二级索引页**<br/>**• 页面版本控制**]
             
             RECORD_MGR[**记录管理器**<br/>**• 记录版本标记**<br/>**• DB_TRX_ID字段**<br/>**• DB_ROLL_PTR指针**]
@@ -303,17 +303,17 @@ flowchart TD
     
     CREATE_READVIEW --> LOCATE_RECORD[**定位记录**<br/>**• 通过索引查找**<br/>**• 获取聚簇索引记录**]
     
-    LOCATE_RECORD --> CHECK_VISIBILITY{**检查版本可见性**}
+    LOCATE_RECORD --> CHECK_VISIBILITY{"检查版本可见性"}
     
     CHECK_VISIBILITY -->|**可见**| RETURN_RECORD[**返回当前记录**]
     CHECK_VISIBILITY -->|**不可见**| GET_ROLL_PTR[**获取回滚指针**<br/>**• 读取DB_ROLL_PTR**<br/>**• 定位undo log**]
     
     GET_ROLL_PTR --> BUILD_PREV_VERSION[**构造历史版本**<br/>**• 应用undo log**<br/>**• 重构记录数据**]
     
-    BUILD_PREV_VERSION --> CHECK_PREV_VISIBILITY{**检查历史版本可见性**}
+    BUILD_PREV_VERSION --> CHECK_PREV_VISIBILITY{"检查历史版本可见性"}
     
     CHECK_PREV_VISIBILITY -->|**可见**| RETURN_PREV[**返回历史版本**]
-    CHECK_PREV_VISIBILITY -->|**不可见**| MORE_HISTORY{**是否有更早版本?**}
+    CHECK_PREV_VISIBILITY -->|**不可见**| MORE_HISTORY{"是否有更早版本?"}
     
     MORE_HISTORY -->|**有**| GET_ROLL_PTR
     MORE_HISTORY -->|**无**| RETURN_NULL[**返回NULL**<br/>**记录不可见**]
@@ -334,7 +334,7 @@ flowchart TD
 flowchart TD
     START_WRITE[**开始写操作**] --> ACQUIRE_LOCK[**获取行锁**<br/>**• 意向锁**<br/>**• 排他锁**]
     
-    ACQUIRE_LOCK --> CHECK_WRITE_CONFLICT{**检查写冲突**}
+    ACQUIRE_LOCK --> CHECK_WRITE_CONFLICT{"检查写冲突"}
     
     CHECK_WRITE_CONFLICT -->|**有冲突**| WAIT_LOCK[**等待锁释放**<br/>**• 死锁检测**<br/>**• 超时处理**]
     CHECK_WRITE_CONFLICT -->|**无冲突**| CREATE_UNDO[**创建undo记录**<br/>**• 保存原始数据**<br/>**• 分配undo段**]
@@ -345,7 +345,7 @@ flowchart TD
     
     UPDATE_RECORD --> WRITE_REDO[**写redo log**<br/>**• 记录变更操作**<br/>**• 保证持久性**]
     
-    WRITE_REDO --> COMMIT_CHECK{**事务提交?**}
+    WRITE_REDO --> COMMIT_CHECK{"事务提交?"}
     
     COMMIT_CHECK -->|**提交**| RELEASE_LOCKS[**释放行锁**<br/>**• 唤醒等待线程**<br/>**• 标记事务已提交**]
     COMMIT_CHECK -->|**回滚**| APPLY_UNDO[**应用undo log**<br/>**• 恢复原始数据**<br/>**• 清理版本链**]

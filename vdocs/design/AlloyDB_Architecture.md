@@ -10,34 +10,34 @@ Google AlloyDB 是 Google Cloud 在 2022 年推出的云原生 PostgreSQL 兼容
 
 ```mermaid
 graph TB
-    subgraph "**客户端层**"
+    subgraph "客户端层"
         A[**应用程序**]
     end
     
-    subgraph "**接入层**"
+    subgraph "接入层"
         B[**Cloud SQL Proxy**]
         C[**连接池**]
     end
     
-    subgraph "**计算层 - Database Engine**"
+    subgraph "计算层 - Database Engine"
         D[**主实例<br/>Primary**]
         E[**只读实例 1**]
         F[**只读实例 2**]
     end
     
-    subgraph "**智能缓存层**"
+    subgraph "智能缓存层"
         G[**行式缓存<br/>Row Cache**]
         H[**列式缓存<br/>Columnar Cache**]
         I[**自动预取**]
     end
     
-    subgraph "**存储层 - Colossus**"
+    subgraph "存储层 - Colossus"
         J[**分布式存储**]
         K[**数据块副本**]
         L[**Reed-Solomon<br/>纠删码**]
     end
     
-    subgraph "**管理层**"
+    subgraph "管理层"
         M[**控制平面**]
         N[**监控告警**]
         O[**自动备份**]
@@ -95,7 +95,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**PostgreSQL 核心引擎**"
+    subgraph "PostgreSQL 核心引擎"
         A[**SQL Parser<br/>SQL解析器**]
         B[**Query Planner<br/>查询规划器**]
         C[**Executor<br/>执行引擎**]
@@ -103,13 +103,13 @@ graph TB
         E[**MVCC<br/>多版本控制**]
     end
     
-    subgraph "**AlloyDB 增强**"
+    subgraph "AlloyDB 增强"
         F[**Vacuum<br/>优化**]
         G[**Smart Indexing<br/>智能索引**]
         H[**ML Query<br/>Optimizer<br/>机器学习优化**]
     end
     
-    subgraph "**存储接口**"
+    subgraph "存储接口"
         I[**Storage<br/>Abstraction<br/>Layer**]
         J[**Colossus<br/>接口**]
     end
@@ -156,19 +156,19 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**行式缓存（OLTP）**"
+    subgraph "行式缓存（OLTP）"
         A[**Buffer Cache**]
         B[**热点数据**]
         C[**事务查询**]
     end
     
-    subgraph "**列式缓存（OLAP）**"
+    subgraph "列式缓存（OLAP）"
         D[**Columnar<br/>Cache**]
         E[**压缩存储**]
         F[**向量化执行**]
     end
     
-    subgraph "**智能调度**"
+    subgraph "智能调度"
         G[**查询类型识别**]
         H[**自动路由**]
         I[**性能优化**]
@@ -200,19 +200,19 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**Google Colossus 分布式存储**"
+    subgraph "Google Colossus 分布式存储"
         A[**元数据服务**]
         B[**数据分片**]
         C[**副本管理**]
     end
     
-    subgraph "**纠删码（EC）**"
+    subgraph "纠删码（EC）"
         D[**Reed-Solomon**]
         E[**6+3 编码**]
         F[**空间节省 50%**]
     end
     
-    subgraph "**数据服务**"
+    subgraph "数据服务"
         G[**WAL 持久化**]
         H[**快照备份**]
         I[**自动修复**]
@@ -246,30 +246,30 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **P** as **主实例**
-    participant **BC** as **Buffer Cache**
-    participant **WAL** as **WAL日志**
-    participant **CS** as **Colossus<br/>存储**
-    participant **RO** as **只读副本**
+    participant C as "客户端"
+    participant P as "主实例"
+    participant BC as "Buffer Cache"
+    participant WAL as "WAL日志"
+    participant CS as "Colossus<br/>存储"
+    participant RO as "只读副本"
     
-    **C**->>**P**: **1. INSERT/UPDATE**
-    **P**->>**P**: **2. SQL 解析与规划**
-    **P**->>**BC**: **3. 修改 Buffer Cache**
-    **P**->>**WAL**: **4. 写入 WAL 日志**
-    **WAL**->>**CS**: **5. WAL 持久化（Colossus）**
-    **CS**-->>**P**: **6. 确认持久化**
-    **P**-->>**C**: **7. 提交成功**
+    C->>P: **1. INSERT/UPDATE**
+    P->>P: **2. SQL 解析与规划**
+    P->>BC: **3. 修改 Buffer Cache**
+    P->>WAL: **4. 写入 WAL 日志**
+    WAL->>CS: **5. WAL 持久化（Colossus）**
+    CS-->>P: **6. 确认持久化**
+    P-->>C: **7. 提交成功**
     
-    Note over **BC**,**CS**: **异步刷脏页**
-    **BC**->>**CS**: **8. 异步刷数据页**
+    Note over BC,CS: **异步刷脏页**
+    BC->>CS: **8. 异步刷数据页**
     
-    Note over **CS**,**RO**: **WAL 同步**
-    **CS**->>**RO**: **9. 同步 WAL 日志**
-    **RO**->>**RO**: **10. 应用 WAL**
+    Note over CS,RO: **WAL 同步**
+    CS->>RO: **9. 同步 WAL 日志**
+    RO->>RO: **10. 应用 WAL**
     
     rect rgb(255, 250, 205)
-    Note over **P**,**CS**: **关键：WAL 持久化在 Colossus，无需本地磁盘**
+    Note over P,CS: **关键：WAL 持久化在 Colossus，无需本地磁盘**
     end
 ```
 
@@ -277,33 +277,33 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **RO** as **只读副本**
-    participant **QO** as **查询优化器**
-    participant **CC** as **Columnar<br/>Cache**
-    participant **VE** as **向量化引擎**
-    participant **CS** as **Colossus**
+    participant C as "客户端"
+    participant RO as "只读副本"
+    participant QO as "查询优化器"
+    participant CC as "Columnar<br/>Cache"
+    participant VE as "向量化引擎"
+    participant CS as "Colossus"
     
-    **C**->>**RO**: **1. 分析型 SQL 查询**
-    **RO**->>**QO**: **2. 查询优化（ML增强）**
-    **QO**-->>**RO**: **3. 生成执行计划**
+    C->>RO: **1. 分析型 SQL 查询**
+    RO->>QO: **2. 查询优化（ML增强）**
+    QO-->>RO: **3. 生成执行计划**
     
-    **RO**->>**CC**: **4. 查询列式缓存**
+    RO->>CC: **4. 查询列式缓存**
     
     alt **缓存命中**
-        **CC**-->>**RO**: **5a. 返回列式数据**
+        CC-->>RO: **5a. 返回列式数据**
     else **缓存未命中**
-        **RO**->>**CS**: **5b. 读取原始数据**
-        **CS**-->>**RO**: **6. 返回行式数据**
-        **RO**->>**CC**: **7. 转换为列式并缓存**
+        RO->>CS: **5b. 读取原始数据**
+        CS-->>RO: **6. 返回行式数据**
+        RO->>CC: **7. 转换为列式并缓存**
     end
     
-    **RO**->>**VE**: **8. 向量化执行**
-    **VE**-->>**RO**: **9. 聚合结果**
-    **RO**-->>**C**: **10. 返回查询结果**
+    RO->>VE: **8. 向量化执行**
+    VE-->>RO: **9. 聚合结果**
+    RO-->>C: **10. 返回查询结果**
     
     rect rgb(255, 250, 205)
-    Note over **RO**,**VE**: **列式缓存 + 向量化执行，分析性能提升 100倍**
+    Note over RO,VE: **列式缓存 + 向量化执行，分析性能提升 100倍**
     end
 ```
 
@@ -313,13 +313,13 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**传统行式存储**"
+    subgraph "传统行式存储"
         A[**按行存储**]
         B[**全列扫描**]
         C[**性能瓶颈**]
     end
     
-    subgraph "**AlloyDB 列式缓存**"
+    subgraph "AlloyDB 列式缓存"
         D[**智能识别分析查询**]
         E[**自动转换为列式**]
         F[**压缩存储**]
@@ -356,13 +356,13 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**传统优化器**"
+    subgraph "传统优化器"
         A[**基于统计信息**]
         B[**经验规则**]
         C[**静态成本模型**]
     end
     
-    subgraph "**AlloyDB ML 优化器**"
+    subgraph "AlloyDB ML 优化器"
         D[**历史查询学习**]
         E[**动态成本预测**]
         F[**智能索引推荐**]
@@ -395,13 +395,13 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**PostgreSQL 传统 Vacuum**"
+    subgraph "PostgreSQL 传统 Vacuum"
         A[**手动触发**]
         B[**影响性能**]
         C[**需要调优**]
     end
     
-    subgraph "**AlloyDB 智能 Vacuum**"
+    subgraph "AlloyDB 智能 Vacuum"
         D[**自动调度**]
         E[**负载感知**]
         F[**后台执行**]
@@ -430,20 +430,20 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**故障检测**"
+    subgraph "故障检测"
         A[**健康检查<br/>每秒检测**]
         B[**多维度监控**]
         C[**判定故障**]
     end
     
-    subgraph "**故障切换流程**"
+    subgraph "故障切换流程"
         D[**选举新主实例**]
         E[**提升只读副本**]
         F[**更新连接端点**]
         G[**切换完成**]
     end
     
-    subgraph "**数据一致性保证**"
+    subgraph "数据一致性保证"
         H[**检查 WAL LSN**]
         I[**应用缺失日志**]
         J[**确保零数据丢失**]
@@ -484,19 +484,19 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**资源监控**"
+    subgraph "资源监控"
         A[**CPU 使用率**]
         B[**内存使用率**]
         C[**连接数**]
     end
     
-    subgraph "**自动伸缩**"
+    subgraph "自动伸缩"
         D[**负载阈值监控**]
         E[**扩容触发<br/>CPU > 75%**]
         F[**缩容触发<br/>CPU < 25%**]
     end
     
-    subgraph "**资源调整**"
+    subgraph "资源调整"
         G[**vCPU 调整<br/>2-64核**]
         H[**内存调整<br/>16-256GB**]
         I[**在线扩展<br/>无需重启**]
@@ -537,13 +537,13 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**持续备份**"
+    subgraph "持续备份"
         A[**WAL 归档**]
         B[**每日快照**]
         C[**存储在 GCS**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         D[**1. 选择时间点**]
         E[**2. 恢复基准快照**]
         F[**3. 应用 WAL 日志**]
@@ -579,20 +579,20 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**WAL 生成**"
+    subgraph "WAL 生成"
         A[**主实例事务提交**]
         B[**写入 WAL**]
         C[**WAL 持久化**]
     end
     
-    subgraph "**逻辑复制**"
+    subgraph "逻辑复制"
         D[**WAL 解码**]
         E[**Logical Replication**]
         F[**Publication**]
         G[**Subscription**]
     end
     
-    subgraph "**CDC 方式**"
+    subgraph "CDC 方式"
         H[**Debezium**]
         I[**Pub/Sub 集成**]
         J[**Dataflow 处理**]
@@ -634,7 +634,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**传统 PostgreSQL 恢复**"
+    subgraph "传统 PostgreSQL 恢复"
         A[**崩溃**]
         B[**扫描 WAL**]
         C[**重放日志**]
@@ -642,7 +642,7 @@ graph TB
         E[**启动时间<br/>数分钟**]
     end
     
-    subgraph "**AlloyDB 快速恢复**"
+    subgraph "AlloyDB 快速恢复"
         F[**崩溃**]
         G[**Colossus 已有最新数据**]
         H[**轻量级恢复**]
@@ -684,19 +684,19 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**主实例**"
+    subgraph "主实例"
         A[**执行事务**]
         B[**生成 WAL**]
         C[**写入 Colossus**]
     end
     
-    subgraph "**Colossus 存储**"
+    subgraph "Colossus 存储"
         D[**WAL 持久化**]
         E[**多副本存储**]
         F[**纠删码保护**]
     end
     
-    subgraph "**只读副本**"
+    subgraph "只读副本"
         G[**拉取 WAL**]
         H[**应用到本地**]
         I[**读取 Colossus**]
@@ -739,25 +739,25 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**OLTP 场景**"
+    subgraph "OLTP 场景"
         A[**高并发事务**]
         B[**金融系统**]
         C[**电商平台**]
     end
     
-    subgraph "**HTAP 场景**"
+    subgraph "HTAP 场景"
         D[**混合负载**]
         E[**实时分析**]
         F[**OLTP + OLAP**]
     end
     
-    subgraph "**PostgreSQL 迁移**"
+    subgraph "PostgreSQL 迁移"
         G[**云迁移**]
         H[**性能提升**]
         I[**零改造**]
     end
     
-    subgraph "**智能应用**"
+    subgraph "智能应用"
         J[**机器学习集成**]
         K[**AI 推荐系统**]
         L[**智能运维**]
@@ -795,19 +795,19 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**传统方案**"
+    subgraph "传统方案"
         A[**性能<br/>1x**]
         B[**成本<br/>100%**]
         C[**性价比<br/>1.0**]
     end
     
-    subgraph "**Cloud SQL**"
+    subgraph "Cloud SQL"
         D[**性能<br/>1.5x**]
         E[**成本<br/>120%**]
         F[**性价比<br/>1.25**]
     end
     
-    subgraph "**AlloyDB**"
+    subgraph "AlloyDB"
         G[**OLTP性能<br/>4x**]
         H[**OLAP性能<br/>100x**]
         I[**成本<br/>80%**]
@@ -872,7 +872,7 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**核心优势**"
+    subgraph "核心优势"
         A[**列式缓存引擎**]
         B[**HTAP 能力**]
         C[**ML 优化器**]
@@ -880,7 +880,7 @@ graph TB
         E[**Colossus 存储**]
     end
     
-    subgraph "**业务价值**"
+    subgraph "业务价值"
         F[**4x OLTP 性能**]
         G[**100x OLAP 性能**]
         H[**零改造迁移**]

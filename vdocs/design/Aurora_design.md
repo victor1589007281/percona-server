@@ -26,27 +26,27 @@ Aurora采用**Log-is-Database**架构，实现存储与计算分离：
 
 ```mermaid
 graph TB
-    subgraph "**控制平面**"
+    subgraph "控制平面"
         CP[**RDS Manager**<br/>**Monitoring**<br/>**Backup Service**]
     end
     
-    subgraph "**计算层**"
+    subgraph "计算层"
         P[**Primary Instance**<br/>读写实例]
         R1[**Read Replica 1**]
         R2[**Read Replica N**]
     end
     
-    subgraph "**存储层（6副本3AZ）**"
+    subgraph "存储层（6副本3AZ）"
         S1[**Protection Group 1**]
         S2[**Protection Group 2**]
         S3[**Protection Group N**]
     end
     
-    subgraph "**元数据服务**"
+    subgraph "元数据服务"
         M[**Volume Config**<br/>**PG Mapping**<br/>**LSN Registry**]
     end
     
-    subgraph "**备份层**"
+    subgraph "备份层"
         B[**S3 Backup**<br/>**PITR Engine**]
     end
     
@@ -91,7 +91,7 @@ Aurora系统由5个核心层组成：
 
 ```mermaid
 graph TB
-    subgraph "**第1层：控制平面（Control Plane）**"
+    subgraph "第1层：控制平面（Control Plane）"
         CP1[**RDS Manager**<br/>集群生命周期管理]
         CP2[**Configuration Service**<br/>配置管理]
         CP3[**Monitoring Service**<br/>监控告警]
@@ -100,23 +100,23 @@ graph TB
         CP6[**Failure Detector**<br/>故障检测]
     end
     
-    subgraph "**第2层：计算层（Compute Layer）**"
+    subgraph "第2层：计算层（Compute Layer）"
         C1[**Primary Instance**<br/>主实例]
         C2[**Read Replica**<br/>只读副本]
     end
     
-    subgraph "**第3层：存储层（Storage Layer）**"
+    subgraph "第3层：存储层（Storage Layer）"
         S1[**Storage Node 1**<br/>存储节点]
         S2[**Storage Node 2-6**<br/>副本节点]
     end
     
-    subgraph "**第4层：元数据服务（Metadata Service）**"
+    subgraph "第4层：元数据服务（Metadata Service）"
         M1[**Volume Manager**<br/>卷管理]
         M2[**PG Mapper**<br/>PG映射]
         M3[**LSN Registry**<br/>LSN注册表]
     end
     
-    subgraph "**第5层：备份层（Backup Layer）**"
+    subgraph "第5层：备份层（Backup Layer）"
         B1[**Continuous Backup**<br/>持续备份]
         B2[**S3 Storage**<br/>对象存储]
         B3[**PITR Engine**<br/>时间点恢复]
@@ -180,37 +180,37 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**RDS Manager（集群管理器）**"
+    subgraph "RDS Manager（集群管理器）"
         RM1[**Cluster Lifecycle<br/>集群生命周期**]
         RM2[**Failover Controller<br/>故障切换控制器**]
         RM3[**Scaling Manager<br/>扩缩容管理**]
     end
     
-    subgraph "**Configuration Service（配置服务）**"
+    subgraph "Configuration Service（配置服务）"
         CS1[**Cluster Config Store<br/>集群配置存储**]
         CS2[**Parameter Sync<br/>参数同步**]
         CS3[**Topology Manager<br/>拓扑管理**]
     end
     
-    subgraph "**Monitoring Service（监控服务）**"
+    subgraph "Monitoring Service（监控服务）"
         MS1[**Metrics Collector<br/>指标收集器**]
         MS2[**Alert Manager<br/>告警管理器**]
         MS3[**Health Checker<br/>健康检查器**]
     end
     
-    subgraph "**Backup Service（备份服务）**"
+    subgraph "Backup Service（备份服务）"
         BS1[**Backup Scheduler<br/>备份调度器**]
         BS2[**Restore Manager<br/>恢复管理器**]
         BS3[**Snapshot Controller<br/>快照控制器**]
     end
     
-    subgraph "**DNS Router（DNS路由器）**"
+    subgraph "DNS Router（DNS路由器）"
         DR1[**Endpoint Manager<br/>端点管理器**]
         DR2[**Connection Router<br/>连接路由器**]
         DR3[**Load Balancer<br/>负载均衡器**]
     end
     
-    subgraph "**Failure Detector（故障检测器）**"
+    subgraph "Failure Detector（故障检测器）"
         FD1[**Heartbeat Monitor<br/>心跳监控**]
         FD2[**Failure Analyzer<br/>故障分析器**]
         FD3[**Recovery Trigger<br/>恢复触发器**]
@@ -1059,7 +1059,7 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**Primary Instance（主实例）**"
+    subgraph "Primary Instance（主实例）"
         P1[**Connection Handler**<br/>连接管理]
         P2[**SQL Parser**<br/>SQL解析]
         P3[**Query Optimizer**<br/>查询优化]
@@ -1069,7 +1069,7 @@ graph TB
         P7[**Storage Interface**<br/>存储接口]
     end
     
-    subgraph "**Read Replica（只读副本）**"
+    subgraph "Read Replica（只读副本）"
         R1[**Connection Handler**<br/>连接管理]
         R2[**Query Executor**<br/>查询执行]
         R3[**Buffer Pool**<br/>缓冲池]
@@ -1077,7 +1077,7 @@ graph TB
         R5[**Storage Reader**<br/>存储读取器]
     end
     
-    subgraph "**存储层（共享）**"
+    subgraph "存储层（共享）"
         S1[**Storage Nodes**<br/>存储节点]
     end
     
@@ -1593,35 +1593,35 @@ enum ReadPageStatus {
 
 ```mermaid
 graph TB
-    subgraph "**存储节点内部架构**"
-        subgraph "**接收层**"
+    subgraph "存储节点内部架构"
+        subgraph "接收层"
             L1[**Log Receiver**<br/>日志接收器]
             L2[**Request Router**<br/>请求路由器]
         end
         
-        subgraph "**处理层**"
+        subgraph "处理层"
             P1[**Log Applicator**<br/>日志应用器]
             P2[**Page Materializer**<br/>页面物化器]
             P3[**Read Handler**<br/>读处理器]
         end
         
-        subgraph "**元数据管理**"
+        subgraph "元数据管理"
             M1[**LSN Tracker**<br/>LSN追踪]
             M2[**Page-LSN Table**<br/>页LSN表]
             M3[**Log Index**<br/>日志索引]
         end
         
-        subgraph "**协调层**"
+        subgraph "协调层"
             C1[**Gossip Protocol**<br/>Gossip协议]
             C2[**Quorum Manager**<br/>Quorum管理]
         end
         
-        subgraph "**修复层**"
+        subgraph "修复层"
             R1[**Corruption Detector**<br/>损坏检测]
             R2[**Segment Repair**<br/>分段修复]
         end
         
-        subgraph "**存储层**"
+        subgraph "存储层"
             S1[**Redo Log Store**<br/>Redo存储]
             S2[**Data Page Store**<br/>数据页存储]
             S3[**Cache Manager**<br/>缓存管理]
@@ -1983,7 +1983,7 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**元数据服务组件**"
+    subgraph "元数据服务组件"
         M1[**Volume Manager**<br/>卷管理器]
         M2[**PG Mapper**<br/>PG映射器]
         M3[**LSN Registry**<br/>LSN注册表]
@@ -1991,7 +1991,7 @@ graph TB
         M5[**Topology Manager**<br/>拓扑管理器]
     end
     
-    subgraph "**持久化存储**"
+    subgraph "持久化存储"
         D1[**分布式KV存储**<br/>etcd/Consul]
         D2[**MySQL元数据库**]
     end
@@ -2124,25 +2124,25 @@ int map_pg_to_nodes(const char *pg_id, const PlacementStrategy strategy,
 
 ```mermaid
 graph TB
-    subgraph "**持续备份（Continuous Backup）**"
+    subgraph "持续备份（Continuous Backup）"
         B1[**Redo Log Stream<br/>Redo流**]
         B2[**Log Aggregator<br/>日志聚合器**]
         B3[**S3 Writer<br/>S3写入器**]
     end
     
-    subgraph "**快照管理（Snapshot）**"
+    subgraph "快照管理（Snapshot）"
         S1[**Snapshot Creator<br/>快照创建器**]
         S2[**Snapshot Catalog<br/>快照目录**]
         S3[**Snapshot Cleaner<br/>快照清理器**]
     end
     
-    subgraph "**时间点恢复（PITR）**"
+    subgraph "时间点恢复（PITR）"
         P1[**PITR Engine<br/>PITR引擎**]
         P2[**LSN to Time Mapper<br/>LSN时间映射**]
         P3[**Recovery Executor<br/>恢复执行器**]
     end
     
-    subgraph "**S3存储**"
+    subgraph "S3存储"
         O1[**增量日志**]
         O2[**完整快照**]
         O3[**元数据**]

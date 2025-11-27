@@ -10,30 +10,30 @@ TaurusDB（现更名为 GaussDB(for MySQL)）是华为云推出的企业级云�
 
 ```mermaid
 graph TB
-    subgraph "**客户端层**"
+    subgraph "客户端层"
         A[**应用程序**]
     end
     
-    subgraph "**接入层**"
+    subgraph "接入层"
         B[**ELB 负载均衡**]
         C[**连接代理**]
     end
     
-    subgraph "**计算层 - SQL Engine**"
+    subgraph "计算层 - SQL Engine"
         D[**主节点<br/>Primary Node**]
         E[**只读节点 1<br/>Read Replica**]
         F[**只读节点 2**]
         G[**只读节点 N**]
     end
     
-    subgraph "**存储层 - DFV**"
+    subgraph "存储层 - DFV"
         H[**分布式文件卷**]
         I[**存储节点 AZ1**]
         J[**存储节点 AZ2**]
         K[**存储节点 AZ3**]
     end
     
-    subgraph "**管控层**"
+    subgraph "管控层"
         L[**集群管理**]
         M[**监控告警**]
         N[**备份恢复**]
@@ -89,7 +89,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**MySQL 内核层**"
+    subgraph "MySQL 内核层"
         A[**SQL Parser<br/>SQL解析器**]
         B[**Query Optimizer<br/>查询优化器**]
         C[**Execution Engine<br/>执行引擎**]
@@ -98,13 +98,13 @@ graph TB
         F[**Lock Manager<br/>锁管理**]
     end
     
-    subgraph "**TaurusDB 增强**"
+    subgraph "TaurusDB 增强"
         G[**Parallel Query<br/>并行查询**]
         H[**Hot Row<br/>Optimize<br/>热点行优化**]
         I[**Fast DDL<br/>快速DDL**]
     end
     
-    subgraph "**存储接口**"
+    subgraph "存储接口"
         J[**DFV Adapter<br/>DFV适配层**]
         K[**Redo Log<br/>Manager**]
     end
@@ -155,19 +155,19 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**DFV 分布式存储**"
+    subgraph "DFV 分布式存储"
         A[**元数据管理**]
         B[**数据分片**]
         C[**三副本机制**]
     end
     
-    subgraph "**副本分布**"
+    subgraph "副本分布"
         D[**AZ-1 副本**]
         E[**AZ-2 副本**]
         F[**AZ-3 副本**]
     end
     
-    subgraph "**存储服务**"
+    subgraph "存储服务"
         G[**Redo Log 持久化**]
         H[**数据页管理**]
         I[**快照备份**]
@@ -207,37 +207,37 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **P** as **主节点**
-    participant **BP** as **Buffer Pool**
-    participant **RL** as **Redo Log**
-    participant **DFV** as **DFV存储**
-    participant **RO** as **只读节点**
+    participant C as "客户端"
+    participant P as "主节点"
+    participant BP as "Buffer Pool"
+    participant RL as "Redo Log"
+    participant DFV as "DFV存储"
+    participant RO as "只读节点"
     
-    **C**->>**P**: **1. INSERT/UPDATE 语句**
-    **P**->>**P**: **2. SQL 解析与优化**
-    **P**->>**BP**: **3. 修改 Buffer Pool**
-    **P**->>**RL**: **4. 生成 Redo Log**
-    **RL**->>**DFV**: **5. Redo Log 写入3副本**
+    C->>P: **1. INSERT/UPDATE 语句**
+    P->>P: **2. SQL 解析与优化**
+    P->>BP: **3. 修改 Buffer Pool**
+    P->>RL: **4. 生成 Redo Log**
+    RL->>DFV: **5. Redo Log 写入3副本**
     
     par **并行写入3个AZ**
-        **DFV**->>**DFV**: **写入 AZ-1**
-        **DFV**->>**DFV**: **写入 AZ-2**
-        **DFV**->>**DFV**: **写入 AZ-3**
+        DFV->>DFV: **写入 AZ-1**
+        DFV->>DFV: **写入 AZ-2**
+        DFV->>DFV: **写入 AZ-3**
     end
     
-    **DFV**-->>**P**: **6. 多数副本确认**
-    **P**-->>**C**: **7. 提交成功**
+    DFV-->>P: **6. 多数副本确认**
+    P-->>C: **7. 提交成功**
     
-    Note over **BP**,**DFV**: **异步刷脏页**
-    **BP**->>**DFV**: **8. 异步刷数据页**
+    Note over BP,DFV: **异步刷脏页**
+    BP->>DFV: **8. 异步刷数据页**
     
-    Note over **DFV**,**RO**: **日志同步**
-    **DFV**->>**RO**: **9. Redo Log 同步**
-    **RO**->>**RO**: **10. 应用日志**
+    Note over DFV,RO: **日志同步**
+    DFV->>RO: **9. Redo Log 同步**
+    RO->>RO: **10. 应用日志**
     
     rect rgb(255, 250, 205)
-    Note over **P**,**DFV**: **关键：只需多数副本（2/3）确认即可提交**
+    Note over P,DFV: **关键：只需多数副本（2/3）确认即可提交**
     end
 ```
 
@@ -245,28 +245,28 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **RO** as **只读节点**
-    participant **BP** as **Buffer Pool**
-    participant **DFV** as **DFV存储**
+    participant C as "客户端"
+    participant RO as "只读节点"
+    participant BP as "Buffer Pool"
+    participant DFV as "DFV存储"
     
-    **C**->>**RO**: **1. SELECT 查询**
-    **RO**->>**RO**: **2. SQL 解析与优化**
-    **RO**->>**BP**: **3. 查询 Buffer Pool**
+    C->>RO: **1. SELECT 查询**
+    RO->>RO: **2. SQL 解析与优化**
+    RO->>BP: **3. 查询 Buffer Pool**
     
     alt **缓存命中**
-        **BP**-->>**RO**: **4a. 返回缓存数据**
+        BP-->>RO: **4a. 返回缓存数据**
     else **缓存未命中**
-        **RO**->>**DFV**: **4b. 读取存储层**
-        **DFV**-->>**RO**: **5. 返回数据页**
-        **RO**->>**BP**: **6. 更新 Buffer Pool**
+        RO->>DFV: **4b. 读取存储层**
+        DFV-->>RO: **5. 返回数据页**
+        RO->>BP: **6. 更新 Buffer Pool**
     end
     
-    **RO**->>**RO**: **7. 执行查询**
-    **RO**-->>**C**: **8. 返回结果集**
+    RO->>RO: **7. 执行查询**
+    RO-->>C: **8. 返回结果集**
     
     rect rgb(255, 250, 205)
-    Note over **RO**,**DFV**: **优化：智能预取，减少往返次数**
+    Note over RO,DFV: **优化：智能预取，减少往返次数**
     end
 ```
 
@@ -276,13 +276,13 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**传统 MySQL**"
+    subgraph "传统 MySQL"
         A[**行锁竞争**]
         B[**性能瓶颈**]
         C[**吞吐受限**]
     end
     
-    subgraph "**TaurusDB 热点行优化**"
+    subgraph "TaurusDB 热点行优化"
         D[**识别热点行**]
         E[**预留提交槽**]
         F[**减少锁等待**]
@@ -315,12 +315,12 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**传统单线程查询**"
+    subgraph "传统单线程查询"
         A[**单线程扫描**]
         B[**性能受限**]
     end
     
-    subgraph "**TaurusDB 并行查询**"
+    subgraph "TaurusDB 并行查询"
         C[**查询分片**]
         D[**多线程并行**]
         E[**结果合并**]
@@ -362,20 +362,20 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**故障检测**"
+    subgraph "故障检测"
         A[**心跳监控<br/>间隔 3秒**]
         B[**健康检查<br/>连续 3次失败**]
         C[**判定故障**]
     end
     
-    subgraph "**故障切换**"
+    subgraph "故障切换"
         D[**选举新主节点**]
         E[**只读节点提升**]
         F[**更新 VIP**]
         G[**切换完成**]
     end
     
-    subgraph "**数据一致性**"
+    subgraph "数据一致性"
         H[**检查 LSN**]
         I[**应用缺失日志**]
         J[**零数据丢失**]
@@ -414,16 +414,16 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**正常状态**"
+    subgraph "正常状态"
         A[**3个副本<br/>全部可用**]
     end
     
-    subgraph "**单副本故障**"
+    subgraph "单副本故障"
         B[**2个副本可用**]
         C[**服务正常**]
     end
     
-    subgraph "**AZ级故障**"
+    subgraph "AZ级故障"
         D[**1个AZ不可用**]
         E[**2个AZ可用**]
         F[**服务正常**]
@@ -448,19 +448,19 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**资源池**"
+    subgraph "资源池"
         A[**计算资源池**]
         B[**空闲节点**]
         C[**活跃节点**]
     end
     
-    subgraph "**自动伸缩**"
+    subgraph "自动伸缩"
         D[**负载监控**]
         E[**扩容策略<br/>CPU > 80%**]
         F[**缩容策略<br/>CPU < 30%**]
     end
     
-    subgraph "**快速启动**"
+    subgraph "快速启动"
         G[**预热节点池**]
         H[**秒级启动**]
         I[**连接 DFV**]
@@ -497,13 +497,13 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**备份策略**"
+    subgraph "备份策略"
         A[**全量快照<br/>每日自动**]
         B[**增量 Binlog<br/>实时归档**]
         C[**存储在 OBS**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         D[**1. 选择时间点**]
         E[**2. 恢复快照**]
         F[**3. 应用 Binlog**]
@@ -538,13 +538,13 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**Binlog 生成**"
+    subgraph "Binlog 生成"
         A[**主节点事务提交**]
         B[**Binlog 写入**]
         C[**Binlog 持久化**]
     end
     
-    subgraph "**订阅方式**"
+    subgraph "订阅方式"
         D[**MySQL 协议订阅**]
         E[**Canal 订阅**]
         F[**DRS 数据复制**]
@@ -580,14 +580,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**传统 MySQL 启动**"
+    subgraph "传统 MySQL 启动"
         A[**加载数据文件**]
         B[**恢复 Redo Log**]
         C[**重建 Buffer Pool**]
         D[**启动时间<br/>3-10 分钟**]
     end
     
-    subgraph "**TaurusDB 快速启动**"
+    subgraph "TaurusDB 快速启动"
         E[**连接 DFV 存储**]
         F[**加载元数据**]
         G[**初始化 Buffer Pool**]
@@ -624,19 +624,19 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**主节点**"
+    subgraph "主节点"
         A[**执行事务**]
         B[**生成 Redo Log**]
         C[**写入 DFV**]
     end
     
-    subgraph "**DFV 存储（3副本）**"
+    subgraph "DFV 存储（3副本）"
         D[**Redo Log 持久化**]
         E[**数据页存储**]
         F[**跨 AZ 冗余**]
     end
     
-    subgraph "**只读节点**"
+    subgraph "只读节点"
         G[**拉取 Redo Log**]
         H[**应用到 Buffer Pool**]
         I[**读取 DFV 数据**]
@@ -679,25 +679,25 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**高并发 OLTP**"
+    subgraph "高并发 OLTP"
         A[**电商交易**]
         B[**金融支付**]
         C[**游戏服务**]
     end
     
-    subgraph "**读写分离**"
+    subgraph "读写分离"
         D[**内容平台**]
         E[**社交应用**]
         F[**新闻资讯**]
     end
     
-    subgraph "**混合负载**"
+    subgraph "混合负载"
         G[**OLTP + 简单分析**]
         H[**实时报表**]
         I[**Dashboard**]
     end
     
-    subgraph "**企业应用**"
+    subgraph "企业应用"
         J[**ERP 系统**]
         K[**CRM 系统**]
         L[**政务系统**]
@@ -734,7 +734,7 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**传统架构成本**"
+    subgraph "传统架构成本"
         A[**计算<br/>100%**]
         B[**存储<br/>100%**]
         C[**备份<br/>100%**]
@@ -742,7 +742,7 @@ graph LR
         E[**总计<br/>400%**]
     end
     
-    subgraph "**TaurusDB 成本**"
+    subgraph "TaurusDB 成本"
         F[**计算<br/>65%**]
         G[**存储<br/>55%**]
         H[**备份<br/>40%**]
@@ -805,21 +805,21 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**技术优势**"
+    subgraph "技术优势"
         A[**DFV 存储引擎**]
         B[**热点行优化**]
         C[**并行查询**]
         D[**快速 DDL**]
     end
     
-    subgraph "**性能优势**"
+    subgraph "性能优势"
         E[**百万级 TPS**]
         F[**热点场景 10x**]
         G[**大查询 8x**]
         H[**秒级扩容**]
     end
     
-    subgraph "**业务价值**"
+    subgraph "业务价值"
         I[**高可用 99.99%**]
         J[**零改造迁移**]
         K[**成本节省 50%**]

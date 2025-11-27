@@ -10,36 +10,36 @@ TDSQL-C (CynosDB) 是腾讯云推出的新一代云原生关系型数据库，�
 
 ```mermaid
 graph TB
-    subgraph "**客户端层**"
+    subgraph "客户端层"
         A[**应用程序**]
     end
     
-    subgraph "**接入层**"
+    subgraph "接入层"
         B[**CLB 负载均衡**]
         C[**连接代理层**]
     end
     
-    subgraph "**计算层 - SQL Engine**"
+    subgraph "计算层 - SQL Engine"
         D[**主节点 Master**]
         E[**只读节点 RO-1**]
         F[**只读节点 RO-2**]
         G[**只读节点 RO-N**]
     end
     
-    subgraph "**日志服务层**"
+    subgraph "日志服务层"
         H[**Redo Log Service**]
         I[**Log Buffer**]
         J[**Log Storage**]
     end
     
-    subgraph "**存储层 - CynosStore**"
+    subgraph "存储层 - CynosStore"
         K[**分布式存储集群**]
         L[**存储节点 1**]
         M[**存储节点 2**]
         N[**存储节点 N**]
     end
     
-    subgraph "**管控层**"
+    subgraph "管控层"
         O[**集群管理服务**]
         P[**监控告警**]
         Q[**备份恢复**]
@@ -103,7 +103,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**SQL Engine 内部架构**"
+    subgraph "SQL Engine 内部架构"
         A[**SQL Parser<br/>SQL解析**]
         B[**Query Optimizer<br/>查询优化器**]
         C[**Execution Engine<br/>执行引擎**]
@@ -113,7 +113,7 @@ graph TB
         G[**Redo Generator<br/>日志生成器**]
     end
     
-    subgraph "**存储引擎接口**"
+    subgraph "存储引擎接口"
         H[**InnoDB 接口**]
         I[**CynosStore<br/>适配层**]
     end
@@ -156,14 +156,14 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**Redo Log Service 架构**"
+    subgraph "Redo Log Service 架构"
         A[**Log Receiver<br/>接收日志**]
         B[**Log Buffer<br/>日志缓冲**]
         C[**Log Writer<br/>持久化**]
         D[**Log Replicator<br/>多副本复制**]
     end
     
-    subgraph "**存储**"
+    subgraph "存储"
         E[**本地 SSD**]
         F[**远程对象存储**]
     end
@@ -191,20 +191,20 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**CynosStore 分布式存储**"
+    subgraph "CynosStore 分布式存储"
         A[**元数据管理**]
         B[**数据分片 Shard**]
         C[**副本管理**]
         D[**EC 纠删码**]
     end
     
-    subgraph "**存储引擎**"
+    subgraph "存储引擎"
         E[**LSM-Tree 引擎**]
         F[**数据压缩**]
         G[**数据加密**]
     end
     
-    subgraph "**存储介质**"
+    subgraph "存储介质"
         H[**热数据 SSD**]
         I[**温数据 SAS**]
         J[**冷数据 对象存储**]
@@ -240,32 +240,32 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **M** as **主节点**
-    participant **BP** as **Buffer Pool**
-    participant **RLS** as **Redo Log<br/>Service**
-    participant **CS** as **CynosStore<br/>存储**
-    participant **RO** as **只读节点**
+    participant C as "客户端"
+    participant M as "主节点"
+    participant BP as "Buffer Pool"
+    participant RLS as "Redo Log<br/>Service"
+    participant CS as "CynosStore<br/>存储"
+    participant RO as "只读节点"
     
-    **C**->>**M**: **1. 发送 DML 语句**
-    **M**->>**M**: **2. SQL 解析与优化**
-    **M**->>**BP**: **3. 修改内存页**
-    **M**->>**RLS**: **4. 发送 Redo Log**
-    **RLS**->>**RLS**: **5. 写入 Log Buffer**
-    **RLS**->>**CS**: **6. 持久化日志**
-    **CS**-->>**RLS**: **7. 确认持久化**
-    **RLS**-->>**M**: **8. 返回成功**
-    **M**-->>**C**: **9. 提交成功**
+    C->>M: **1. 发送 DML 语句**
+    M->>M: **2. SQL 解析与优化**
+    M->>BP: **3. 修改内存页**
+    M->>RLS: **4. 发送 Redo Log**
+    RLS->>RLS: **5. 写入 Log Buffer**
+    RLS->>CS: **6. 持久化日志**
+    CS-->>RLS: **7. 确认持久化**
+    RLS-->>M: **8. 返回成功**
+    M-->>C: **9. 提交成功**
     
-    Note over **BP**,**CS**: **异步刷脏页**
-    **BP**->>**CS**: **10. 异步刷脏页到存储**
+    Note over BP,CS: **异步刷脏页**
+    BP->>CS: **10. 异步刷脏页到存储**
     
-    Note over **RLS**,**RO**: **异步日志同步**
-    **RLS**->>**RO**: **11. 同步 Redo Log**
-    **RO**->>**RO**: **12. 应用日志到 Buffer Pool**
+    Note over RLS,RO: **异步日志同步**
+    RLS->>RO: **11. 同步 Redo Log**
+    RO->>RO: **12. 应用日志到 Buffer Pool**
     
     rect rgb(255, 250, 205)
-    Note over **M**,**CS**: **关键：写入只需等待日志持久化，不需要等待数据页刷盘**
+    Note over M,CS: **关键：写入只需等待日志持久化，不需要等待数据页刷盘**
     end
 ```
 
@@ -273,28 +273,28 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant **C** as **客户端**
-    participant **RO** as **只读节点**
-    participant **BP** as **Buffer Pool**
-    participant **CS** as **CynosStore<br/>存储**
+    participant C as "客户端"
+    participant RO as "只读节点"
+    participant BP as "Buffer Pool"
+    participant CS as "CynosStore<br/>存储"
     
-    **C**->>**RO**: **1. 发送 SELECT 查询**
-    **RO**->>**RO**: **2. SQL 解析与优化**
-    **RO**->>**BP**: **3. 查询 Buffer Pool**
+    C->>RO: **1. 发送 SELECT 查询**
+    RO->>RO: **2. SQL 解析与优化**
+    RO->>BP: **3. 查询 Buffer Pool**
     
     alt **缓存命中**
-        **BP**-->>**RO**: **4a. 返回缓存数据**
+        BP-->>RO: **4a. 返回缓存数据**
     else **缓存未命中**
-        **RO**->>**CS**: **4b. 读取存储层数据**
-        **CS**-->>**RO**: **5. 返回数据页**
-        **RO**->>**BP**: **6. 加载到 Buffer Pool**
+        RO->>CS: **4b. 读取存储层数据**
+        CS-->>RO: **5. 返回数据页**
+        RO->>BP: **6. 加载到 Buffer Pool**
     end
     
-    **RO**->>**RO**: **7. 执行查询**
-    **RO**-->>**C**: **8. 返回结果集**
+    RO->>RO: **7. 执行查询**
+    RO-->>C: **8. 返回结果集**
     
     rect rgb(255, 250, 205)
-    Note over **RO**,**CS**: **优化：支持存储层谓词下推，减少数据传输**
+    Note over RO,CS: **优化：支持存储层谓词下推，减少数据传输**
     end
 ```
 
@@ -304,13 +304,13 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph "**传统 MySQL 架构**"
+    subgraph "传统 MySQL 架构"
         A[**计算 + 存储<br/>耦合**]
         B[**扩展困难**]
         C[**资源浪费**]
     end
     
-    subgraph "**TDSQL-C 三层架构**"
+    subgraph "TDSQL-C 三层架构"
         D[**接入层<br/>负载均衡**]
         E[**计算层<br/>无状态**]
         F[**存储层<br/>独立扩展**]
@@ -349,13 +349,13 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**故障检测**"
+    subgraph "故障检测"
         A[**心跳监控<br/>间隔 1秒**]
         B[**健康检查<br/>3次失败**]
         C[**判定故障**]
     end
     
-    subgraph "**故障切换**"
+    subgraph "故障切换"
         D[**选举新主节点**]
         E[**只读节点提升**]
         F[**同步 Redo Log**]
@@ -363,7 +363,7 @@ graph TB
         H[**切换完成**]
     end
     
-    subgraph "**数据一致性保证**"
+    subgraph "数据一致性保证"
         I[**检查 LSN**]
         J[**选择最新节点**]
         K[**应用未提交日志**]
@@ -406,20 +406,20 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**Serverless 资源池**"
+    subgraph "Serverless 资源池"
         A[**计算资源池**]
         B[**预热实例池**]
         C[**活跃实例池**]
     end
     
-    subgraph "**自动伸缩策略**"
+    subgraph "自动伸缩策略"
         D[**负载监控**]
         E[**CPU 阈值<br/>> 70% 扩容**]
         F[**CPU 阈值<br/>< 30% 缩容**]
         G[**定时策略**]
     end
     
-    subgraph "**快速启动机制**"
+    subgraph "快速启动机制"
         H[**预创建实例**]
         I[**热启动<br/>&lt; 5秒**]
         J[**连接存储**]
@@ -461,13 +461,13 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**备份策略**"
+    subgraph "备份策略"
         A[**全量快照<br/>每天自动**]
         B[**增量 Binlog<br/>实时归档**]
         C[**Redo Log<br/>持续保存**]
     end
     
-    subgraph "**恢复流程**"
+    subgraph "恢复流程"
         D[**1. 选择时间点**]
         E[**2. 定位快照**]
         F[**3. 恢复快照**]
@@ -505,14 +505,14 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "**Binlog 生成**"
+    subgraph "Binlog 生成"
         A[**主节点事务提交**]
         B[**Binlog 生成器**]
         C[**Binlog 文件**]
         D[**Binlog 归档**]
     end
     
-    subgraph "**订阅方式**"
+    subgraph "订阅方式"
         E[**MySQL 协议订阅**]
         F[**Canal 订阅**]
         G[**DTS 数据订阅**]
@@ -550,14 +550,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**传统 MySQL 启动**"
+    subgraph "传统 MySQL 启动"
         A[**加载数据字典**]
         B[**恢复 Redo Log**]
         C[**重建 Buffer Pool**]
         D[**启动时间<br/>3-10 分钟**]
     end
     
-    subgraph "**TDSQL-C 快速启动**"
+    subgraph "TDSQL-C 快速启动"
         E[**连接存储层**]
         F[**加载元数据**]
         G[**初始化 Buffer Pool**]
@@ -594,24 +594,24 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**主节点**"
+    subgraph "主节点"
         A[**执行事务**]
         B[**生成 Redo Log**]
         C[**发送到日志服务**]
     end
     
-    subgraph "**Redo Log Service**"
+    subgraph "Redo Log Service"
         D[**持久化日志**]
         E[**广播日志**]
     end
     
-    subgraph "**只读节点**"
+    subgraph "只读节点"
         F[**接收 Redo Log**]
         G[**应用到 Buffer Pool**]
         H[**按需从存储读取**]
     end
     
-    subgraph "**CynosStore**"
+    subgraph "CynosStore"
         I[**存储数据页**]
         J[**存储日志**]
     end
@@ -654,25 +654,25 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "**高并发 OLTP**"
+    subgraph "高并发 OLTP"
         A[**电商交易**]
         B[**金融支付**]
         C[**游戏服务**]
     end
     
-    subgraph "**读写分离**"
+    subgraph "读写分离"
         D[**内容平台**]
         E[**社交应用**]
         F[**新闻资讯**]
     end
     
-    subgraph "**混合负载**"
+    subgraph "混合负载"
         G[**OLTP + OLAP**]
         H[**实时报表**]
         I[**数据分析**]
     end
     
-    subgraph "**弹性业务**"
+    subgraph "弹性业务"
         J[**Serverless 应用**]
         K[**波峰波谷业务**]
         L[**开发测试环境**]
@@ -708,7 +708,7 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "**传统架构总成本**"
+    subgraph "传统架构总成本"
         A[**计算<br/>100%**]
         B[**存储<br/>100%**]
         C[**备份<br/>100%**]
@@ -716,7 +716,7 @@ graph LR
         E[**总计<br/>400%**]
     end
     
-    subgraph "**TDSQL-C 成本**"
+    subgraph "TDSQL-C 成本"
         F[**计算<br/>50%**]
         G[**存储<br/>40%**]
         H[**备份<br/>20%**]
