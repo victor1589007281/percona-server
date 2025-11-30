@@ -29,6 +29,7 @@
 | [09_backup_pitr.md](./09_backup_pitr.md) | 备份恢复与 PITR 设计 |
 | [10_replication_protocol.md](./10_replication_protocol.md) | 复制协议设计（Quorum/Multi-Raft） |
 | [11_network_layer.md](./11_network_layer.md) | 网络层设计（TCP/RDMA） |
+| [12_olap_extension.md](./12_olap_extension.md) | OLAP 扩展设计（HTAP、列存、RocksDB） |
 
 ---
 

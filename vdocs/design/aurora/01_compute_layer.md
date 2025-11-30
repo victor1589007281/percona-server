@@ -2244,3 +2244,46 @@ class AuroraHooks {
     TransportType call_transport_select_hook(const std::string& op, size_t size);
 };
 ```
+
+---
+
+## 14. OLAP 引擎集成
+
+### 14.1 HTAP 架构
+
+计算层支持 HTAP（混合事务/分析处理），同时处理 OLTP 和 OLAP 工作负载：
+
+```mermaid
+graph LR
+    subgraph "MySQL 计算层"
+        Router[Query Router]
+        InnoDB[InnoDB<br/>OLTP]
+        OLAP[Aurora OLAP<br/>列存]
+    end
+    
+    Router -->|点查/事务| InnoDB
+    Router -->|分析/聚合| OLAP
+```
+
+### 14.2 最小化改动
+
+| 改动点 | 行数 | 说明 |
+|--------|------|------|
+| `sql/sql_parse.cc` | ~10 | 查询路由判断 |
+| `sql/sql_optimizer.cc` | ~10 | OLAP 优化提示 |
+| `sql/sys_vars.cc` | ~30 | OLAP 变量 |
+| **总计** | **~50 行** | |
+
+OLAP 引擎通过标准存储引擎插件接口实现，无需修改 MySQL 核心代码。
+
+### 14.3 使用方式
+
+```sql
+-- 自动路由（分析查询自动使用 OLAP）
+SET aurora_auto_olap = ON;
+
+-- 手动指定
+SELECT /*+ USE_OLAP */ SUM(amount) FROM orders GROUP BY region;
+```
+
+详细设计参见 [12_olap_extension.md](./12_olap_extension.md)。
