@@ -2083,3 +2083,164 @@ TEST(AuroraIntegrationTest, EndToEnd) {
     EXPECT_EQ(storage_server.get_redo_count(), 1);
 }
 ```
+
+---
+
+## 12. 复制协议选择
+
+### 12.1 支持的协议
+
+本系统支持两种复制协议，可在启动时选择：
+
+| 协议 | 说明 | 配置值 |
+|------|------|--------|
+| **Quorum** | 无 Leader，写入发送到所有节点，等待 4/6 确认 | `quorum` |
+| **Multi-Raft** | 每个 PG 独立 Raft Group，由 Leader 负责复制 | `raft` |
+
+详细设计参见 [10_replication_protocol.md](./10_replication_protocol.md)。
+
+### 12.2 配置示例
+
+```ini
+# my.cnf
+
+[mysqld]
+# 协议选择
+aurora_replication_protocol = quorum   # 或 raft
+
+# Quorum 协议参数
+aurora_quorum_write = 4
+aurora_quorum_read = 3
+aurora_quorum_timeout_ms = 5000
+
+# Raft 协议参数
+aurora_raft_heartbeat_ms = 100
+aurora_raft_election_timeout_ms = 500
+aurora_raft_replication_mode = sync
+```
+
+### 12.3 协议适配层
+
+计算层通过抽象接口与复制协议交互，支持运行时切换实现：
+
+```cpp
+// aurora_replication.h
+
+class ReplicationProtocol {
+public:
+    virtual ~ReplicationProtocol() = default;
+    
+    // 写入 Redo
+    virtual bool write_redo(const byte* data, size_t len, 
+                           uint64_t start_lsn, uint64_t end_lsn) = 0;
+    
+    // 等待持久化
+    virtual bool wait_durable(uint64_t lsn, uint32_t timeout_ms) = 0;
+    
+    // 获取 VDL
+    virtual uint64_t get_vdl() const = 0;
+};
+
+class QuorumProtocol : public ReplicationProtocol { /* ... */ };
+class RaftProtocol : public ReplicationProtocol { /* ... */ };
+
+// 在 Aurora Plugin 中根据配置选择协议
+ReplicationProtocol* create_protocol(const AuroraConfig& config) {
+    if (config.replication_protocol == "raft") {
+        return new RaftProtocol(config);
+    }
+    return new QuorumProtocol(config);  // 默认
+}
+```
+
+### 12.4 协议选择建议
+
+| 场景 | 推荐协议 | 原因 |
+|------|----------|------|
+| 标准 OLTP | Quorum | 延迟低，架构简单 |
+| 金融交易 | Raft | 强一致性，顺序保证 |
+| 高并发写入 | Quorum | 无 Leader 瓶颈 |
+| 严格顺序要求 | Raft | Leader 保证全局顺序 |
+
+---
+
+## 13. 网络层集成
+
+### 13.1 网络模式选择
+
+计算层支持两种网络传输模式：
+
+| 模式 | 延迟 | 吞吐 | 说明 |
+|------|------|------|------|
+| **TCP/gRPC** | 100-500 μs | 1-10 Gbps | 通用模式，兼容性好 |
+| **RDMA** | 1-10 μs | 25-200 Gbps | 高性能模式，需要 RDMA 硬件 |
+
+详细设计参见 [11_network_layer.md](./11_network_layer.md)。
+
+### 13.2 传输抽象层
+
+```cpp
+// storage/innobase/aurora/aurora_transport.h
+
+class AuroraTransport {
+public:
+    // 初始化传输层
+    static AuroraTransport* Create(const TransportConfig& config);
+    
+    // 发送 Redo（自动选择最优路径）
+    virtual Status SendRedo(const std::string& node,
+                           const byte* data, size_t len,
+                           uint64_t lsn) = 0;
+    
+    // 读取 Page
+    virtual Status ReadPage(const std::string& node,
+                           uint32_t space_id, uint32_t page_no,
+                           byte* buf, uint64_t target_lsn) = 0;
+    
+    // 获取当前传输类型
+    virtual TransportType GetType() const = 0;
+};
+
+// 工厂方法
+AuroraTransport* AuroraTransport::Create(const TransportConfig& config) {
+    if (config.type == TransportType::RDMA && CheckRDMAAvailable()) {
+        return new RDMATransport(config);
+    }
+    return new TCPTransport(config);
+}
+```
+
+### 13.3 配置
+
+```ini
+# my.cnf
+
+[mysqld]
+# 网络传输模式
+aurora_transport_type = rdma    # tcp 或 rdma
+
+# RDMA 配置
+aurora_rdma_device = mlx5_0
+aurora_rdma_redo_buffer_mb = 256
+
+# TCP 备用
+aurora_tcp_fallback = ON
+```
+
+### 13.4 Hook 扩展
+
+```cpp
+// 在 Aurora Hook 中增加网络层 Hook
+class AuroraHooks {
+    // ... 现有 hooks ...
+    
+    // 网络层 Hook
+    using TransportSelectHook = std::function<TransportType(
+        const std::string& operation,  // "redo_write", "page_read"
+        size_t data_size
+    )>;
+    
+    void register_transport_select_hook(TransportSelectHook hook);
+    TransportType call_transport_select_hook(const std::string& op, size_t size);
+};
+```

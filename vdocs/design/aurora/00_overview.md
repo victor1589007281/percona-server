@@ -27,6 +27,8 @@
 | [07_cross_region.md](./07_cross_region.md) | 跨城容灾设计 |
 | [08_dts.md](./08_dts.md) | 数据传输服务（DTS）设计 |
 | [09_backup_pitr.md](./09_backup_pitr.md) | 备份恢复与 PITR 设计 |
+| [10_replication_protocol.md](./10_replication_protocol.md) | 复制协议设计（Quorum/Multi-Raft） |
+| [11_network_layer.md](./11_network_layer.md) | 网络层设计（TCP/RDMA） |
 
 ---
 

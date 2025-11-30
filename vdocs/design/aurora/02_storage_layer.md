@@ -787,3 +787,272 @@ func (gc *RedoGC) Run() {
 | `storage_disk_used_bytes` | Gauge | 磁盘使用量 |
 | `storage_disk_total_bytes` | Gauge | 磁盘总容量 |
 | `storage_current_lsn` | Gauge | 当前持久化的 LSN |
+
+---
+
+## 11. Multi-Raft 支持
+
+### 11.1 架构扩展
+
+存储层支持两种复制模式：
+
+```mermaid
+graph TB
+    subgraph "存储节点"
+        subgraph "gRPC 服务"
+            StorageService[Storage Service<br/>:9002]
+            RaftService[Raft Service<br/>:9004]
+        end
+        
+        subgraph "协议层"
+            QuorumHandler[Quorum Handler<br/>Quorum 处理器]
+            RaftHandler[Raft Handler<br/>Raft 处理器]
+        end
+        
+        subgraph "Raft 引擎 仅Raft模式"
+            RaftCore[Raft Core<br/>Raft 核心]
+            RaftLog[Raft Log<br/>Raft 日志]
+            RaftState[Raft State<br/>Raft 状态]
+        end
+        
+        subgraph "存储引擎"
+            RedoEngine[Redo Engine]
+            PageEngine[Page Engine]
+        end
+    end
+    
+    StorageService --> QuorumHandler
+    RaftService --> RaftHandler
+    
+    QuorumHandler --> RedoEngine
+    RaftHandler --> RaftCore
+    RaftCore --> RaftLog
+    RaftCore --> RaftState
+    RaftCore --> RedoEngine
+    
+    RedoEngine --> PageEngine
+    
+    style RaftService fill:#e1e1ff,stroke:#333,stroke-width:2px,color:#000
+    style RaftCore fill:#ffe1e1,stroke:#333,stroke-width:2px,color:#000
+```
+
+### 11.2 Raft 日志存储
+
+```go
+// raft_log_store.go
+
+type RaftLogStore struct {
+    groupID     uint64
+    logDir      string
+    currentFile *os.File
+    index       *RaftLogIndex
+    mu          sync.RWMutex
+}
+
+// Raft 日志文件格式
+type RaftLogFile struct {
+    Header      RaftLogFileHeader
+    Entries     []RaftLogEntry
+}
+
+type RaftLogFileHeader struct {
+    Magic       uint64   // 0x524146544C4F4731 "RAFTLOG1"
+    Version     uint32
+    GroupID     uint64
+    FirstIndex  uint64
+    LastIndex   uint64
+    FirstTerm   uint64
+    LastTerm    uint64
+    CreateTime  int64
+}
+
+func (s *RaftLogStore) Append(entries []*RaftLogEntry) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    
+    for _, entry := range entries {
+        // 序列化
+        data := entry.Serialize()
+        
+        // 写入文件
+        if _, err := s.currentFile.Write(data); err != nil {
+            return err
+        }
+        
+        // 更新索引
+        s.index.Add(entry.Index, entry.Term, s.currentFile.Name(), offset)
+    }
+    
+    return nil
+}
+```
+
+### 11.3 Raft Group 生命周期
+
+```mermaid
+sequenceDiagram
+    participant Meta as Metadata Service
+    participant Storage as Storage Node
+    participant Raft as Raft Engine
+
+    Note over Meta,Raft: 创建 Raft Group
+    Meta->>Storage: CreateRaftGroup PG=0
+    Storage->>Raft: 初始化 Raft Group
+    Raft->>Raft: 加载/创建日志存储
+    Raft->>Raft: 加载/初始化状态
+    Raft->>Raft: 启动选举定时器
+    Raft-->>Storage: Group 就绪
+    Storage-->>Meta: 创建成功
+    
+    Note over Meta,Raft: Leader 选举
+    Raft->>Raft: 选举超时 转为 Candidate
+    Raft->>Raft: 发起投票 RequestVote
+    Raft->>Raft: 收到多数票 转为 Leader
+    Raft->>Meta: 报告 Leader 变更
+    
+    Note over Meta,Raft: 正常服务
+    loop 处理请求
+        Storage->>Raft: Propose Redo
+        Raft->>Raft: 复制到 Followers
+        Raft-->>Storage: Propose 成功
+    end
+```
+
+### 11.4 配置
+
+```yaml
+# storage_config.yaml
+
+storage:
+  # 复制协议
+  replication_protocol: "raft"  # quorum 或 raft
+  
+  # Raft 配置
+  raft:
+    enabled: true
+    data_dir: "/data/raft"
+    
+    # 定时器配置
+    heartbeat_interval_ms: 100
+    election_timeout_min_ms: 300
+    election_timeout_max_ms: 500
+    
+    # 日志配置
+    max_log_file_size: 67108864  # 64MB
+    max_log_entries: 100000
+    snapshot_threshold: 10000
+    
+    # 网络配置
+    grpc_port: 9004
+    max_message_size: 16777216  # 16MB
+```
+
+详细设计参见 [10_replication_protocol.md](./10_replication_protocol.md)。
+
+---
+
+## 12. RDMA 网络支持
+
+### 12.1 RDMA 服务架构
+
+存储层支持 RDMA 高性能传输，实现微秒级延迟：
+
+```mermaid
+graph TB
+    subgraph "存储节点网络服务"
+        subgraph "gRPC 服务 TCP"
+            gRPCServer[gRPC Server<br/>:9002]
+        end
+        
+        subgraph "RDMA 服务"
+            RDMAServer[RDMA Server<br/>:9003]
+            CMListener[CM Listener<br/>连接监听]
+            QPManager[QP Manager<br/>QP 管理]
+        end
+        
+        subgraph "共享缓冲区"
+            RedoRingBuffer[Redo Ring Buffer<br/>RDMA 可写]
+            PageBuffer[Page Buffer<br/>RDMA 可读]
+        end
+    end
+    
+    gRPCServer --> RedoRingBuffer
+    RDMAServer --> CMListener
+    CMListener --> QPManager
+    QPManager --> RedoRingBuffer
+    QPManager --> PageBuffer
+    
+    style RDMAServer fill:#e1e1ff,stroke:#333,stroke-width:2px,color:#000
+    style RedoRingBuffer fill:#ffe1e1,stroke:#333,stroke-width:2px,color:#000
+```
+
+### 12.2 RDMA 内存布局
+
+```go
+// RDMA 注册内存区域
+type RDMAMemoryLayout struct {
+    // Redo 接收区（供计算层 RDMA Write）
+    RedoBuffer struct {
+        BaseAddr    uint64
+        Size        uint64   // 256MB
+        RKey        uint32
+        // 环形缓冲区管理
+        WritePtr    uint64   // 计算层写入位置（原子更新）
+        ReadPtr     uint64   // 存储层读取位置
+    }
+    
+    // Page 发送区（供计算层 RDMA Read）
+    PageBuffer struct {
+        BaseAddr    uint64
+        Size        uint64   // 1GB
+        RKey        uint32
+        // Page 槽位管理
+        Slots       []*PageSlot
+    }
+    
+    // 控制区（元数据交换）
+    ControlBuffer struct {
+        BaseAddr    uint64
+        Size        uint64   // 4KB
+        RKey        uint32
+    }
+}
+
+type PageSlot struct {
+    SpaceID     uint32
+    PageNo      uint32
+    LSN         uint64
+    State       SlotState  // FREE, LOADING, READY
+    Offset      uint64     // 在 PageBuffer 中的偏移
+}
+```
+
+### 12.3 配置
+
+```yaml
+# storage_config.yaml
+
+storage:
+  network:
+    # TCP/gRPC 服务
+    grpc:
+      enabled: true
+      port: 9002
+      
+    # RDMA 服务
+    rdma:
+      enabled: true
+      port: 9003
+      device: "mlx5_0"
+      
+      # 内存配置
+      redo_buffer_mb: 256
+      page_buffer_mb: 1024
+      
+      # 性能调优
+      max_qp_per_client: 4
+      use_srq: true
+      srq_size: 8192
+```
+
+详细设计参见 [11_network_layer.md](./11_network_layer.md)。

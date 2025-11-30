@@ -781,3 +781,222 @@ enum EventType {
 | `UNAVAILABLE` | UNAVAILABLE | 服务不可用 |
 | `NOT_LEADER` | FAILED_PRECONDITION | 非 Leader |
 | `QUORUM_FAILED` | ABORTED | Quorum 失败 |
+
+---
+
+## 6. Raft 服务接口
+
+### 6.1 服务定义
+
+```protobuf
+// raft.proto
+
+syntax = "proto3";
+package aurora.raft;
+
+// Raft 服务（端口 9004）
+service RaftService {
+    // ========== Raft 核心 RPC ==========
+    
+    // 请求投票
+    rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+    
+    // 追加日志
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+    
+    // 安装快照
+    rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+    
+    // ========== 客户端 RPC ==========
+    
+    // 提交提案（写入 Redo）
+    rpc Propose(ProposeRequest) returns (ProposeResponse);
+    
+    // 读取索引（用于线性化读取）
+    rpc ReadIndex(ReadIndexRequest) returns (ReadIndexResponse);
+    
+    // ========== 管理 RPC ==========
+    
+    // 添加节点
+    rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
+    
+    // 移除节点
+    rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+    
+    // 转移 Leader
+    rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse);
+    
+    // 获取状态
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    
+    // 获取 Leader
+    rpc GetLeader(GetLeaderRequest) returns (GetLeaderResponse);
+}
+```
+
+### 6.2 消息定义
+
+```protobuf
+// Raft 核心消息
+
+message RequestVoteRequest {
+    uint64 term = 1;              // 候选人的任期
+    string candidate_id = 2;      // 候选人 ID
+    uint64 group_id = 3;          // Raft Group ID
+    uint64 last_log_index = 4;    // 候选人最后日志索引
+    uint64 last_log_term = 5;     // 候选人最后日志任期
+}
+
+message RequestVoteResponse {
+    uint64 term = 1;              // 当前任期
+    bool vote_granted = 2;        // 是否投票
+}
+
+message AppendEntriesRequest {
+    uint64 term = 1;              // Leader 任期
+    string leader_id = 2;         // Leader ID
+    uint64 group_id = 3;          // Raft Group ID
+    uint64 prev_log_index = 4;    // 前一日志索引
+    uint64 prev_log_term = 5;     // 前一日志任期
+    repeated RaftLogEntry entries = 6;  // 日志条目
+    uint64 leader_commit = 7;     // Leader 的 commitIndex
+}
+
+message AppendEntriesResponse {
+    uint64 term = 1;              // 当前任期
+    bool success = 2;             // 是否成功
+    uint64 match_index = 3;       // 匹配的日志索引
+    uint64 conflict_index = 4;    // 冲突索引（用于快速回退）
+    uint64 conflict_term = 5;     // 冲突任期
+}
+
+message RaftLogEntry {
+    uint64 index = 1;             // 日志索引
+    uint64 term = 2;              // 日志任期
+    uint64 lsn = 3;               // Aurora LSN
+    EntryType type = 4;           // 条目类型
+    bytes data = 5;               // 数据（Redo）
+    int64 timestamp = 6;          // 时间戳
+}
+
+enum EntryType {
+    ENTRY_REDO = 0;               // Redo 日志
+    ENTRY_CONFIG_CHANGE = 1;      // 配置变更
+    ENTRY_NOOP = 2;               // 空操作（Leader 选举后）
+}
+
+message ProposeRequest {
+    uint64 group_id = 1;          // Raft Group ID
+    bytes redo_data = 2;          // Redo 数据
+    uint64 lsn = 3;               // LSN
+    int64 timeout_ms = 4;         // 超时时间
+}
+
+message ProposeResponse {
+    bool success = 1;
+    uint64 index = 2;             // 日志索引
+    uint64 term = 3;              // 任期
+    string error = 4;             // 错误信息
+    string leader_hint = 5;       // Leader 提示（用于重定向）
+}
+
+message GetStatusResponse {
+    uint64 group_id = 1;
+    string node_id = 2;
+    RaftState state = 3;
+    uint64 term = 4;
+    string leader_id = 5;
+    uint64 commit_index = 6;
+    uint64 last_applied = 7;
+    uint64 last_log_index = 8;
+    uint64 last_log_term = 9;
+    repeated MemberStatus members = 10;
+}
+
+enum RaftState {
+    FOLLOWER = 0;
+    CANDIDATE = 1;
+    LEADER = 2;
+}
+
+message MemberStatus {
+    string node_id = 1;
+    string address = 2;
+    RaftRole role = 3;
+    uint64 match_index = 4;
+    uint64 next_index = 5;
+    bool is_voter = 6;
+    int64 last_contact_ms = 7;
+}
+
+enum RaftRole {
+    VOTER = 0;
+    LEARNER = 1;
+}
+```
+
+### 6.3 服务端口汇总
+
+| 服务 | 端口 | 协议 | 说明 |
+|------|------|------|------|
+| StorageService | 9002 | gRPC | 存储服务（Quorum 模式） |
+| MetadataService | 9003 | gRPC | 元数据服务 |
+| **RaftService** | **9004** | **gRPC** | **Raft 服务（Multi-Raft 模式）** |
+| ComputeService | 9001 | gRPC | 计算层服务 |
+| ControlPlaneService | 9000 | gRPC | 控制平面服务 |
+
+---
+
+## 7. 网络传输层
+
+### 7.1 传输模式
+
+系统支持两种传输模式，可根据硬件环境选择：
+
+| 模式 | 端口 | 延迟 | 说明 |
+|------|------|------|------|
+| **TCP/gRPC** | 9002 | 100-500 μs | 标准模式 |
+| **RDMA** | 9003 | 1-10 μs | 高性能模式 |
+
+### 7.2 端口分配汇总
+
+| 服务 | TCP 端口 | RDMA 端口 | 说明 |
+|------|----------|-----------|------|
+| StorageService | 9002 | 9003 | 存储服务 |
+| MetadataService | 9003 | - | 元数据服务（仅 TCP） |
+| RaftService | 9004 | 9005 | Raft 服务 |
+| ComputeService | 9001 | - | 计算层服务（仅 TCP） |
+| ControlPlaneService | 9000 | - | 控制平面（仅 TCP） |
+
+### 7.3 RDMA 协议扩展
+
+RDMA 模式下使用自定义二进制协议：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    RDMA 消息格式                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Header (32 bytes):                                              │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ magic(4) │ version(2) │ type(2) │ seq(8) │ len(4) │ crc(4)│  │
+│  │ reserved(8)                                               │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  Payload (variable):                                             │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 根据 type 不同有不同格式                                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+Message Types:
+  0x01 - REDO_WRITE
+  0x02 - REDO_ACK
+  0x03 - PAGE_READ_REQ
+  0x04 - PAGE_READ_RESP
+  0x05 - MEMORY_INFO_REQ
+  0x06 - MEMORY_INFO_RESP
+```
+
+详细设计参见 [11_network_layer.md](./11_network_layer.md)。
