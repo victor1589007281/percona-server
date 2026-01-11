@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package aurora.crossregion;
+
+option go_package = "github.com/percona/aurora/pkg/proto/crossregionpb";
+
+import "google/protobuf/empty.proto";
+
+// CrossRegionService - 跨城容灾服务
+service CrossRegionService {
+    // Binlog 复制
+    rpc ReplicateBinlog(stream BinlogBatch) returns (stream ReplicateResponse);
+    rpc GetReplicationStatus(GetReplicationStatusRequest) returns (ReplicationStatus);
+    
+    // 容灾切换
+    rpc TriggerDRFailover(TriggerDRFailoverRequest) returns (TriggerDRFailoverResponse);
+    rpc GetDRFailoverStatus(GetDRFailoverStatusRequest) returns (DRFailoverStatus);
+    
+    // 区域管理
+    rpc RegisterRegion(RegisterRegionRequest) returns (google.protobuf.Empty);
+    rpc GetRegions(google.protobuf.Empty) returns (GetRegionsResponse);
+}
+
+// BinlogBatch - Binlog 批次
+message BinlogBatch {
+    string source_region = 1;
+    string cluster_id = 2;
+    repeated BinlogEvent events = 3;
+    int64 batch_id = 4;
+}
+
+// BinlogEvent - Binlog 事件
+message BinlogEvent {
+    string gtid = 1;
+    BinlogEventType type = 2;
+    bytes data = 3;
+    int64 timestamp = 4;
+}
+
+// BinlogEventType - Binlog 事件类型
+enum BinlogEventType {
+    BINLOG_EVENT_UNKNOWN = 0;
+    BINLOG_EVENT_QUERY = 1;
+    BINLOG_EVENT_TABLE_MAP = 2;
+    BINLOG_EVENT_WRITE_ROWS = 3;
+    BINLOG_EVENT_UPDATE_ROWS = 4;
+    BINLOG_EVENT_DELETE_ROWS = 5;
+    BINLOG_EVENT_XID = 6;
+    BINLOG_EVENT_DDL = 7;
+}
+
+// ReplicateResponse - 复制响应
+message ReplicateResponse {
+    int64 batch_id = 1;
+    bool success = 2;
+    string applied_gtid = 3;
+    string error_message = 4;
+}
+
+// GetReplicationStatusRequest - 获取复制状态请求
+message GetReplicationStatusRequest {
+    string cluster_id = 1;
+}
+
+// ReplicationStatus - 复制状态
+message ReplicationStatus {
+    string cluster_id = 1;
+    string source_region = 2;
+    string target_region = 3;
+    string current_gtid = 4;
+    int64 delay_ms = 5;
+    bool is_healthy = 6;
+    int64 bytes_replicated = 7;
+}
+
+// TriggerDRFailoverRequest - 触发容灾切换请求
+message TriggerDRFailoverRequest {
+    string cluster_id = 1;
+    string target_region = 2;
+    bool force = 3;  // 强制切换（可能丢失数据）
+}
+
+// TriggerDRFailoverResponse - 触发容灾切换响应
+message TriggerDRFailoverResponse {
+    string failover_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+// GetDRFailoverStatusRequest - 获取容灾切换状态请求
+message GetDRFailoverStatusRequest {
+    string failover_id = 1;
+}
+
+// DRFailoverStatus - 容灾切换状态
+message DRFailoverStatus {
+    string failover_id = 1;
+    DRFailoverState state = 2;
+    string source_region = 3;
+    string target_region = 4;
+    string final_gtid = 5;
+    int64 started_at = 6;
+    int64 completed_at = 7;
+    string error_message = 8;
+}
+
+// DRFailoverState - 容灾切换状态
+enum DRFailoverState {
+    DR_FAILOVER_STATE_UNKNOWN = 0;
+    DR_FAILOVER_STATE_STARTED = 1;
+    DR_FAILOVER_STATE_SYNCING = 2;
+    DR_FAILOVER_STATE_SWITCHING = 3;
+    DR_FAILOVER_STATE_COMPLETED = 4;
+    DR_FAILOVER_STATE_FAILED = 5;
+}
+
+// RegisterRegionRequest - 注册区域请求
+message RegisterRegionRequest {
+    string region_id = 1;
+    string region_name = 2;
+    string endpoint = 3;
+    bool is_primary = 4;
+}
+
+// GetRegionsResponse - 获取区域响应
+message GetRegionsResponse {
+    repeated RegionInfo regions = 1;
+}
+
+// RegionInfo - 区域信息
+message RegionInfo {
+    string region_id = 1;
+    string region_name = 2;
+    string endpoint = 3;
+    bool is_primary = 4;
+    bool is_healthy = 5;
+}

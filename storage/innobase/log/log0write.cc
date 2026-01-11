@@ -79,6 +79,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 /* log_t::X */
 #include "log0sys.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 /* log_sync_point */
 #include "log0test.h"
 
@@ -2127,6 +2132,26 @@ static void log_writer_write_buffer(log_t &log, lsn_t next_write_lsn) {
   log_sync_point("log_writer_write_begin");
 
   const lsn_t last_write_lsn = log.write_lsn.load();
+
+#ifdef HAVE_AURORA
+  /* Aurora Hook: Send redo to remote storage instead of local file.
+     If Aurora mode is enabled and the hook succeeds, skip local write. */
+  if (AURORA_IS_ENABLED()) {
+    size_t start_off = last_write_lsn % log.buf_size;
+    size_t end_off = next_write_lsn % log.buf_size;
+    if (end_off <= start_off) {
+      end_off = log.buf_size;
+    }
+    size_t write_size = end_off - start_off;
+    byte *write_buf = log.buf + start_off;
+    
+    AURORA_HOOK_REDO_WRITE(write_buf, write_size, last_write_lsn, next_write_lsn) {
+      /* Redo sent to Aurora storage, update write_lsn and skip local write */
+      log.write_lsn.store(next_write_lsn);
+      return;
+    }
+  }
+#endif /* HAVE_AURORA */
 
   ut_a(log_is_data_lsn(last_write_lsn) ||
        last_write_lsn % OS_FILE_LOG_BLOCK_SIZE == 0);

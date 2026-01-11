@@ -52,6 +52,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0sys.h"
 #include "ut0new.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 /** There must be at least this many pages in buf_pool in the area to start
 a random read-ahead */
 inline page_no_t BUF_READ_AHEAD_RANDOM_THRESHOLD(const buf_pool_t *b) {
@@ -290,6 +295,36 @@ bool buf_read_page(const page_id_t &page_id, const page_size_t &page_size,
                    trx_t *trx) {
   ulint count;
   dberr_t err;
+
+#ifdef HAVE_AURORA
+  /* Aurora Hook: Read page from remote storage instead of local file.
+     In Aurora mode, pages are materialized on-demand from storage layer. */
+  if (AURORA_IS_ENABLED()) {
+    buf_pool_t *buf_pool = buf_pool_get(page_id);
+    buf_block_t *block;
+    
+    /* Allocate a block in buffer pool */
+    block = buf_LRU_get_free_block(buf_pool);
+    if (block != nullptr) {
+      byte *frame = block->frame;
+      uint64_t target_lsn = log_get_lsn(*log_sys);
+      
+      /* Read from Aurora storage layer */
+      if (AURORA_HOOK_PAGE_READ(page_id.space(), page_id.page_no(), 
+                                 frame, target_lsn)) {
+        /* Page read from Aurora, add to buffer pool */
+        buf_page_init(buf_pool, page_id, page_size, block);
+        buf_page_set_io_fix(&block->page, BUF_IO_NONE);
+        
+        srv_stats.buf_pool_reads.inc();
+        buf_LRU_stat_inc_io();
+        return true;
+      }
+      /* Aurora read failed, fall through to local read */
+      buf_LRU_block_free_non_file_page(block);
+    }
+  }
+#endif /* HAVE_AURORA */
 
   count = buf_read_page_low(&err, true, 0, BUF_READ_ANY_PAGE, page_id,
                             page_size, false, trx, false);

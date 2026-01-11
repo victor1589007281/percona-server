@@ -72,6 +72,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "mysql/plugin.h"
 #include "sql/clone_handler.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 static const ulint MAX_DETAILED_ERROR_LEN = 256;
 
 /** Set of table_id */
@@ -2249,6 +2254,13 @@ void trx_commit_low(trx_t *trx, mtr_t *mtr) {
     mtr_commit(mtr);
 
     DBUG_PRINT("trx_commit", ("commit lsn at " LSN_PF, mtr->commit_lsn()));
+
+#ifdef HAVE_AURORA
+    /* Aurora Hook: Notify transaction commit for GTID binding.
+       This allows Aurora to assign a GTID and bind it to the commit LSN
+       for binlog compatibility. */
+    AURORA_HOOK_TRX_COMMIT(trx->id, mtr->commit_lsn());
+#endif /* HAVE_AURORA */
 
     DBUG_EXECUTE_IF(
         "ib_crash_during_trx_commit_in_mem", if (trx_is_rseg_updated(trx)) {

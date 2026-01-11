@@ -1,0 +1,226 @@
+syntax = "proto3";
+
+package aurora.storage;
+
+option go_package = "github.com/percona/aurora/pkg/proto/storagepb";
+
+import "google/protobuf/empty.proto";
+
+// StorageService - 存储节点服务
+service StorageService {
+    // 写入 Redo 日志
+    rpc WriteRedo(WriteRedoRequest) returns (WriteRedoResponse);
+    
+    // 批量写入 Redo 日志
+    rpc WriteRedoBatch(WriteRedoBatchRequest) returns (WriteRedoBatchResponse);
+    
+    // 读取 Page
+    rpc ReadPage(ReadPageRequest) returns (ReadPageResponse);
+    
+    // 批量读取 Page
+    rpc ReadPageBatch(ReadPageBatchRequest) returns (ReadPageBatchResponse);
+    
+    // 获取 Redo 日志 (用于 Reader 同步)
+    rpc GetRedoLogs(GetRedoLogsRequest) returns (GetRedoLogsResponse);
+    
+    // 流式获取 Redo 日志
+    rpc StreamRedoLogs(StreamRedoLogsRequest) returns (stream RedoLogEntry);
+    
+    // 冻结写入
+    rpc FreezeWrites(FreezeWritesRequest) returns (FreezeWritesResponse);
+    
+    // 解冻写入
+    rpc UnfreezeWrites(UnfreezeWritesRequest) returns (google.protobuf.Empty);
+    
+    // 健康检查
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+    
+    // 获取节点状态
+    rpc GetNodeStatus(GetNodeStatusRequest) returns (NodeStatusResponse);
+}
+
+// WriteRedoRequest - 写入 Redo 请求
+message WriteRedoRequest {
+    string volume_id = 1;
+    int64 lsn = 2;
+    bytes redo_data = 3;
+    int64 space_id = 4;
+    int64 page_id = 5;
+    int64 trx_id = 6;
+    int64 mtr_id = 7;
+    RedoType redo_type = 8;
+    uint32 flags = 9;
+}
+
+// WriteRedoResponse - 写入 Redo 响应
+message WriteRedoResponse {
+    bool success = 1;
+    int64 persisted_lsn = 2;
+    string error_message = 3;
+}
+
+// WriteRedoBatchRequest - 批量写入请求
+message WriteRedoBatchRequest {
+    string volume_id = 1;
+    repeated RedoRecord records = 2;
+}
+
+// WriteRedoBatchResponse - 批量写入响应
+message WriteRedoBatchResponse {
+    bool success = 1;
+    int64 persisted_lsn = 2;
+    int32 persisted_count = 3;
+    string error_message = 4;
+}
+
+// RedoRecord - Redo 记录
+message RedoRecord {
+    int64 lsn = 1;
+    int64 space_id = 2;
+    int64 page_id = 3;
+    int64 trx_id = 4;
+    int64 mtr_id = 5;
+    RedoType redo_type = 6;
+    uint32 flags = 7;
+    bytes data = 8;
+}
+
+// RedoType - Redo 类型
+enum RedoType {
+    REDO_TYPE_UNKNOWN = 0;
+    REDO_TYPE_INSERT = 1;
+    REDO_TYPE_UPDATE = 2;
+    REDO_TYPE_DELETE = 3;
+    REDO_TYPE_PAGE_CREATE = 4;
+    REDO_TYPE_PAGE_INIT = 5;
+    REDO_TYPE_TRX_COMMIT = 6;
+    REDO_TYPE_TRX_ROLLBACK = 7;
+    REDO_TYPE_DDL = 8;
+    REDO_TYPE_CHECKPOINT = 9;
+    REDO_TYPE_MTR_COMMIT = 10;
+}
+
+// ReadPageRequest - 读取 Page 请求
+message ReadPageRequest {
+    string volume_id = 1;
+    int64 space_id = 2;
+    int64 page_id = 3;
+    int64 target_lsn = 4;  // 期望的 LSN，0 表示最新
+}
+
+// ReadPageResponse - 读取 Page 响应
+message ReadPageResponse {
+    bool success = 1;
+    bytes page_data = 2;  // 16KB Page 数据
+    int64 page_lsn = 3;
+    string error_message = 4;
+}
+
+// ReadPageBatchRequest - 批量读取 Page 请求
+message ReadPageBatchRequest {
+    string volume_id = 1;
+    repeated PageLocation pages = 2;
+    int64 target_lsn = 3;
+}
+
+// PageLocation - Page 位置
+message PageLocation {
+    int64 space_id = 1;
+    int64 page_id = 2;
+}
+
+// ReadPageBatchResponse - 批量读取 Page 响应
+message ReadPageBatchResponse {
+    bool success = 1;
+    repeated PageData pages = 2;
+    string error_message = 3;
+}
+
+// PageData - Page 数据
+message PageData {
+    int64 space_id = 1;
+    int64 page_id = 2;
+    bytes data = 3;
+    int64 page_lsn = 4;
+}
+
+// GetRedoLogsRequest - 获取 Redo 日志请求
+message GetRedoLogsRequest {
+    string volume_id = 1;
+    int64 from_lsn = 2;
+    int64 to_lsn = 3;
+    int32 max_count = 4;
+}
+
+// GetRedoLogsResponse - 获取 Redo 日志响应
+message GetRedoLogsResponse {
+    repeated RedoLogEntry entries = 1;
+    int64 next_lsn = 2;
+    bool has_more = 3;
+}
+
+// StreamRedoLogsRequest - 流式获取 Redo 日志请求
+message StreamRedoLogsRequest {
+    string volume_id = 1;
+    int64 from_lsn = 2;
+}
+
+// RedoLogEntry - Redo 日志条目
+message RedoLogEntry {
+    int64 lsn = 1;
+    int64 space_id = 2;
+    int64 page_id = 3;
+    int64 trx_id = 4;
+    int64 mtr_id = 5;
+    RedoType redo_type = 6;
+    uint32 flags = 7;
+    bytes data = 8;
+    int64 timestamp = 9;
+}
+
+// FreezeWritesRequest - 冻结写入请求
+message FreezeWritesRequest {
+    string volume_id = 1;
+    string reason = 2;
+}
+
+// FreezeWritesResponse - 冻结写入响应
+message FreezeWritesResponse {
+    bool success = 1;
+    int64 final_lsn = 2;
+    string error_message = 3;
+}
+
+// UnfreezeWritesRequest - 解冻写入请求
+message UnfreezeWritesRequest {
+    string volume_id = 1;
+}
+
+// HealthCheckRequest - 健康检查请求
+message HealthCheckRequest {
+    string node_id = 1;
+}
+
+// HealthCheckResponse - 健康检查响应
+message HealthCheckResponse {
+    bool is_healthy = 1;
+    int64 current_lsn = 2;
+    int64 disk_used_bytes = 3;
+    int64 disk_total_bytes = 4;
+}
+
+// GetNodeStatusRequest - 获取节点状态请求
+message GetNodeStatusRequest {
+    string node_id = 1;
+}
+
+// NodeStatusResponse - 节点状态响应
+message NodeStatusResponse {
+    string node_id = 1;
+    bool is_healthy = 2;
+    int64 current_lsn = 3;
+    int64 wal_size_bytes = 4;
+    int64 page_count = 5;
+    bool is_frozen = 6;
+    int64 uptime_seconds = 7;
+}

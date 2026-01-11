@@ -127,6 +127,13 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0crc32.h"
 #include "ut0new.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora.h"
+#include "aurora/aurora_startup.h"
+#include "aurora/aurora_sysvars.h"
+#endif /* HAVE_AURORA */
+
 /** fil_space_t::flags for hard-coded tablespaces */
 extern uint32_t predefined_flags;
 
@@ -1611,6 +1618,23 @@ dberr_t srv_start(bool create_new_db) {
   dberr_t err;
   mtr_t mtr;
   purge_pq_t *purge_queue;
+
+#ifdef HAVE_AURORA
+  /* Aurora distributed storage initialization.
+     Must be done before any other InnoDB initialization
+     to set up hooks and remote storage connection. */
+  if (srv_aurora_mode) {
+    ib::info(ER_IB_MSG_1125) << "Aurora mode enabled, initializing...";
+    
+    if (!aurora::aurora_initialize_from_sysvars()) {
+      ib::error(ER_IB_MSG_1125) << "Aurora initialization failed";
+      return (DB_ERROR);
+    }
+    
+    ib::info(ER_IB_MSG_1125) << "Aurora initialized successfully, role: "
+                             << (aurora::aurora_is_writer() ? "WRITER" : "READER");
+  }
+#endif /* HAVE_AURORA */
 
   /* Reset the start state. */
   srv_start_state = SRV_START_STATE_NONE;

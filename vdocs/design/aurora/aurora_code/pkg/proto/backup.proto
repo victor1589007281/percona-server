@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package aurora.backup;
+
+option go_package = "github.com/percona/aurora/pkg/proto/backuppb";
+
+import "google/protobuf/empty.proto";
+
+// BackupService - 备份服务
+service BackupService {
+    // 快照管理
+    rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+    rpc GetSnapshot(GetSnapshotRequest) returns (SnapshotInfo);
+    rpc DeleteSnapshot(DeleteSnapshotRequest) returns (google.protobuf.Empty);
+    rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+    
+    // PITR 恢复
+    rpc RestoreToPointInTime(RestoreRequest) returns (RestoreResponse);
+    rpc GetRestoreStatus(GetRestoreStatusRequest) returns (RestoreStatus);
+    
+    // 备份策略
+    rpc SetBackupPolicy(SetBackupPolicyRequest) returns (google.protobuf.Empty);
+    rpc GetBackupPolicy(GetBackupPolicyRequest) returns (BackupPolicy);
+}
+
+// CreateSnapshotRequest - 创建快照请求
+message CreateSnapshotRequest {
+    string cluster_id = 1;
+    string snapshot_name = 2;
+}
+
+// CreateSnapshotResponse - 创建快照响应
+message CreateSnapshotResponse {
+    string snapshot_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+// GetSnapshotRequest - 获取快照请求
+message GetSnapshotRequest {
+    string snapshot_id = 1;
+}
+
+// SnapshotInfo - 快照信息
+message SnapshotInfo {
+    string snapshot_id = 1;
+    string cluster_id = 2;
+    string snapshot_name = 3;
+    SnapshotState state = 4;
+    int64 lsn = 5;
+    int64 size_bytes = 6;
+    int64 created_at = 7;
+}
+
+// SnapshotState - 快照状态
+enum SnapshotState {
+    SNAPSHOT_STATE_UNKNOWN = 0;
+    SNAPSHOT_STATE_CREATING = 1;
+    SNAPSHOT_STATE_AVAILABLE = 2;
+    SNAPSHOT_STATE_DELETING = 3;
+    SNAPSHOT_STATE_FAILED = 4;
+}
+
+// DeleteSnapshotRequest - 删除快照请求
+message DeleteSnapshotRequest {
+    string snapshot_id = 1;
+}
+
+// ListSnapshotsRequest - 列出快照请求
+message ListSnapshotsRequest {
+    string cluster_id = 1;
+    int32 page_size = 2;
+    string page_token = 3;
+}
+
+// ListSnapshotsResponse - 列出快照响应
+message ListSnapshotsResponse {
+    repeated SnapshotInfo snapshots = 1;
+    string next_page_token = 2;
+}
+
+// RestoreRequest - 恢复请求
+message RestoreRequest {
+    string source_cluster_id = 1;
+    string target_cluster_name = 2;
+    oneof restore_point {
+        int64 target_lsn = 3;
+        int64 target_timestamp = 4;
+        string snapshot_id = 5;
+    }
+}
+
+// RestoreResponse - 恢复响应
+message RestoreResponse {
+    string restore_id = 1;
+    string target_cluster_id = 2;
+    bool success = 3;
+    string error_message = 4;
+}
+
+// GetRestoreStatusRequest - 获取恢复状态请求
+message GetRestoreStatusRequest {
+    string restore_id = 1;
+}
+
+// RestoreStatus - 恢复状态
+message RestoreStatus {
+    string restore_id = 1;
+    RestoreState state = 2;
+    int32 progress_percent = 3;
+    string target_cluster_id = 4;
+    int64 started_at = 5;
+    int64 completed_at = 6;
+    string error_message = 7;
+}
+
+// RestoreState - 恢复状态
+enum RestoreState {
+    RESTORE_STATE_UNKNOWN = 0;
+    RESTORE_STATE_PENDING = 1;
+    RESTORE_STATE_RESTORING_SNAPSHOT = 2;
+    RESTORE_STATE_APPLYING_REDO = 3;
+    RESTORE_STATE_STARTING_CLUSTER = 4;
+    RESTORE_STATE_COMPLETED = 5;
+    RESTORE_STATE_FAILED = 6;
+}
+
+// SetBackupPolicyRequest - 设置备份策略请求
+message SetBackupPolicyRequest {
+    string cluster_id = 1;
+    BackupPolicy policy = 2;
+}
+
+// GetBackupPolicyRequest - 获取备份策略请求
+message GetBackupPolicyRequest {
+    string cluster_id = 1;
+}
+
+// BackupPolicy - 备份策略
+message BackupPolicy {
+    bool enabled = 1;
+    string schedule = 2;  // cron 表达式
+    int32 retention_days = 3;
+    int64 redo_retention_hours = 4;
+}

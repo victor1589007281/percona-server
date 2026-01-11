@@ -2287,3 +2287,1581 @@ SELECT /*+ USE_OLAP */ SUM(amount) FROM orders GROUP BY region;
 ```
 
 详细设计参见 [12_olap_extension.md](./12_olap_extension.md)。
+
+---
+
+## 15. 从库 Redo 读取与应用设计
+
+### 15.1 从库架构概览
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                              Reader Instance 架构                                           │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                           MySQL Server Layer                                          │  │
+│  │  (SQL 解析, 查询优化, 执行器 - 只读操作)                                              │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                          ↕                                                  │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                         InnoDB Buffer Pool                                            │  │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐                         │  │
+│  │  │ Page 1  │ │ Page 2  │ │ Page 3  │ │   ...   │ │ Page N  │                         │  │
+│  │  │ LSN:100 │ │ LSN:150 │ │ LSN:200 │ │         │ │ LSN:xxx │                         │  │
+│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘                         │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                          ↑                                                  │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                        **Aurora Redo Apply Module**                                   │  │
+│  │                                                                                       │  │
+│  │  ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   │  │
+│  │  │  Redo Fetcher  │──►│  Redo Parser   │──►│  Page Updater  │──►│ Position Mgr   │   │  │
+│  │  │    (gRPC)      │   │  (解析 MVCC)   │   │  (应用到 BP)   │   │  (位点管理)    │   │  │
+│  │  └────────────────┘   └────────────────┘   └────────────────┘   └────────────────┘   │  │
+│  │         ↑                    │                    │                    │              │  │
+│  │         │                    ▼                    ▼                    ▼              │  │
+│  │  ┌──────┴───────┐   ┌────────────────┐   ┌────────────────┐   ┌────────────────┐     │  │
+│  │  │ Storage Node │   │  MVCC Manager  │   │  Stats Skipper │   │ Metadata Svc   │     │  │
+│  │  │  (读取 Redo) │   │  (维护读视图)  │   │  (跳过统计)    │   │  (上报位点)    │     │  │
+│  │  └──────────────┘   └────────────────┘   └────────────────┘   └────────────────┘     │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 15.2 Redo Apply 线程设计
+
+```cpp
+// storage/innobase/aurora/aurora_redo_apply.h
+
+/**
+ * Aurora 从库 Redo Apply 线程
+ * 
+ * 职责:
+ * 1. 从存储层拉取 Redo
+ * 2. 解析并应用 Redo 到 Buffer Pool
+ * 3. 处理 MVCC 相关 Redo
+ * 4. 上报位点信息
+ */
+class AuroraRedoApplyThread {
+public:
+    // 启动/停止
+    void start();
+    void stop();
+    
+    // 获取当前位点
+    lsn_t get_read_lsn() const { return m_read_lsn.load(); }
+    lsn_t get_applied_lsn() const { return m_applied_lsn.load(); }
+    lsn_t get_visible_lsn() const { return m_visible_lsn.load(); }
+    
+private:
+    // 主循环
+    void run();
+    
+    // 拉取 Redo
+    void fetch_redo_logs();
+    
+    // 应用 Redo 批次
+    void apply_redo_batch();
+    
+    // 应用单条 Redo
+    void apply_single_redo(const AuroraRedoRecord* redo);
+    
+    // 应用 Page Redo
+    void apply_page_redo(const AuroraRedoRecord* redo);
+    
+    // 处理 MVCC Redo
+    void handle_mvcc_redo(const AuroraRedoRecord* redo);
+    
+    // 跳过统计信息 Redo
+    bool should_skip_redo(const AuroraRedoRecord* redo);
+    
+    // 上报位点
+    void report_read_point();
+    
+private:
+    // 位点信息
+    std::atomic<lsn_t> m_read_lsn{0};       // 已读取的 LSN
+    std::atomic<lsn_t> m_applied_lsn{0};    // 已应用的 LSN
+    std::atomic<lsn_t> m_visible_lsn{0};    // 对查询可见的 LSN
+    std::atomic<lsn_t> m_target_vdl{0};     // 目标 VDL
+    
+    // Redo 队列
+    std::queue<AuroraRedoRecord*> m_redo_queue;
+    std::mutex m_queue_mutex;
+    std::condition_variable m_queue_cv;
+    
+    // gRPC 客户端
+    std::unique_ptr<AuroraStorageClient> m_storage_client;
+    std::unique_ptr<AuroraMetadataClient> m_metadata_client;
+    
+    // MVCC 管理
+    std::unique_ptr<AuroraReaderMVCCManager> m_mvcc_manager;
+    
+    // 配置
+    size_t m_batch_size{1000};        // 每批拉取数量
+    size_t m_apply_batch_size{100};   // 每批应用数量
+    
+    // 线程控制
+    std::atomic<bool> m_running{false};
+    std::thread m_thread;
+};
+```
+
+### 15.3 Redo Apply 实现
+
+```cpp
+// storage/innobase/aurora/aurora_redo_apply.cc
+
+void AuroraRedoApplyThread::run() {
+    mysql_thread_set_psi_id(PSI_INSTRUMENT_ME, PSI_AURORA_REDO_APPLY);
+    
+    while (m_running.load()) {
+        // 1. 获取最新 VDL
+        lsn_t current_vdl = m_metadata_client->GetVDL(m_volume_id);
+        m_target_vdl.store(current_vdl);
+        
+        // 2. 检查是否需要追赶
+        lsn_t applied = m_applied_lsn.load();
+        if (applied >= current_vdl) {
+            // 已追上，等待新数据
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        
+        // 3. 拉取 Redo
+        fetch_redo_logs();
+        
+        // 4. 应用 Redo
+        apply_redo_batch();
+        
+        // 5. 定期上报位点
+        static auto last_report = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_report > std::chrono::seconds(1)) {
+            report_read_point();
+            last_report = now;
+        }
+    }
+}
+
+void AuroraRedoApplyThread::fetch_redo_logs() {
+    lsn_t from_lsn = m_read_lsn.load();
+    lsn_t to_lsn = std::min(from_lsn + m_batch_size, m_target_vdl.load());
+    
+    // gRPC 调用
+    GetRedoLogsRequest request;
+    request.set_volume_id(m_volume_id);
+    request.set_from_lsn(from_lsn);
+    request.set_to_lsn(to_lsn);
+    
+    GetRedoLogsResponse response;
+    grpc::Status status = m_storage_client->GetRedoLogs(request, &response);
+    
+    if (!status.ok()) {
+        log_error("Failed to fetch redo logs: %s", status.error_message().c_str());
+        return;
+    }
+    
+    // 加入队列
+    {
+        std::lock_guard<std::mutex> lock(m_queue_mutex);
+        for (const auto& redo : response.redo_logs()) {
+            m_redo_queue.push(new AuroraRedoRecord(redo));
+        }
+    }
+    m_queue_cv.notify_all();
+    
+    // 更新读取位点
+    if (!response.redo_logs().empty()) {
+        m_read_lsn.store(response.redo_logs().rbegin()->lsn());
+    }
+}
+
+void AuroraRedoApplyThread::apply_redo_batch() {
+    std::vector<AuroraRedoRecord*> batch;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_queue_mutex);
+        
+        while (!m_redo_queue.empty() && batch.size() < m_apply_batch_size) {
+            batch.push_back(m_redo_queue.front());
+            m_redo_queue.pop();
+        }
+    }
+    
+    if (batch.empty()) {
+        return;
+    }
+    
+    // 按 Page 分组，优化锁竞争
+    std::unordered_map<page_id_t, std::vector<AuroraRedoRecord*>> page_groups;
+    std::vector<AuroraRedoRecord*> mvcc_redos;
+    
+    for (auto* redo : batch) {
+        if (should_skip_redo(redo)) {
+            delete redo;
+            continue;
+        }
+        
+        if (is_mvcc_redo(redo)) {
+            mvcc_redos.push_back(redo);
+        } else {
+            page_id_t page_id{redo->space_id, redo->page_no};
+            page_groups[page_id].push_back(redo);
+        }
+    }
+    
+    // 应用 MVCC Redo
+    for (auto* redo : mvcc_redos) {
+        handle_mvcc_redo(redo);
+        delete redo;
+    }
+    
+    // 应用 Page Redo
+    for (auto& [page_id, redos] : page_groups) {
+        apply_page_redos(page_id, redos);
+        for (auto* redo : redos) {
+            delete redo;
+        }
+    }
+    
+    // 更新应用位点
+    if (!batch.empty()) {
+        m_applied_lsn.store(batch.back()->lsn);
+    }
+}
+
+void AuroraRedoApplyThread::apply_page_redo(const AuroraRedoRecord* redo) {
+    page_id_t page_id{redo->space_id, redo->page_no};
+    
+    // 尝试获取 Buffer Pool 中的 Page
+    buf_block_t* block = buf_page_get_gen(
+        page_id,
+        page_size_t(0),
+        RW_X_LATCH,
+        nullptr,
+        Page_fetch::POSSIBLY_FREED,
+        __FILE__, __LINE__,
+        nullptr,
+        false
+    );
+    
+    if (block != nullptr) {
+        // Page 在 Buffer Pool 中，直接应用 Redo
+        mtr_t mtr;
+        mtr_start(&mtr);
+        
+        // 检查 Page LSN
+        lsn_t page_lsn = mach_read_from_8(block->frame + FIL_PAGE_LSN);
+        if (page_lsn < redo->lsn) {
+            // 应用 Redo
+            aurora_apply_redo_to_page(block->frame, redo);
+            
+            // 更新 Page LSN
+            mach_write_to_8(block->frame + FIL_PAGE_LSN, redo->lsn);
+        }
+        
+        mtr_commit(&mtr);
+        buf_block_unfix(block);
+    } else {
+        // Page 不在 Buffer Pool 中，标记为失效
+        // 下次读取时会从存储层获取最新版本
+        aurora_invalidate_page(page_id, redo->lsn);
+    }
+}
+
+bool AuroraRedoApplyThread::should_skip_redo(const AuroraRedoRecord* redo) {
+    // 从库跳过统计信息 Redo
+    switch (redo->type) {
+        case AURORA_REDO_STATS_TABLE_UPDATE:
+        case AURORA_REDO_STATS_INDEX_UPDATE:
+        case AURORA_REDO_STATS_COLUMN_UPDATE:
+            return true;
+        default:
+            return false;
+    }
+}
+```
+
+### 15.4 Page 应用策略
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                              从库 Page Redo 应用策略                                        │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                             │
+│  对于每条 Redo:                                                                             │
+│                                                                                             │
+│  ┌─────────────────┐      ┌─────────────────────────────────────────────────────────┐      │
+│  │ Redo(page_id=X) │ ──► │ Page X 在 Buffer Pool 中?                                │      │
+│  └─────────────────┘      └─────────────────────────────────────────────────────────┘      │
+│                                    │                                                        │
+│                     ┌──────────────┴──────────────┐                                        │
+│                     ▼                              ▼                                        │
+│             ┌───────────────┐             ┌───────────────┐                                │
+│             │      是       │             │      否       │                                │
+│             └───────────────┘             └───────────────┘                                │
+│                     │                              │                                        │
+│                     ▼                              ▼                                        │
+│  ┌─────────────────────────────┐   ┌─────────────────────────────────────────────────┐    │
+│  │ Page LSN < Redo LSN ?       │   │ 标记 Page 为 "invalidated"                      │    │
+│  │                             │   │                                                  │    │
+│  │ 是 → 应用 Redo, 更新 LSN   │   │ 在 InvalidPageMap 中记录:                       │    │
+│  │ 否 → 跳过 (已应用)         │   │   page_id → invalidated_lsn                     │    │
+│  │                             │   │                                                  │    │
+│  │                             │   │ 下次读取该 Page 时:                             │    │
+│  │                             │   │   从存储层获取 >= invalidated_lsn 的版本        │    │
+│  └─────────────────────────────┘   └─────────────────────────────────────────────────┘    │
+│                                                                                             │
+│  **优化: Batch Apply**                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │  1. 收集一批 Redo，按 page_id 分组                                                  │   │
+│  │  2. 对同一 Page 的多条 Redo，只加锁一次，连续应用                                   │   │
+│  │  3. 释放锁后才处理下一个 Page                                                       │   │
+│  │                                                                                      │   │
+│  │  好处:                                                                               │   │
+│  │  - 减少锁竞争                                                                        │   │
+│  │  - 提高 CPU Cache 命中率                                                             │   │
+│  │  - 降低 Buffer Pool Mutex 争用                                                       │   │
+│  └─────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 16. MVCC 信息处理设计
+
+### 16.1 从库 MVCC 架构
+
+```cpp
+// storage/innobase/aurora/aurora_reader_mvcc.h
+
+/**
+ * Aurora 从库 MVCC 管理器
+ * 
+ * 职责:
+ * 1. 接收并处理 MVCC 相关 Redo
+ * 2. 维护活跃事务列表
+ * 3. 为从库查询创建一致性读视图
+ */
+class AuroraReaderMVCCManager {
+public:
+    // 应用 MVCC Redo
+    void apply_mvcc_redo(const AuroraRedoRecord* redo);
+    
+    // 创建读视图 (用于从库查询)
+    ReadView* create_read_view();
+    
+    // 获取最新的可见 LSN
+    lsn_t get_visible_lsn() const { return m_visible_lsn.load(); }
+    
+private:
+    // 处理事务开始
+    void handle_trx_begin(const MVCCTrxBeginRedo* redo);
+    
+    // 处理事务提交
+    void handle_trx_commit(const MVCCTrxCommitRedo* redo);
+    
+    // 处理事务回滚
+    void handle_trx_rollback(const MVCCTrxRollbackRedo* redo);
+    
+    // 同步读视图快照
+    void sync_read_view(const MVCCReadViewRedo* redo);
+    
+private:
+    // 活跃事务集合
+    std::unordered_set<trx_id_t> m_active_trx_ids;
+    mutable std::shared_mutex m_trx_mutex;
+    
+    // 读视图边界
+    std::atomic<trx_id_t> m_low_limit_id{0};   // > 此 ID 的事务不可见
+    std::atomic<trx_id_t> m_up_limit_id{0};    // < 此 ID 的事务可见
+    
+    // 最新可见 LSN
+    std::atomic<lsn_t> m_visible_lsn{0};
+};
+```
+
+### 16.2 MVCC Redo 类型定义
+
+```cpp
+// storage/innobase/aurora/aurora_redo_types.h
+
+/**
+ * MVCC 相关的 Redo 类型
+ */
+enum AuroraMVCCRedoType : uint8_t {
+    MVCC_TRX_BEGIN    = 0x10,   // 事务开始
+    MVCC_TRX_COMMIT   = 0x11,   // 事务提交
+    MVCC_TRX_ROLLBACK = 0x12,   // 事务回滚
+    MVCC_READ_VIEW    = 0x13,   // 读视图快照 (定期发送)
+    MVCC_PURGE_POINT  = 0x14,   // Purge 位点
+};
+
+/**
+ * 事务开始 Redo
+ */
+struct MVCCTrxBeginRedo {
+    trx_id_t     trx_id;            // 事务 ID
+    lsn_t        start_lsn;         // 开始 LSN
+    isolation_t  isolation_level;   // 隔离级别
+    uint64_t     start_time;        // 开始时间戳
+} __attribute__((packed));
+
+/**
+ * 事务提交 Redo
+ */
+struct MVCCTrxCommitRedo {
+    trx_id_t     trx_id;            // 事务 ID
+    lsn_t        commit_lsn;        // 提交 LSN
+    trx_id_t     commit_number;     // 提交序号 (用于可见性判断)
+    uint64_t     commit_time;       // 提交时间戳
+} __attribute__((packed));
+
+/**
+ * 事务回滚 Redo
+ */
+struct MVCCTrxRollbackRedo {
+    trx_id_t     trx_id;            // 事务 ID
+    lsn_t        rollback_lsn;      // 回滚 LSN
+} __attribute__((packed));
+
+/**
+ * 读视图快照 Redo (主库定期发送，用于从库状态同步)
+ */
+struct MVCCReadViewRedo {
+    lsn_t        snapshot_lsn;      // 快照 LSN
+    trx_id_t     low_limit_id;      // > 此 ID 的事务不可见
+    trx_id_t     up_limit_id;       // < 此 ID 的事务可见
+    uint32_t     trx_count;         // 活跃事务数量
+    trx_id_t     active_trx_ids[];  // 活跃事务列表 (变长数组)
+} __attribute__((packed));
+
+/**
+ * Purge 位点 Redo
+ */
+struct MVCCPurgePointRedo {
+    lsn_t        purge_lsn;         // Purge LSN
+    trx_id_t     purge_trx_id;      // Purge 事务 ID
+} __attribute__((packed));
+```
+
+### 16.3 MVCC Redo 处理实现
+
+```cpp
+// storage/innobase/aurora/aurora_reader_mvcc.cc
+
+void AuroraReaderMVCCManager::apply_mvcc_redo(const AuroraRedoRecord* redo) {
+    switch (redo->mvcc_type) {
+        case MVCC_TRX_BEGIN:
+            handle_trx_begin(reinterpret_cast<const MVCCTrxBeginRedo*>(redo->data));
+            break;
+            
+        case MVCC_TRX_COMMIT:
+            handle_trx_commit(reinterpret_cast<const MVCCTrxCommitRedo*>(redo->data));
+            break;
+            
+        case MVCC_TRX_ROLLBACK:
+            handle_trx_rollback(reinterpret_cast<const MVCCTrxRollbackRedo*>(redo->data));
+            break;
+            
+        case MVCC_READ_VIEW:
+            sync_read_view(reinterpret_cast<const MVCCReadViewRedo*>(redo->data));
+            break;
+            
+        case MVCC_PURGE_POINT:
+            // Purge 位点更新，从库不需要特殊处理
+            break;
+    }
+}
+
+void AuroraReaderMVCCManager::handle_trx_begin(const MVCCTrxBeginRedo* redo) {
+    std::unique_lock<std::shared_mutex> lock(m_trx_mutex);
+    m_active_trx_ids.insert(redo->trx_id);
+    
+    // 更新 low_limit_id
+    if (redo->trx_id > m_low_limit_id.load()) {
+        m_low_limit_id.store(redo->trx_id + 1);
+    }
+}
+
+void AuroraReaderMVCCManager::handle_trx_commit(const MVCCTrxCommitRedo* redo) {
+    std::unique_lock<std::shared_mutex> lock(m_trx_mutex);
+    m_active_trx_ids.erase(redo->trx_id);
+    
+    // 更新可见 LSN
+    m_visible_lsn.store(redo->commit_lsn);
+    
+    // 更新 up_limit_id
+    if (m_active_trx_ids.empty()) {
+        m_up_limit_id.store(m_low_limit_id.load());
+    } else {
+        m_up_limit_id.store(*std::min_element(m_active_trx_ids.begin(), m_active_trx_ids.end()));
+    }
+}
+
+void AuroraReaderMVCCManager::handle_trx_rollback(const MVCCTrxRollbackRedo* redo) {
+    std::unique_lock<std::shared_mutex> lock(m_trx_mutex);
+    m_active_trx_ids.erase(redo->trx_id);
+}
+
+void AuroraReaderMVCCManager::sync_read_view(const MVCCReadViewRedo* redo) {
+    std::unique_lock<std::shared_mutex> lock(m_trx_mutex);
+    
+    // 全量同步活跃事务列表
+    m_active_trx_ids.clear();
+    for (uint32_t i = 0; i < redo->trx_count; i++) {
+        m_active_trx_ids.insert(redo->active_trx_ids[i]);
+    }
+    
+    m_low_limit_id.store(redo->low_limit_id);
+    m_up_limit_id.store(redo->up_limit_id);
+    m_visible_lsn.store(redo->snapshot_lsn);
+}
+
+ReadView* AuroraReaderMVCCManager::create_read_view() {
+    std::shared_lock<std::shared_mutex> lock(m_trx_mutex);
+    
+    // 创建基于当前状态的读视图
+    ReadView* view = new ReadView();
+    
+    view->m_low_limit_id = m_low_limit_id.load();
+    view->m_up_limit_id = m_up_limit_id.load();
+    
+    for (trx_id_t trx_id : m_active_trx_ids) {
+        view->m_ids.push_back(trx_id);
+    }
+    std::sort(view->m_ids.begin(), view->m_ids.end());
+    
+    return view;
+}
+```
+
+---
+
+## 17. 从库位点持久化与延迟监控
+
+### 17.1 位点信息结构
+
+```cpp
+// storage/innobase/aurora/aurora_reader_position.h
+
+/**
+ * 从库位点信息
+ */
+struct ReaderPositionInfo {
+    // LSN 位点
+    lsn_t   read_lsn;         // 已从存储层读取的 LSN
+    lsn_t   applied_lsn;      // 已应用到 Buffer Pool 的 LSN
+    lsn_t   visible_lsn;      // 对查询可见的 LSN (MVCC 安全点)
+    
+    // 延迟信息
+    uint64_t lag_bytes;       // 落后字节数
+    uint64_t lag_seconds;     // 落后秒数 (估算)
+    uint64_t pending_redo;    // 待应用 Redo 数量
+    
+    // 时间戳
+    time_t  last_read_time;   // 最后读取时间
+    time_t  last_apply_time;  // 最后应用时间
+    time_t  last_report_time; // 最后上报时间
+};
+
+/**
+ * 从库位点管理器
+ */
+class AuroraReaderPositionManager {
+public:
+    // 更新位点
+    void update_read_lsn(lsn_t lsn);
+    void update_applied_lsn(lsn_t lsn);
+    void update_visible_lsn(lsn_t lsn);
+    
+    // 获取位点信息
+    ReaderPositionInfo get_position_info() const;
+    
+    // 持久化到本地文件
+    void persist_to_local();
+    
+    // 从本地文件恢复
+    void restore_from_local();
+    
+    // 上报到元数据服务
+    void report_to_metadata_service();
+    
+    // 计算延迟
+    void calculate_lag(lsn_t current_vdl);
+    
+private:
+    std::atomic<lsn_t> m_read_lsn{0};
+    std::atomic<lsn_t> m_applied_lsn{0};
+    std::atomic<lsn_t> m_visible_lsn{0};
+    
+    std::atomic<uint64_t> m_lag_bytes{0};
+    std::atomic<uint64_t> m_lag_seconds{0};
+    
+    std::unique_ptr<AuroraMetadataClient> m_metadata_client;
+    
+    std::string m_local_state_file;  // {data_dir}/aurora_reader_state
+};
+```
+
+### 17.2 位点持久化实现
+
+```cpp
+// storage/innobase/aurora/aurora_reader_position.cc
+
+void AuroraReaderPositionManager::persist_to_local() {
+    std::ofstream file(m_local_state_file, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        log_error("Failed to open reader state file for writing");
+        return;
+    }
+    
+    // 格式: read_lsn | applied_lsn | visible_lsn | timestamp
+    ReaderPositionInfo info = get_position_info();
+    
+    file.write(reinterpret_cast<const char*>(&info.read_lsn), sizeof(lsn_t));
+    file.write(reinterpret_cast<const char*>(&info.applied_lsn), sizeof(lsn_t));
+    file.write(reinterpret_cast<const char*>(&info.visible_lsn), sizeof(lsn_t));
+    
+    time_t now = time(nullptr);
+    file.write(reinterpret_cast<const char*>(&now), sizeof(time_t));
+    
+    file.flush();
+    file.close();
+}
+
+void AuroraReaderPositionManager::restore_from_local() {
+    std::ifstream file(m_local_state_file, std::ios::binary);
+    if (!file) {
+        log_info("No reader state file found, starting from 0");
+        return;
+    }
+    
+    lsn_t read_lsn, applied_lsn, visible_lsn;
+    time_t timestamp;
+    
+    file.read(reinterpret_cast<char*>(&read_lsn), sizeof(lsn_t));
+    file.read(reinterpret_cast<char*>(&applied_lsn), sizeof(lsn_t));
+    file.read(reinterpret_cast<char*>(&visible_lsn), sizeof(lsn_t));
+    file.read(reinterpret_cast<char*>(&timestamp), sizeof(time_t));
+    
+    file.close();
+    
+    // 恢复位点
+    m_read_lsn.store(read_lsn);
+    m_applied_lsn.store(applied_lsn);
+    m_visible_lsn.store(visible_lsn);
+    
+    log_info("Restored reader position: read_lsn=%lu, applied_lsn=%lu, visible_lsn=%lu",
+             read_lsn, applied_lsn, visible_lsn);
+}
+
+void AuroraReaderPositionManager::report_to_metadata_service() {
+    ReaderPositionInfo info = get_position_info();
+    
+    UpdateReadPointRequest request;
+    request.set_volume_id(m_volume_id);
+    request.set_instance_id(m_instance_id);
+    request.set_read_lsn(info.read_lsn);
+    request.set_applied_lsn(info.applied_lsn);
+    request.set_visible_lsn(info.visible_lsn);
+    request.set_lag_bytes(info.lag_bytes);
+    request.set_lag_seconds(info.lag_seconds);
+    
+    grpc::Status status = m_metadata_client->UpdateReadPoint(request);
+    
+    if (!status.ok()) {
+        log_warn("Failed to report read point: %s", status.error_message().c_str());
+    }
+}
+
+void AuroraReaderPositionManager::calculate_lag(lsn_t current_vdl) {
+    lsn_t applied = m_applied_lsn.load();
+    
+    // 计算落后字节数
+    m_lag_bytes.store(current_vdl > applied ? current_vdl - applied : 0);
+    
+    // 估算落后秒数 (假设平均 Redo 速率)
+    // 这里简化处理，实际应该基于历史速率计算
+    uint64_t bytes = m_lag_bytes.load();
+    uint64_t estimated_rate = 10 * 1024 * 1024;  // 假设 10MB/s
+    m_lag_seconds.store(bytes / estimated_rate);
+    
+    // 更新监控指标
+    aurora_reader_lag_bytes.set(m_lag_bytes.load());
+    aurora_reader_lag_seconds.set(m_lag_seconds.load());
+    
+    // 告警检查
+    if (m_lag_seconds.load() > AURORA_LAG_THRESHOLD_SECONDS) {
+        log_warn("Reader lag too high: %lu seconds", m_lag_seconds.load());
+        aurora_reader_lag_alert.inc();
+    }
+}
+```
+
+### 17.3 从库监控指标
+
+```cpp
+// storage/innobase/aurora/aurora_reader_metrics.h
+
+// Prometheus 风格的监控指标
+
+// 位点指标
+DEFINE_GAUGE(aurora_reader_read_lsn, "Reader read LSN");
+DEFINE_GAUGE(aurora_reader_applied_lsn, "Reader applied LSN");
+DEFINE_GAUGE(aurora_reader_visible_lsn, "Reader visible LSN");
+
+// 延迟指标
+DEFINE_GAUGE(aurora_reader_lag_bytes, "Reader lag in bytes");
+DEFINE_GAUGE(aurora_reader_lag_seconds, "Reader lag in seconds");
+DEFINE_GAUGE(aurora_reader_pending_redo, "Pending redo count");
+
+// 性能指标
+DEFINE_GAUGE(aurora_reader_apply_rate, "Redo apply rate (bytes/s)");
+DEFINE_HISTOGRAM(aurora_reader_apply_latency_us, "Redo apply latency in microseconds",
+                 {10, 50, 100, 500, 1000, 5000, 10000});
+
+// 告警计数
+DEFINE_COUNTER(aurora_reader_lag_alert, "Lag alert count");
+DEFINE_COUNTER(aurora_reader_apply_error, "Apply error count");
+```
+
+---
+
+## 18. 从库性能数据采集 (不落地)
+
+### 18.1 设计原则
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                          从库性能数据采集设计原则                                           │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                             │
+│  **核心原则:**                                                                              │
+│  - 从库产生的性能数据 **不写入 Redo**                                                       │
+│  - 仅在内存中维护，通过 Prometheus/OpenTelemetry 上报                                       │
+│  - 避免从库产生任何写入，保持纯读取角色                                                     │
+│                                                                                             │
+│  **不落地的数据类型:**                                                                      │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │  数据类型              │  处理方式                │  说明                            │  │
+│  ├──────────────────────────────────────────────────────────────────────────────────────┤  │
+│  │  统计信息              │  仅内存                  │  从库不更新 mysql.innodb_*       │  │
+│  │  慢查询日志            │  内存 Ring Buffer        │  可通过 API 查询，不写文件       │  │
+│  │  审计日志              │  推送到外部              │  直接发送到 Kafka/Loki           │  │
+│  │  Performance Schema    │  内存表                  │  标准 P_S 机制，不持久化         │  │
+│  │  查询缓存命中          │  Prometheus              │  实时指标上报                    │  │
+│  │  Buffer Pool 状态      │  Prometheus              │  实时指标上报                    │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 18.2 实现
+
+```cpp
+// storage/innobase/aurora/aurora_reader_stats.h
+
+/**
+ * Aurora 从库统计信息收集器
+ * 
+ * 特点:
+ * - 所有数据仅保存在内存
+ * - 不产生任何 Redo
+ * - 通过 Prometheus Exporter 暴露
+ */
+class AuroraReaderStatsCollector {
+public:
+    // 检查是否应该跳过统计信息写入
+    static bool should_skip_stats_write() {
+        return aurora_is_reader_instance();
+    }
+    
+    // 记录慢查询 (Ring Buffer)
+    void log_slow_query(const char* sql, uint64_t exec_time_us, 
+                        uint64_t rows_examined, uint64_t rows_sent);
+    
+    // 获取慢查询列表
+    std::vector<SlowQueryEntry> get_slow_queries(size_t limit = 100) const;
+    
+    // 收集性能指标 (供 Prometheus 拉取)
+    void collect_metrics();
+    
+    // 记录查询
+    void record_query(bool is_select, uint64_t latency_us);
+    
+    // 记录 Buffer Pool 命中
+    void record_buffer_pool_hit(bool hit);
+    
+private:
+    // 慢查询 Ring Buffer
+    struct SlowQueryEntry {
+        std::string sql;
+        uint64_t exec_time_us;
+        uint64_t rows_examined;
+        uint64_t rows_sent;
+        time_t timestamp;
+    };
+    RingBuffer<SlowQueryEntry, 10000> m_slow_query_buffer;
+    
+    // 查询统计
+    std::atomic<uint64_t> m_select_count{0};
+    std::atomic<uint64_t> m_select_latency_sum{0};
+    
+    // Buffer Pool 统计
+    std::atomic<uint64_t> m_bp_hits{0};
+    std::atomic<uint64_t> m_bp_misses{0};
+};
+
+// 全局单例
+extern AuroraReaderStatsCollector* aurora_reader_stats;
+
+// 在查询执行时调用
+inline void aurora_reader_log_slow_query(THD* thd, uint64_t exec_time_us) {
+    if (aurora_is_reader_instance() && exec_time_us > long_query_time * 1000000) {
+        aurora_reader_stats->log_slow_query(
+            thd->query().str,
+            exec_time_us,
+            thd->get_examined_row_count(),
+            thd->get_sent_row_count()
+        );
+    }
+}
+```
+
+### 18.3 Prometheus Exporter
+
+```cpp
+// storage/innobase/aurora/aurora_reader_exporter.cc
+
+void AuroraReaderStatsCollector::collect_metrics() {
+    // 查询指标
+    aurora_reader_queries_total.set(m_select_count.load());
+    
+    uint64_t count = m_select_count.load();
+    if (count > 0) {
+        aurora_reader_query_latency_avg_us.set(m_select_latency_sum.load() / count);
+    }
+    
+    // Buffer Pool 指标
+    uint64_t hits = m_bp_hits.load();
+    uint64_t misses = m_bp_misses.load();
+    uint64_t total = hits + misses;
+    
+    if (total > 0) {
+        aurora_reader_buffer_pool_hit_rate.set(static_cast<double>(hits) / total);
+    }
+    
+    // 慢查询数量
+    aurora_reader_slow_queries_total.set(m_slow_query_buffer.size());
+}
+
+// HTTP Handler for /metrics
+void aurora_reader_metrics_handler(HTTPRequest* req, HTTPResponse* resp) {
+    std::stringstream ss;
+    
+    // 输出 Prometheus 格式
+    ss << "# HELP aurora_reader_queries_total Total queries executed\n";
+    ss << "# TYPE aurora_reader_queries_total counter\n";
+    ss << "aurora_reader_queries_total " << aurora_reader_queries_total.get() << "\n";
+    
+    ss << "# HELP aurora_reader_lag_bytes Replication lag in bytes\n";
+    ss << "# TYPE aurora_reader_lag_bytes gauge\n";
+    ss << "aurora_reader_lag_bytes " << aurora_reader_lag_bytes.get() << "\n";
+    
+    ss << "# HELP aurora_reader_lag_seconds Replication lag in seconds\n";
+    ss << "# TYPE aurora_reader_lag_seconds gauge\n";
+    ss << "aurora_reader_lag_seconds " << aurora_reader_lag_seconds.get() << "\n";
+    
+    ss << "# HELP aurora_reader_buffer_pool_hit_rate Buffer pool hit rate\n";
+    ss << "# TYPE aurora_reader_buffer_pool_hit_rate gauge\n";
+    ss << "aurora_reader_buffer_pool_hit_rate " << aurora_reader_buffer_pool_hit_rate.get() << "\n";
+    
+    resp->set_content(ss.str());
+    resp->set_content_type("text/plain");
+}
+```
+
+---
+
+## 19. Redo 类型体系设计
+
+### 19.1 Redo 类型分类
+
+```cpp
+// storage/innobase/aurora/aurora_redo_types.h
+
+/**
+ * Aurora Redo 类型定义
+ * 
+ * 分类:
+ * - 0x01-0x0F: 数据页操作
+ * - 0x10-0x1F: MVCC 元信息
+ * - 0x20-0x2F: 统计信息
+ * - 0x30-0x3F: LSN 映射
+ * - 0x40-0x4F: DDL 操作
+ * - 0x50-0x5F: Binlog 事件
+ * - 0xF0-0xFF: 系统操作
+ */
+enum AuroraRedoType : uint8_t {
+    // ===== 数据页操作 (0x01-0x0F) =====
+    AURORA_REDO_PAGE_INSERT     = 0x01,   // 插入记录
+    AURORA_REDO_PAGE_UPDATE     = 0x02,   // 更新记录
+    AURORA_REDO_PAGE_DELETE     = 0x03,   // 删除记录
+    AURORA_REDO_PAGE_SPLIT      = 0x04,   // 页分裂
+    AURORA_REDO_PAGE_MERGE      = 0x05,   // 页合并
+    AURORA_REDO_PAGE_REORGANIZE = 0x06,   // 页重组
+    AURORA_REDO_PAGE_CREATE     = 0x07,   // 创建页
+    AURORA_REDO_PAGE_FREE       = 0x08,   // 释放页
+    
+    // ===== MVCC 元信息 (0x10-0x1F) =====
+    AURORA_REDO_MVCC_TRX_BEGIN    = 0x10,   // 事务开始
+    AURORA_REDO_MVCC_TRX_COMMIT   = 0x11,   // 事务提交
+    AURORA_REDO_MVCC_TRX_ROLLBACK = 0x12,   // 事务回滚
+    AURORA_REDO_MVCC_READ_VIEW    = 0x13,   // 读视图快照
+    AURORA_REDO_MVCC_PURGE_POINT  = 0x14,   // Purge 位点
+    
+    // ===== 统计信息 (0x20-0x2F) =====
+    AURORA_REDO_STATS_TABLE_UPDATE  = 0x20,   // 表级统计
+    AURORA_REDO_STATS_INDEX_UPDATE  = 0x21,   // 索引统计
+    AURORA_REDO_STATS_COLUMN_UPDATE = 0x22,   // 列级统计
+    AURORA_REDO_STATS_HISTOGRAM     = 0x23,   // 直方图统计
+    
+    // ===== LSN 映射 (0x30-0x3F) =====
+    AURORA_REDO_LSN_TIMESTAMP_MAP = 0x30,   // LSN→时间戳映射
+    
+    // ===== DDL 操作 (0x40-0x4F) =====
+    AURORA_REDO_DDL_CREATE_TABLE = 0x40,   // 创建表
+    AURORA_REDO_DDL_DROP_TABLE   = 0x41,   // 删除表
+    AURORA_REDO_DDL_ALTER_TABLE  = 0x42,   // 修改表
+    AURORA_REDO_DDL_CREATE_INDEX = 0x43,   // 创建索引
+    AURORA_REDO_DDL_DROP_INDEX   = 0x44,   // 删除索引
+    AURORA_REDO_DDL_TRUNCATE     = 0x45,   // 截断表
+    
+    // ===== Binlog 事件 (0x50-0x5F) =====
+    AURORA_REDO_BINLOG_EVENT = 0x50,   // MySQL 原生 Binlog Event
+    
+    // ===== 系统操作 (0xF0-0xFF) =====
+    AURORA_REDO_CHECKPOINT    = 0xF0,   // 检查点
+    AURORA_REDO_VOLUME_EXTEND = 0xF1,   // Volume 扩容
+    AURORA_REDO_HEARTBEAT     = 0xFF,   // 心跳
+};
+```
+
+### 19.2 Redo 通用头部结构
+
+```cpp
+// storage/innobase/aurora/aurora_redo_format.h
+
+/**
+ * Aurora Redo 通用头部
+ * 
+ * 所有 Redo 记录都以此头部开始
+ */
+struct AuroraRedoHeader {
+    uint32_t  magic;          // 魔数: 0x41555245 ('AURE')
+    uint8_t   version;        // 版本号: 1
+    uint8_t   type;           // Redo 类型 (AuroraRedoType)
+    uint16_t  flags;          // 标志位
+    uint64_t  lsn;            // Log Sequence Number
+    uint32_t  space_id;       // Tablespace ID
+    uint32_t  page_no;        // Page Number (对于非 Page 类型为 0)
+    uint32_t  data_len;       // 数据长度 (不含头部)
+    uint32_t  checksum;       // CRC32 校验 (对整个记录)
+} __attribute__((packed));
+
+static_assert(sizeof(AuroraRedoHeader) == 32, "Header size must be 32 bytes");
+
+// 魔数定义
+#define AURORA_REDO_MAGIC 0x41555245  // 'AURE'
+
+// 版本定义
+#define AURORA_REDO_VERSION 1
+
+// 标志位定义
+#define AURORA_REDO_FLAG_COMPRESSED  (1 << 0)   // 数据已压缩
+#define AURORA_REDO_FLAG_ENCRYPTED   (1 << 1)   // 数据已加密
+#define AURORA_REDO_FLAG_MTR_END     (1 << 2)   // Mini-Transaction 结束
+
+/**
+ * 完整的 Redo 记录结构
+ */
+struct AuroraRedoRecord {
+    AuroraRedoHeader header;
+    uint8_t data[];  // 变长数据
+} __attribute__((packed));
+```
+
+### 19.3 统计信息 Redo 持久化
+
+```cpp
+// storage/innobase/aurora/aurora_stats_redo.h
+
+/**
+ * 表级统计信息 Redo
+ */
+struct StatsTableUpdateRedo {
+    uint64_t  table_id;           // 表 ID
+    uint64_t  n_rows;             // 行数估算
+    uint64_t  clustered_size;     // 聚簇索引大小
+    uint64_t  sum_of_others;      // 二级索引总大小
+    time_t    update_time;        // 统计时间
+} __attribute__((packed));
+
+/**
+ * 索引统计信息 Redo
+ */
+struct StatsIndexUpdateRedo {
+    uint64_t  table_id;           // 表 ID
+    uint64_t  index_id;           // 索引 ID
+    uint64_t  n_leaf_pages;       // 叶子页数量
+    uint64_t  n_diff_key_vals;    // 不同键值数量
+    uint64_t  stat_n_sample_sizes;// 采样大小
+} __attribute__((packed));
+
+// 主库产生统计信息 Redo
+void aurora_write_stats_redo(const TableStats& stats) {
+    if (!aurora_is_writer_instance()) {
+        return;  // 从库不产生统计信息 Redo
+    }
+    
+    AuroraRedoRecord redo;
+    redo.header.type = AURORA_REDO_STATS_TABLE_UPDATE;
+    redo.header.lsn = aurora_log_get_lsn();
+    
+    StatsTableUpdateRedo* data = reinterpret_cast<StatsTableUpdateRedo*>(redo.data);
+    data->table_id = stats.table_id;
+    data->n_rows = stats.n_rows;
+    data->clustered_size = stats.clustered_size;
+    data->sum_of_others = stats.sum_of_others;
+    data->update_time = time(nullptr);
+    
+    redo.header.data_len = sizeof(StatsTableUpdateRedo);
+    
+    aurora_storage_write_redo(&redo);
+}
+```
+
+### 19.4 LSN→Timestamp 映射 Redo
+
+```cpp
+// storage/innobase/aurora/aurora_lsn_timestamp.h
+
+/**
+ * LSN→Timestamp 映射 Redo
+ * 
+ * 用于 PITR 时间点定位
+ */
+struct LSNTimestampMapRedo {
+    uint64_t  start_lsn;      // 起始 LSN
+    uint64_t  end_lsn;        // 结束 LSN
+    time_t    start_time;     // 起始时间戳
+    time_t    end_time;       // 结束时间戳
+} __attribute__((packed));
+
+/**
+ * LSN-Timestamp 映射生成器
+ * 
+ * 主库定期 (每秒) 产生映射 Redo
+ */
+class AuroraLSNTimestampMapper {
+public:
+    void run() {
+        while (m_running.load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            generate_mapping();
+        }
+    }
+    
+private:
+    void generate_mapping() {
+        lsn_t current_lsn = aurora_log_get_current_lsn();
+        time_t current_time = time(nullptr);
+        
+        if (current_lsn <= m_last_lsn) {
+            return;  // 无新 Redo
+        }
+        
+        AuroraRedoRecord redo;
+        redo.header.type = AURORA_REDO_LSN_TIMESTAMP_MAP;
+        redo.header.lsn = aurora_log_get_lsn();
+        
+        LSNTimestampMapRedo* data = reinterpret_cast<LSNTimestampMapRedo*>(redo.data);
+        data->start_lsn = m_last_lsn;
+        data->end_lsn = current_lsn;
+        data->start_time = m_last_time;
+        data->end_time = current_time;
+        
+        redo.header.data_len = sizeof(LSNTimestampMapRedo);
+        
+        aurora_storage_write_redo(&redo);
+        
+        // 更新状态
+        m_last_lsn = current_lsn;
+        m_last_time = current_time;
+    }
+    
+private:
+    lsn_t  m_last_lsn{0};
+    time_t m_last_time{0};
+    std::atomic<bool> m_running{true};
+};
+
+// PITR 时间点定位
+lsn_t aurora_find_lsn_by_timestamp(time_t target_time) {
+    // 从元数据服务查询 LSN-Timestamp 索引
+    return aurora_metadata_client->LookupLSNByTimestamp(target_time);
+}
+```
+
+---
+
+## 20. Binlog 与 Redo 集成设计
+
+### 20.1 设计目标
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                          Binlog 与 Redo 集成设计目标                                        │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                             │
+│  **设计目标:**                                                                              │
+│  1. 使用 **MySQL 原生 Binlog Event 产生能力**                                               │
+│  2. Binlog Event 作为一种 **Redo 类型** (0x50) 写入存储层                                   │
+│  3. 保持与外部工具 (Canal、Maxwell、DTS) 的兼容性                                           │
+│  4. 支持 GTID 模式                                                                          │
+│                                                                                             │
+│  **Aurora 架构下的变化:**                                                                   │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │  传统 MySQL:                                                                          │  │
+│  │  [Prepare InnoDB] → [Write Binlog File] → [Sync] → [Commit InnoDB]                   │  │
+│  │                              ↓                                                        │  │
+│  │                         独立的 Binlog 文件                                            │  │
+│  │                         用于崩溃恢复                                                  │  │
+│  │                                                                                       │  │
+│  │  Aurora 架构:                                                                         │  │
+│  │  [生成 Redo + Binlog Event Redo] → [Write to Storage (Quorum)] → [提交]              │  │
+│  │                              ↓                                                        │  │
+│  │                         Binlog Event 内嵌于 Redo                                      │  │
+│  │                         无独立 Binlog 文件                                            │  │
+│  │                         Redo 落地即提交                                               │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 20.2 Binlog Event Redo 结构
+
+```cpp
+// storage/innobase/aurora/aurora_binlog_redo.h
+
+/**
+ * Binlog Event Redo 格式
+ * 
+ * Redo 类型: AURORA_REDO_BINLOG_EVENT (0x50)
+ */
+struct BinlogEventRedo {
+    // Binlog Event 元数据
+    uint32_t  binlog_event_type;      // MySQL Binlog Event Type
+                                       // (QUERY_EVENT, WRITE_ROWS_EVENT, etc.)
+    
+    // GTID 信息
+    uint8_t   gtid_uuid[16];          // GTID UUID
+    uint64_t  gtid_gno;               // GTID 序号
+    
+    // 时间戳 (用于并行复制)
+    uint64_t  original_commit_ts;     // 原始提交时间戳
+    uint64_t  immediate_commit_ts;    // 立即提交时间戳
+    
+    // 序列信息 (用于 MTS)
+    uint64_t  last_committed;         // 并行复制依赖
+    uint64_t  sequence_number;        // 事务序号
+    
+    // Event 数据长度
+    uint32_t  event_data_len;
+    
+    // MySQL 原生 Binlog Event 数据
+    // (包含 Event Header + Event Data)
+    uint8_t   event_data[];
+} __attribute__((packed));
+
+/**
+ * Binlog Event Type (使用 MySQL 原生定义)
+ */
+enum BinlogEventType : uint8_t {
+    QUERY_EVENT            = 2,
+    STOP_EVENT             = 3,
+    ROTATE_EVENT           = 4,
+    INTVAR_EVENT           = 5,
+    RAND_EVENT             = 13,
+    USER_VAR_EVENT         = 14,
+    FORMAT_DESCRIPTION_EVENT = 15,
+    XID_EVENT              = 16,
+    TABLE_MAP_EVENT        = 19,
+    WRITE_ROWS_EVENT_V1    = 23,
+    UPDATE_ROWS_EVENT_V1   = 24,
+    DELETE_ROWS_EVENT_V1   = 25,
+    WRITE_ROWS_EVENT       = 30,
+    UPDATE_ROWS_EVENT      = 31,
+    DELETE_ROWS_EVENT      = 32,
+    GTID_LOG_EVENT         = 33,
+    PREVIOUS_GTIDS_LOG_EVENT = 35,
+    TRANSACTION_CONTEXT_EVENT = 36,
+    HEARTBEAT_LOG_EVENT_V2 = 27,
+};
+```
+
+### 20.3 Binlog Event Redo 生成
+
+```cpp
+// storage/innobase/aurora/aurora_binlog_generator.cc
+
+/**
+ * Aurora Binlog Event Redo 生成器
+ */
+class AuroraBinlogRedoGenerator {
+public:
+    /**
+     * 事务提交时调用，生成 Binlog Event Redo
+     * 
+     * @param thd 线程句柄
+     * @param cache 事务的 Binlog Cache
+     * @param redo_batch 输出的 Redo 批次
+     */
+    void generate_binlog_event_redo(THD* thd,
+                                     binlog_cache_data* cache,
+                                     AuroraRedoBatch* redo_batch) {
+        // 1. 生成 GTID Event
+        Gtid_log_event gtid_event(thd, true, 0, 0);
+        append_binlog_event_redo(redo_batch, &gtid_event);
+        
+        // 2. 遍历事务的 Binlog Cache，提取所有 Event
+        IO_CACHE* stmt_cache = &cache->cache_log;
+        reinit_io_cache(stmt_cache, READ_CACHE, 0, false, false);
+        
+        Log_event* ev;
+        while ((ev = Log_event::read_log_event(stmt_cache, 0, nullptr, false)) != nullptr) {
+            append_binlog_event_redo(redo_batch, ev);
+            delete ev;
+        }
+        
+        // 3. 生成 XID Event (事务结束标记)
+        Xid_log_event xid_event(thd, thd->get_transaction()->xid_state()->get_xid());
+        append_binlog_event_redo(redo_batch, &xid_event);
+    }
+    
+private:
+    void append_binlog_event_redo(AuroraRedoBatch* batch, Log_event* event) {
+        // 分配 LSN
+        lsn_t lsn = aurora_log_get_lsn();
+        
+        // 序列化 MySQL 原生 Event
+        String event_buffer;
+        event->write(&event_buffer);
+        
+        // 计算 Redo 总大小
+        size_t redo_size = sizeof(AuroraRedoHeader) + 
+                          sizeof(BinlogEventRedo) - 1 + 
+                          event_buffer.length();
+        
+        // 分配 Redo 记录
+        AuroraRedoRecord* redo = reinterpret_cast<AuroraRedoRecord*>(
+            batch->allocate(redo_size));
+        
+        // 填充头部
+        redo->header.magic = AURORA_REDO_MAGIC;
+        redo->header.version = AURORA_REDO_VERSION;
+        redo->header.type = AURORA_REDO_BINLOG_EVENT;
+        redo->header.lsn = lsn;
+        redo->header.data_len = sizeof(BinlogEventRedo) - 1 + event_buffer.length();
+        
+        // 填充 Binlog Event 数据
+        BinlogEventRedo* bl_redo = reinterpret_cast<BinlogEventRedo*>(redo->data);
+        bl_redo->binlog_event_type = event->get_type_code();
+        
+        // 填充 GTID (如果有)
+        if (event->get_type_code() == GTID_LOG_EVENT) {
+            Gtid_log_event* gtid_ev = static_cast<Gtid_log_event*>(event);
+            memcpy(bl_redo->gtid_uuid, gtid_ev->get_sid()->bytes, 16);
+            bl_redo->gtid_gno = gtid_ev->get_gno();
+        }
+        
+        // 复制 Event 数据
+        bl_redo->event_data_len = event_buffer.length();
+        memcpy(bl_redo->event_data, event_buffer.ptr(), event_buffer.length());
+        
+        // 计算校验和
+        redo->header.checksum = crc32(0, reinterpret_cast<const uint8_t*>(redo), redo_size);
+    }
+};
+
+// 全局实例
+static AuroraBinlogRedoGenerator g_binlog_redo_generator;
+```
+
+### 20.4 修改后的事务提交流程
+
+```cpp
+// storage/innobase/aurora/aurora_trx_commit.cc
+
+/**
+ * Aurora 事务提交
+ * 
+ * 与传统 MySQL 的区别:
+ * 1. 不写独立的 Binlog 文件
+ * 2. Binlog Event 作为 Redo 写入存储层
+ * 3. Redo 落地即提交，无需 Two-Phase Commit
+ */
+int aurora_commit_transaction(THD* thd, trx_t* trx) {
+    AuroraRedoBatch redo_batch;
+    
+    // 1. 收集数据页变更的 Redo (已在事务执行期间产生)
+    collect_page_redo(trx, &redo_batch);
+    
+    // 2. 生成 MVCC Commit Redo
+    generate_mvcc_commit_redo(trx, &redo_batch);
+    
+    // 3. 【关键】生成 Binlog Event Redo
+    if (thd->is_binlog_enabled() && !thd->variables.sql_log_bin_off) {
+        binlog_cache_data* cache = thd->binlog_get_cache_data();
+        g_binlog_redo_generator.generate_binlog_event_redo(thd, cache, &redo_batch);
+    }
+    
+    // 4. 生成 COMMIT Redo
+    generate_commit_redo(trx, &redo_batch);
+    
+    // 5. 批量写入存储层，等待 Quorum 确认
+    int ret = aurora_storage_write_batch(&redo_batch);
+    if (ret != 0) {
+        return ret;  // 提交失败
+    }
+    
+    // 6. Quorum 确认 = 事务提交成功
+    // 更新 GTID 执行状态
+    if (thd->owned_gtid.is_empty() == false) {
+        gtid_state->update_on_commit(thd, true);
+    }
+    
+    return 0;
+}
+```
+
+### 20.5 Binlog Event 读取接口
+
+```cpp
+// storage/innobase/aurora/aurora_binlog_reader.cc
+
+/**
+ * Aurora Binlog Event 读取器
+ * 
+ * 用于:
+ * - 跨城容灾复制
+ * - DTS 数据迁移
+ * - 外部 Canal/Maxwell 消费
+ */
+class AuroraBinlogReader {
+public:
+    /**
+     * 从指定位置读取 Binlog Event
+     */
+    std::vector<BinlogEventRedo> read_events(lsn_t from_lsn, lsn_t to_lsn) {
+        std::vector<BinlogEventRedo> events;
+        
+        // 从存储层读取 Redo
+        GetRedoLogsRequest request;
+        request.set_volume_id(m_volume_id);
+        request.set_from_lsn(from_lsn);
+        request.set_to_lsn(to_lsn);
+        request.set_filter_type(AURORA_REDO_BINLOG_EVENT);  // 只读取 Binlog Event
+        
+        GetRedoLogsResponse response;
+        m_storage_client->GetRedoLogs(request, &response);
+        
+        for (const auto& redo : response.redo_logs()) {
+            if (redo.type() == AURORA_REDO_BINLOG_EVENT) {
+                events.push_back(parse_binlog_event_redo(redo));
+            }
+        }
+        
+        return events;
+    }
+    
+    /**
+     * 从指定 GTID 读取 Binlog Event
+     */
+    std::vector<BinlogEventRedo> read_events_from_gtid(const Gtid& gtid) {
+        // 从元数据服务查询 GTID 对应的 LSN
+        lsn_t from_lsn = aurora_metadata_client->LookupLSNByGTID(gtid);
+        return read_events(from_lsn, LSN_MAX);
+    }
+    
+private:
+    std::string m_volume_id;
+    std::unique_ptr<AuroraStorageClient> m_storage_client;
+};
+
+/**
+ * 模拟 MySQL Binlog 协议的 Handler
+ * 
+ * 兼容 COM_BINLOG_DUMP / COM_BINLOG_DUMP_GTID
+ */
+class AuroraBinlogDumpHandler {
+public:
+    void handle_binlog_dump(THD* thd, const char* log_pos) {
+        // 解析起始位置
+        lsn_t start_lsn = parse_log_position(log_pos);
+        
+        AuroraBinlogReader reader(thd->get_volume_id());
+        
+        // 持续发送 Binlog Event
+        while (!thd->killed) {
+            auto events = reader.read_events(start_lsn, start_lsn + BATCH_SIZE);
+            
+            for (const auto& event : events) {
+                // 发送原生 MySQL Binlog Event 格式
+                send_binlog_event_packet(thd->net, 
+                                         event.event_data, 
+                                         event.event_data_len);
+            }
+            
+            if (!events.empty()) {
+                start_lsn = events.back().lsn + 1;
+            } else {
+                // 等待新事件
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    }
+    
+    void handle_binlog_dump_gtid(THD* thd, const Gtid_set& gtid_set) {
+        // 从 GTID 定位 LSN
+        Gtid last_gtid = gtid_set.get_last_gtid();
+        lsn_t start_lsn = aurora_metadata_client->LookupLSNByGTID(last_gtid);
+        
+        // 后续与 handle_binlog_dump 相同
+        // ...
+    }
+};
+```
+
+### 20.6 配置参数
+
+```ini
+# aurora.cnf
+
+# ===== Binlog 与 Redo 集成配置 =====
+
+# 启用 Binlog Event 写入 Redo
+aurora_binlog_to_redo = ON
+
+# 禁用传统 Binlog 文件
+aurora_skip_binlog_file = ON
+
+# ===== 保持兼容性的参数 =====
+
+# 仍然启用 Binlog 逻辑 (用于生成 Event)
+log_bin = ON
+
+# 必须使用 ROW 格式
+binlog_format = ROW
+
+# 启用 GTID
+gtid_mode = ON
+enforce_gtid_consistency = ON
+
+# GTID 执行集合通过 Redo 恢复
+aurora_gtid_from_redo = ON
+
+# ===== 跨城复制配置 =====
+
+# 启用 Binlog Event 读取服务
+aurora_binlog_dump_enabled = ON
+
+# Binlog Event 读取批次大小
+aurora_binlog_batch_size = 1000
+```
+
+### 20.7 两阶段提交调整说明
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                              两阶段提交调整说明                                             │
+├────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                             │
+│  **传统 MySQL 两阶段提交的问题:**                                                           │
+│  1. Binlog 和 InnoDB Redo 两个独立的持久化路径                                              │
+│  2. 崩溃恢复需要对比两者，复杂且耗时                                                        │
+│  3. Binlog sync 是额外的 I/O 开销                                                           │
+│                                                                                             │
+│  **Aurora 架构下的简化:**                                                                   │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                                                                       │  │
+│  │  **单一持久化路径:**                                                                  │  │
+│  │  - 所有数据 (Page Redo + Binlog Event Redo) 统一写入存储层                            │  │
+│  │  - Quorum (4/6) 确认 = 事务提交                                                       │  │
+│  │  - 无需两阶段提交                                                                     │  │
+│  │                                                                                       │  │
+│  │  **崩溃恢复简化:**                                                                    │  │
+│  │  - 只需从存储层获取 VDL                                                               │  │
+│  │  - LSN < VDL 的事务已提交                                                             │  │
+│  │  - LSN > VDL 的事务未提交 (丢弃)                                                      │  │
+│  │  - 无需扫描 Binlog 文件                                                               │  │
+│  │                                                                                       │  │
+│  │  **GTID 恢复:**                                                                       │  │
+│  │  - 从存储层读取 Binlog Event Redo                                                     │  │
+│  │  - 重建 GTID 执行集合                                                                 │  │
+│  │  - 无需独立的 binlog.index 文件                                                       │  │
+│  │                                                                                       │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                             │
+│  **需要禁用/修改的代码路径:**                                                               │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │  1. binlog.cc / binlog_group_commit()                                                 │  │
+│  │     - 禁用: 写入 Binlog 文件                                                          │  │
+│  │     - 禁用: Binlog fsync                                                              │  │
+│  │     - 保留: Binlog Event 生成逻辑                                                     │  │
+│  │                                                                                       │  │
+│  │  2. MYSQL_BIN_LOG::commit()                                                           │  │
+│  │     - 禁用: ordered_commit() 的 Binlog 阶段                                           │  │
+│  │     - 修改: 将 Binlog Event 传递给 Aurora Redo 模块                                   │  │
+│  │                                                                                       │  │
+│  │  3. ha_innodb::commit()                                                               │  │
+│  │     - 修改: 调用 aurora_commit_transaction()                                          │  │
+│  │     - 修改: 等待 Storage Quorum 而非本地 Redo 刷盘                                    │  │
+│  │                                                                                       │  │
+│  │  4. crash_recovery()                                                                  │  │
+│  │     - 禁用: 扫描 Binlog 文件                                                          │  │
+│  │     - 禁用: Binlog 与 Redo 对比逻辑                                                   │  │
+│  │     - 新增: 从存储层获取 VDL，确定恢复点                                              │  │
+│  │                                                                                       │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 21. Redo 类型处理总结
+
+### 21.1 Redo 类型与从库处理策略
+
+| Redo 类型 | 类型 ID | 主库行为 | 从库处理策略 |
+|:---:|:---:|:---:|:---:|
+| PAGE_INSERT | 0x01 | 产生 | 应用到 Buffer Pool |
+| PAGE_UPDATE | 0x02 | 产生 | 应用到 Buffer Pool |
+| PAGE_DELETE | 0x03 | 产生 | 应用到 Buffer Pool |
+| MVCC_TRX_BEGIN | 0x10 | 产生 | 更新活跃事务列表 |
+| MVCC_TRX_COMMIT | 0x11 | 产生 | 更新活跃事务列表 |
+| MVCC_READ_VIEW | 0x13 | 定期产生 | 同步读视图状态 |
+| STATS_TABLE_UPDATE | 0x20 | 产生 | **跳过 (不应用)** |
+| STATS_INDEX_UPDATE | 0x21 | 产生 | **跳过 (不应用)** |
+| LSN_TIMESTAMP_MAP | 0x30 | 每秒产生 | 无需处理 |
+| DDL_CREATE_TABLE | 0x40 | 产生 | 应用到数据字典 |
+| BINLOG_EVENT | 0x50 | 产生 | 无需处理 (仅供 DTS/跨城) |
+| CHECKPOINT | 0xF0 | 产生 | 无需处理 |
+| HEARTBEAT | 0xFF | 定期产生 | 更新位点 |
+

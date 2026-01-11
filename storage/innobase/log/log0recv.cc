@@ -87,6 +87,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sanitizer/asan_interface.h>
 #endif
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 std::list<space_id_t> recv_encr_ts_list;
 
 /** Log records are stored in the hash table in chunks at most of this size;
@@ -3839,6 +3844,16 @@ static void recv_init_crash_recovery() {
 #ifndef UNIV_HOTBACKUP
 
 dberr_t recv_recovery_from_checkpoint_start(log_t &log, lsn_t flush_lsn) {
+#ifdef HAVE_AURORA
+  /* Aurora Hook: Skip local redo log recovery.
+     In Aurora mode, recovery is handled by the storage layer.
+     Pages are materialized on-demand with the correct LSN version. */
+  AURORA_HOOK_RECOVERY() {
+    ib::info(ER_IB_MSG_728) << "Aurora mode: skipping local redo recovery";
+    return DB_SUCCESS;
+  }
+#endif /* HAVE_AURORA */
+
   /* Initialize red-black tree for fast insertions into the
   flush_list during recovery process. */
   buf_flush_init_flush_rbt();

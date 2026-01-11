@@ -1,0 +1,371 @@
+syntax = "proto3";
+
+package aurora.control;
+
+option go_package = "github.com/percona/aurora/pkg/proto/controlpb";
+
+import "google/protobuf/empty.proto";
+
+// ClusterService - 集群管理服务
+service ClusterService {
+    // 集群管理
+    rpc CreateCluster(CreateClusterRequest) returns (CreateClusterResponse);
+    rpc DeleteCluster(DeleteClusterRequest) returns (google.protobuf.Empty);
+    rpc GetCluster(GetClusterRequest) returns (ClusterInfo);
+    rpc ListClusters(ListClustersRequest) returns (ListClustersResponse);
+    
+    // 实例管理
+    rpc AddReader(AddReaderRequest) returns (AddReaderResponse);
+    rpc RemoveReader(RemoveReaderRequest) returns (google.protobuf.Empty);
+    rpc ScaleCluster(ScaleClusterRequest) returns (ScaleClusterResponse);
+}
+
+// FailoverService - 故障切换服务
+service FailoverService {
+    // 故障切换
+    rpc TriggerFailover(TriggerFailoverRequest) returns (TriggerFailoverResponse);
+    rpc GetFailoverStatus(GetFailoverStatusRequest) returns (FailoverStatus);
+    rpc CancelFailover(CancelFailoverRequest) returns (google.protobuf.Empty);
+}
+
+// MonitorService - 监控服务
+service MonitorService {
+    // 监控
+    rpc GetClusterStatus(GetClusterStatusRequest) returns (ClusterStatus);
+    rpc GetInstanceStatus(GetInstanceStatusRequest) returns (InstanceStatus);
+    rpc SubscribeEvents(SubscribeEventsRequest) returns (stream ClusterEvent);
+}
+
+// ComputeService - 计算实例服务 (被控制平面调用)
+service ComputeService {
+    // 健康检查
+    rpc HealthCheck(ComputeHealthCheckRequest) returns (ComputeHealthCheckResponse);
+    
+    // 角色管理
+    rpc PromoteToWriter(PromoteRequest) returns (PromoteResponse);
+    rpc DemoteToReader(DemoteRequest) returns (DemoteResponse);
+    
+    // 同步控制
+    rpc CatchUp(CatchUpRequest) returns (CatchUpResponse);
+    rpc GetSyncStatus(GetSyncStatusRequest) returns (SyncStatusResponse);
+}
+
+// CreateClusterRequest - 创建集群请求
+message CreateClusterRequest {
+    string cluster_name = 1;
+    string instance_class = 2;
+    int32 reader_count = 3;
+    repeated string availability_zones = 4;
+    int64 volume_size_bytes = 5;
+}
+
+// CreateClusterResponse - 创建集群响应
+message CreateClusterResponse {
+    string cluster_id = 1;
+    ClusterInfo cluster = 2;
+    bool success = 3;
+    string error_message = 4;
+}
+
+// DeleteClusterRequest - 删除集群请求
+message DeleteClusterRequest {
+    string cluster_id = 1;
+    bool force = 2;
+}
+
+// GetClusterRequest - 获取集群请求
+message GetClusterRequest {
+    string cluster_id = 1;
+}
+
+// ClusterInfo - 集群信息
+message ClusterInfo {
+    string cluster_id = 1;
+    string cluster_name = 2;
+    string volume_id = 3;
+    InstanceInfo writer = 4;
+    repeated InstanceInfo readers = 5;
+    ClusterState state = 6;
+    int64 created_at = 7;
+    int64 updated_at = 8;
+}
+
+// InstanceInfo - 实例信息
+message InstanceInfo {
+    string instance_id = 1;
+    string instance_class = 2;
+    string endpoint = 3;
+    string availability_zone = 4;
+    InstanceState state = 5;
+    InstanceRole role = 6;
+    int64 current_lsn = 7;
+}
+
+// ClusterState - 集群状态
+enum ClusterState {
+    CLUSTER_STATE_UNKNOWN = 0;
+    CLUSTER_STATE_CREATING = 1;
+    CLUSTER_STATE_AVAILABLE = 2;
+    CLUSTER_STATE_MODIFYING = 3;
+    CLUSTER_STATE_DELETING = 4;
+    CLUSTER_STATE_FAILED = 5;
+    CLUSTER_STATE_FAILOVER = 6;
+}
+
+// InstanceState - 实例状态
+enum InstanceState {
+    INSTANCE_STATE_UNKNOWN = 0;
+    INSTANCE_STATE_CREATING = 1;
+    INSTANCE_STATE_AVAILABLE = 2;
+    INSTANCE_STATE_MODIFYING = 3;
+    INSTANCE_STATE_DELETING = 4;
+    INSTANCE_STATE_FAILED = 5;
+    INSTANCE_STATE_REBOOTING = 6;
+}
+
+// InstanceRole - 实例角色
+enum InstanceRole {
+    INSTANCE_ROLE_UNKNOWN = 0;
+    INSTANCE_ROLE_WRITER = 1;
+    INSTANCE_ROLE_READER = 2;
+}
+
+// ListClustersRequest - 列出集群请求
+message ListClustersRequest {
+    int32 page_size = 1;
+    string page_token = 2;
+}
+
+// ListClustersResponse - 列出集群响应
+message ListClustersResponse {
+    repeated ClusterInfo clusters = 1;
+    string next_page_token = 2;
+}
+
+// AddReaderRequest - 添加 Reader 请求
+message AddReaderRequest {
+    string cluster_id = 1;
+    string instance_class = 2;
+    string availability_zone = 3;
+}
+
+// AddReaderResponse - 添加 Reader 响应
+message AddReaderResponse {
+    string instance_id = 1;
+    InstanceInfo instance = 2;
+    bool success = 3;
+    string error_message = 4;
+}
+
+// RemoveReaderRequest - 移除 Reader 请求
+message RemoveReaderRequest {
+    string cluster_id = 1;
+    string instance_id = 2;
+}
+
+// ScaleClusterRequest - 扩缩容请求
+message ScaleClusterRequest {
+    string cluster_id = 1;
+    int32 target_reader_count = 2;
+}
+
+// ScaleClusterResponse - 扩缩容响应
+message ScaleClusterResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// TriggerFailoverRequest - 触发故障切换请求
+message TriggerFailoverRequest {
+    string cluster_id = 1;
+    string target_instance_id = 2;  // 可选，指定提升的 Reader
+}
+
+// TriggerFailoverResponse - 触发故障切换响应
+message TriggerFailoverResponse {
+    string failover_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+// GetFailoverStatusRequest - 获取故障切换状态请求
+message GetFailoverStatusRequest {
+    string failover_id = 1;
+}
+
+// FailoverStatus - 故障切换状态
+message FailoverStatus {
+    string failover_id = 1;
+    FailoverState state = 2;
+    string source_instance_id = 3;
+    string target_instance_id = 4;
+    int64 final_vdl = 5;
+    int64 started_at = 6;
+    int64 completed_at = 7;
+    string error_message = 8;
+}
+
+// FailoverState - 故障切换状态
+enum FailoverState {
+    FAILOVER_STATE_UNKNOWN = 0;
+    FAILOVER_STATE_STARTED = 1;
+    FAILOVER_STATE_FREEZING = 2;
+    FAILOVER_STATE_FROZEN = 3;
+    FAILOVER_STATE_PROMOTING = 4;
+    FAILOVER_STATE_COMPLETED = 5;
+    FAILOVER_STATE_FAILED = 6;
+    FAILOVER_STATE_CANCELLED = 7;
+}
+
+// CancelFailoverRequest - 取消故障切换请求
+message CancelFailoverRequest {
+    string failover_id = 1;
+}
+
+// GetClusterStatusRequest - 获取集群状态请求
+message GetClusterStatusRequest {
+    string cluster_id = 1;
+}
+
+// ClusterStatus - 集群状态
+message ClusterStatus {
+    string cluster_id = 1;
+    ClusterState state = 2;
+    WriterStatus writer = 3;
+    repeated ReaderStatus readers = 4;
+    StorageStatus storage = 5;
+}
+
+// WriterStatus - Writer 状态
+message WriterStatus {
+    string instance_id = 1;
+    bool is_healthy = 2;
+    int64 current_lsn = 3;
+    int64 connections = 4;
+    double cpu_usage = 5;
+    double memory_usage = 6;
+}
+
+// ReaderStatus - Reader 状态
+message ReaderStatus {
+    string instance_id = 1;
+    bool is_healthy = 2;
+    int64 current_lsn = 3;
+    int64 lag_bytes = 4;
+    int64 lag_ms = 5;
+}
+
+// StorageStatus - 存储状态
+message StorageStatus {
+    int64 current_vdl = 1;
+    int64 used_bytes = 2;
+    int64 total_bytes = 3;
+    int32 healthy_nodes = 4;
+    int32 total_nodes = 5;
+}
+
+// GetInstanceStatusRequest - 获取实例状态请求
+message GetInstanceStatusRequest {
+    string instance_id = 1;
+}
+
+// InstanceStatus - 实例状态
+message InstanceStatus {
+    string instance_id = 1;
+    InstanceState state = 2;
+    InstanceRole role = 3;
+    bool is_healthy = 4;
+    int64 current_lsn = 5;
+    int64 uptime_seconds = 6;
+    double cpu_usage = 7;
+    double memory_usage = 8;
+    int64 connections = 9;
+}
+
+// SubscribeEventsRequest - 订阅事件请求
+message SubscribeEventsRequest {
+    string cluster_id = 1;
+    repeated EventType event_types = 2;
+}
+
+// EventType - 事件类型
+enum EventType {
+    EVENT_TYPE_UNKNOWN = 0;
+    EVENT_TYPE_CLUSTER_CREATED = 1;
+    EVENT_TYPE_CLUSTER_DELETED = 2;
+    EVENT_TYPE_INSTANCE_CREATED = 3;
+    EVENT_TYPE_INSTANCE_DELETED = 4;
+    EVENT_TYPE_FAILOVER_STARTED = 5;
+    EVENT_TYPE_FAILOVER_COMPLETED = 6;
+    EVENT_TYPE_HEALTH_CHANGED = 7;
+}
+
+// ClusterEvent - 集群事件
+message ClusterEvent {
+    EventType type = 1;
+    string cluster_id = 2;
+    string instance_id = 3;
+    string message = 4;
+    int64 timestamp = 5;
+}
+
+// ComputeHealthCheckRequest - 计算实例健康检查请求
+message ComputeHealthCheckRequest {
+    string instance_id = 1;
+}
+
+// ComputeHealthCheckResponse - 计算实例健康检查响应
+message ComputeHealthCheckResponse {
+    bool is_healthy = 1;
+    InstanceRole role = 2;
+    int64 current_lsn = 3;
+    int64 uptime_seconds = 4;
+}
+
+// PromoteRequest - 提升请求
+message PromoteRequest {
+    string instance_id = 1;
+}
+
+// PromoteResponse - 提升响应
+message PromoteResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// DemoteRequest - 降级请求
+message DemoteRequest {
+    string instance_id = 1;
+}
+
+// DemoteResponse - 降级响应
+message DemoteResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// CatchUpRequest - 追赶请求
+message CatchUpRequest {
+    string instance_id = 1;
+    int64 target_lsn = 2;
+}
+
+// CatchUpResponse - 追赶响应
+message CatchUpResponse {
+    bool success = 1;
+    int64 current_lsn = 2;
+    string error_message = 3;
+}
+
+// GetSyncStatusRequest - 获取同步状态请求
+message GetSyncStatusRequest {
+    string instance_id = 1;
+}
+
+// SyncStatusResponse - 同步状态响应
+message SyncStatusResponse {
+    int64 current_lsn = 1;
+    int64 target_lsn = 2;
+    bool is_synced = 3;
+    int64 lag_bytes = 4;
+}

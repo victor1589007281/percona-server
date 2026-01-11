@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package aurora.olap;
+option go_package = "github.com/percona/aurora/pkg/proto/olap";
+
+// OLAP Service for analytical queries
+service OLAPService {
+  // Execute an OLAP query
+  rpc Query(QueryRequest) returns (QueryResponse);
+  
+  // Get sync status
+  rpc GetSyncStatus(SyncStatusRequest) returns (SyncStatusResponse);
+  
+  // Create column table
+  rpc CreateTable(CreateTableRequest) returns (CreateTableResponse);
+  
+  // Drop column table
+  rpc DropTable(DropTableRequest) returns (DropTableResponse);
+  
+  // Get table schema
+  rpc GetTableSchema(GetTableSchemaRequest) returns (GetTableSchemaResponse);
+}
+
+// Data types
+enum DataType {
+  TYPE_INT8 = 0;
+  TYPE_INT16 = 1;
+  TYPE_INT32 = 2;
+  TYPE_INT64 = 3;
+  TYPE_FLOAT32 = 4;
+  TYPE_FLOAT64 = 5;
+  TYPE_STRING = 6;
+  TYPE_BINARY = 7;
+  TYPE_TIMESTAMP = 8;
+  TYPE_DECIMAL = 9;
+}
+
+// Aggregation functions
+enum AggregateFunction {
+  AGG_COUNT = 0;
+  AGG_SUM = 1;
+  AGG_AVG = 2;
+  AGG_MIN = 3;
+  AGG_MAX = 4;
+}
+
+// Comparison operators
+enum CompareOperator {
+  OP_EQUAL = 0;
+  OP_NOT_EQUAL = 1;
+  OP_LESS = 2;
+  OP_LESS_EQUAL = 3;
+  OP_GREATER = 4;
+  OP_GREATER_EQUAL = 5;
+  OP_LIKE = 6;
+  OP_IN = 7;
+  OP_BETWEEN = 8;
+  OP_IS_NULL = 9;
+}
+
+// Column metadata
+message ColumnMeta {
+  uint32 column_id = 1;
+  string column_name = 2;
+  DataType data_type = 3;
+  bool nullable = 4;
+  string default_expr = 5;
+}
+
+// Table metadata
+message TableMeta {
+  uint64 table_id = 1;
+  string table_name = 2;
+  repeated ColumnMeta columns = 3;
+  repeated uint32 primary_key = 4;
+  repeated uint32 sort_key = 5;
+}
+
+// Filter expression
+message FilterExpr {
+  enum FilterType {
+    FILTER_COLUMN = 0;
+    FILTER_AND = 1;
+    FILTER_OR = 2;
+    FILTER_NOT = 3;
+  }
+  
+  FilterType type = 1;
+  uint32 column_id = 2;
+  CompareOperator operator = 3;
+  bytes value = 4;
+  FilterExpr left = 5;
+  FilterExpr right = 6;
+}
+
+// Aggregate expression
+message AggregateExpr {
+  AggregateFunction function = 1;
+  uint32 column_id = 2;
+  bool distinct = 3;
+  string alias = 4;
+}
+
+// Order by expression
+message OrderByExpr {
+  uint32 column_id = 1;
+  bool descending = 2;
+}
+
+// Query request
+message QueryRequest {
+  uint64 table_id = 1;
+  repeated uint32 select_columns = 2;
+  FilterExpr filter = 3;
+  repeated uint32 group_by = 4;
+  repeated AggregateExpr aggregates = 5;
+  repeated OrderByExpr order_by = 6;
+  int64 limit = 7;
+  int64 offset = 8;
+}
+
+// Query response
+message QueryResponse {
+  bool success = 1;
+  string error_message = 2;
+  repeated string column_names = 3;
+  repeated Row rows = 4;
+  int64 row_count = 5;
+  int64 duration_us = 6;
+}
+
+// Row data
+message Row {
+  repeated bytes values = 1;
+  repeated bool nulls = 2;
+}
+
+// Sync status request
+message SyncStatusRequest {}
+
+// Sync status response
+message SyncStatusResponse {
+  bool enabled = 1;
+  uint64 events_received = 2;
+  uint64 events_processed = 3;
+  uint64 batches_flushed = 4;
+  int64 lag_ms = 5;
+  uint64 errors = 6;
+}
+
+// Create table request
+message CreateTableRequest {
+  TableMeta table = 1;
+}
+
+// Create table response
+message CreateTableResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// Drop table request
+message DropTableRequest {
+  uint64 table_id = 1;
+}
+
+// Drop table response
+message DropTableResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// Get table schema request
+message GetTableSchemaRequest {
+  uint64 table_id = 1;
+}
+
+// Get table schema response
+message GetTableSchemaResponse {
+  bool success = 1;
+  string error_message = 2;
+  TableMeta table = 3;
+}

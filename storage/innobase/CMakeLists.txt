@@ -268,6 +268,54 @@ SET(INNOBASE_SOURCES
   ut/ut0vec.cc
   ut/ut0wqueue.cc)
 
+# ==================== Aurora Distributed Storage Support ====================
+OPTION(WITH_AURORA "Build with Aurora distributed storage support" OFF)
+
+IF(WITH_AURORA)
+  MESSAGE(STATUS "Aurora distributed storage: Enabled")
+  ADD_DEFINITIONS(-DHAVE_AURORA)
+  
+  # Aurora source files
+  SET(AURORA_SOURCES
+    aurora/aurora.cc
+    aurora/aurora_hook.cc
+    aurora/aurora_config.cc
+    aurora/aurora_startup.cc
+    aurora/aurora_plugin.cc
+    aurora/aurora_client.cc
+    aurora/aurora_redo_sender.cc
+    aurora/aurora_redo_generator.cc
+    aurora/aurora_page_reader.cc
+    aurora/aurora_reader_sync.cc
+    aurora/aurora_gtid.cc
+    aurora/aurora_binlog.cc
+    aurora/aurora_commands.cc
+    aurora/aurora_sysvars.cc
+    aurora/aurora_replication.cc
+    aurora/aurora_olap_router.cc
+    aurora/aurora_transport.cc
+    aurora/aurora_recovery.cc
+    aurora/aurora_disabled_features.cc
+    aurora/aurora_raft.cc
+  )
+  
+  # Add Aurora sources to InnoDB
+  LIST(APPEND INNOBASE_SOURCES ${AURORA_SOURCES})
+  
+  # Include Aurora headers
+  INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/aurora)
+  
+  # Note: gRPC and Protobuf dependencies would be added here
+  # when those libraries are available
+  # FIND_PACKAGE(gRPC CONFIG REQUIRED)
+  # FIND_PACKAGE(Protobuf CONFIG REQUIRED)
+  # TARGET_LINK_LIBRARIES(innobase gRPC::grpc++ protobuf::libprotobuf)
+  
+ELSE()
+  MESSAGE(STATUS "Aurora distributed storage: Disabled")
+ENDIF()
+# ============================================================================
+
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=98753
 IF(MY_COMPILER_IS_GNU AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 11)
   ADD_COMPILE_FLAGS(

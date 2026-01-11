@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package aurora.dts;
+
+option go_package = "github.com/percona/aurora/pkg/proto/dtspb";
+
+import "google/protobuf/empty.proto";
+
+// DTSService - 数据传输服务
+service DTSService {
+    // 迁移任务
+    rpc CreateMigrationTask(CreateMigrationTaskRequest) returns (CreateMigrationTaskResponse);
+    rpc StartMigrationTask(StartMigrationTaskRequest) returns (google.protobuf.Empty);
+    rpc StopMigrationTask(StopMigrationTaskRequest) returns (google.protobuf.Empty);
+    rpc GetMigrationTask(GetMigrationTaskRequest) returns (MigrationTaskInfo);
+    rpc ListMigrationTasks(ListMigrationTasksRequest) returns (ListMigrationTasksResponse);
+    
+    // 同步任务
+    rpc CreateSyncTask(CreateSyncTaskRequest) returns (CreateSyncTaskResponse);
+    rpc StartSyncTask(StartSyncTaskRequest) returns (google.protobuf.Empty);
+    rpc StopSyncTask(StopSyncTaskRequest) returns (google.protobuf.Empty);
+    rpc GetSyncTask(GetSyncTaskRequest) returns (SyncTaskInfo);
+}
+
+// CreateMigrationTaskRequest - 创建迁移任务请求
+message CreateMigrationTaskRequest {
+    string task_name = 1;
+    SourceEndpoint source = 2;
+    TargetEndpoint target = 3;
+    MigrationMode mode = 4;
+    repeated string databases = 5;
+}
+
+// SourceEndpoint - 源端点
+message SourceEndpoint {
+    string host = 1;
+    int32 port = 2;
+    string username = 3;
+    string password = 4;
+    string database = 5;
+}
+
+// TargetEndpoint - 目标端点
+message TargetEndpoint {
+    string cluster_id = 1;
+    string database = 2;
+}
+
+// MigrationMode - 迁移模式
+enum MigrationMode {
+    MIGRATION_MODE_UNKNOWN = 0;
+    MIGRATION_MODE_STRUCTURE_ONLY = 1;
+    MIGRATION_MODE_FULL = 2;
+    MIGRATION_MODE_INCREMENTAL = 3;
+    MIGRATION_MODE_FULL_AND_INCREMENTAL = 4;
+}
+
+// CreateMigrationTaskResponse - 创建迁移任务响应
+message CreateMigrationTaskResponse {
+    string task_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+// StartMigrationTaskRequest - 启动迁移任务请求
+message StartMigrationTaskRequest {
+    string task_id = 1;
+}
+
+// StopMigrationTaskRequest - 停止迁移任务请求
+message StopMigrationTaskRequest {
+    string task_id = 1;
+}
+
+// GetMigrationTaskRequest - 获取迁移任务请求
+message GetMigrationTaskRequest {
+    string task_id = 1;
+}
+
+// MigrationTaskInfo - 迁移任务信息
+message MigrationTaskInfo {
+    string task_id = 1;
+    string task_name = 2;
+    MigrationState state = 3;
+    MigrationMode mode = 4;
+    MigrationProgress progress = 5;
+    int64 created_at = 6;
+    int64 started_at = 7;
+    string error_message = 8;
+}
+
+// MigrationState - 迁移状态
+enum MigrationState {
+    MIGRATION_STATE_UNKNOWN = 0;
+    MIGRATION_STATE_CREATED = 1;
+    MIGRATION_STATE_RUNNING = 2;
+    MIGRATION_STATE_PAUSED = 3;
+    MIGRATION_STATE_COMPLETED = 4;
+    MIGRATION_STATE_FAILED = 5;
+}
+
+// MigrationProgress - 迁移进度
+message MigrationProgress {
+    MigrationPhase phase = 1;
+    int32 structure_percent = 2;
+    int32 full_percent = 3;
+    int64 incremental_delay_ms = 4;
+    string current_gtid = 5;
+}
+
+// MigrationPhase - 迁移阶段
+enum MigrationPhase {
+    MIGRATION_PHASE_UNKNOWN = 0;
+    MIGRATION_PHASE_STRUCTURE = 1;
+    MIGRATION_PHASE_FULL = 2;
+    MIGRATION_PHASE_INCREMENTAL = 3;
+}
+
+// ListMigrationTasksRequest - 列出迁移任务请求
+message ListMigrationTasksRequest {
+    int32 page_size = 1;
+    string page_token = 2;
+}
+
+// ListMigrationTasksResponse - 列出迁移任务响应
+message ListMigrationTasksResponse {
+    repeated MigrationTaskInfo tasks = 1;
+    string next_page_token = 2;
+}
+
+// CreateSyncTaskRequest - 创建同步任务请求
+message CreateSyncTaskRequest {
+    string task_name = 1;
+    SourceEndpoint source = 2;
+    TargetEndpoint target = 3;
+    repeated string databases = 4;
+}
+
+// CreateSyncTaskResponse - 创建同步任务响应
+message CreateSyncTaskResponse {
+    string task_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+// StartSyncTaskRequest - 启动同步任务请求
+message StartSyncTaskRequest {
+    string task_id = 1;
+}
+
+// StopSyncTaskRequest - 停止同步任务请求
+message StopSyncTaskRequest {
+    string task_id = 1;
+}
+
+// GetSyncTaskRequest - 获取同步任务请求
+message GetSyncTaskRequest {
+    string task_id = 1;
+}
+
+// SyncTaskInfo - 同步任务信息
+message SyncTaskInfo {
+    string task_id = 1;
+    string task_name = 2;
+    SyncState state = 3;
+    int64 delay_ms = 4;
+    string current_gtid = 5;
+    int64 created_at = 6;
+    int64 started_at = 7;
+    string error_message = 8;
+}
+
+// SyncState - 同步状态
+enum SyncState {
+    SYNC_STATE_UNKNOWN = 0;
+    SYNC_STATE_CREATED = 1;
+    SYNC_STATE_RUNNING = 2;
+    SYNC_STATE_PAUSED = 3;
+    SYNC_STATE_STOPPED = 4;
+    SYNC_STATE_FAILED = 5;
+}

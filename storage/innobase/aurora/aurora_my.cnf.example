@@ -1,0 +1,225 @@
+#==============================================================================
+# Aurora MySQL 配置样例
+# 
+# 这是一个可以启动 MySQL + Aurora 的完整配置文件
+# 根据实际环境修改 IP 地址和路径
+#==============================================================================
+
+[mysqld]
+#------------------------------------------------------------------------------
+# 基本配置
+#------------------------------------------------------------------------------
+server-id                       = 1
+port                            = 3306
+socket                          = /var/run/mysqld/mysqld.sock
+datadir                         = /var/lib/mysql
+tmpdir                          = /tmp
+pid-file                        = /var/run/mysqld/mysqld.pid
+
+# 字符集
+character-set-server            = utf8mb4
+collation-server                = utf8mb4_unicode_ci
+
+#------------------------------------------------------------------------------
+# Aurora 核心配置
+#------------------------------------------------------------------------------
+# 启用 Aurora 模式
+aurora_mode                     = ON
+
+# Volume ID (唯一标识)
+aurora_volume_id                = vol-aurora-001
+
+# 存储节点 (6个节点，跨3个AZ)
+aurora_storage_nodes            = 10.0.1.10:9002,10.0.1.11:9002,10.0.2.10:9002,10.0.2.11:9002,10.0.3.10:9002,10.0.3.11:9002
+
+# 元数据节点 (3个节点 Raft)
+aurora_metadata_nodes           = 10.0.1.100:9003,10.0.2.100:9003,10.0.3.100:9003
+
+# 实例模式: writer 或 reader
+aurora_instance_mode            = writer
+
+#------------------------------------------------------------------------------
+# Quorum 配置
+#------------------------------------------------------------------------------
+# 写入 Quorum (4/6)
+aurora_quorum_write             = 4
+
+# 读取 Quorum (3/6)
+aurora_quorum_read              = 3
+
+# Quorum 超时 (ms)
+aurora_quorum_timeout_ms        = 5000
+
+#------------------------------------------------------------------------------
+# Redo 配置
+#------------------------------------------------------------------------------
+# Redo 缓冲区大小
+aurora_redo_buffer_size         = 64M
+
+# Redo 刷新间隔 (ms)
+aurora_redo_flush_interval_ms   = 10
+
+# 启用 Redo 压缩
+aurora_redo_compression         = ON
+aurora_compression_algorithm    = lz4
+
+#------------------------------------------------------------------------------
+# 网络传输配置
+#------------------------------------------------------------------------------
+# 传输类型: tcp 或 rdma
+aurora_transport_type           = tcp
+
+# TCP 回退 (当 RDMA 不可用时)
+aurora_tcp_fallback             = ON
+
+# gRPC 连接数
+aurora_grpc_max_connections     = 10
+
+# gRPC 超时 (秒)
+aurora_grpc_timeout_sec         = 30
+
+# RDMA 配置 (如果使用 RDMA)
+# aurora_rdma_device            = mlx5_0
+# aurora_rdma_redo_buffer_mb    = 256
+
+#------------------------------------------------------------------------------
+# 复制协议配置
+#------------------------------------------------------------------------------
+# 复制协议: quorum 或 raft
+aurora_replication_protocol     = quorum
+
+# Raft 配置 (如果使用 Raft)
+# aurora_raft_heartbeat_ms      = 100
+# aurora_raft_election_timeout_ms = 1000
+# aurora_raft_replication_mode  = sync
+
+#------------------------------------------------------------------------------
+# Binlog 兼容配置
+#------------------------------------------------------------------------------
+# 启用 Binlog 兼容层 (支持 CDC/DTS)
+aurora_binlog_compat            = ON
+
+# Binlog 缓冲区
+aurora_binlog_buffer_size       = 32M
+aurora_binlog_buffer_count      = 10000
+
+# 虚拟 Binlog 文件前缀
+aurora_binlog_file_prefix       = aurora-binlog
+
+# Binlog 轮转大小
+aurora_binlog_rotate_size       = 1G
+
+#------------------------------------------------------------------------------
+# Reader 同步配置 (仅 Reader 实例)
+#------------------------------------------------------------------------------
+aurora_reader_sync_interval_ms  = 10
+aurora_reader_sync_batch_size   = 1000
+
+#------------------------------------------------------------------------------
+# OLAP 配置
+#------------------------------------------------------------------------------
+# 自动 OLAP 路由
+aurora_auto_olap                = OFF
+
+# OLAP 行数阈值
+aurora_olap_threshold_rows      = 100000
+
+#------------------------------------------------------------------------------
+# 禁用的 InnoDB 功能 (Aurora 模式下自动禁用)
+# 这些配置确保 MySQL 不会尝试使用本地存储
+#------------------------------------------------------------------------------
+
+# 禁用 Double Write (Aurora 存储层保证数据完整性)
+innodb_doublewrite              = OFF
+
+# 禁用 Change Buffer / Insert Buffer
+innodb_change_buffering         = none
+
+# Redo Log 配置 (Aurora 模式下实际不使用本地文件)
+# 设置最小值以满足启动要求
+innodb_redo_log_capacity        = 100M
+innodb_log_buffer_size          = 64M
+
+# 禁用本地刷盘 (Aurora 通过 Quorum 保证持久性)
+innodb_flush_log_at_trx_commit  = 0
+innodb_flush_log_at_timeout     = 0
+
+# 禁用 O_DIRECT (Aurora 不需要)
+innodb_flush_method             = fsync
+
+# Buffer Pool 配置 (正常配置，Aurora 按需物化页面)
+innodb_buffer_pool_size         = 4G
+innodb_buffer_pool_instances    = 8
+
+# 禁用后台刷脏
+innodb_max_dirty_pages_pct      = 99
+innodb_max_dirty_pages_pct_lwm  = 99
+
+# 禁用 Adaptive Hash Index (可选)
+innodb_adaptive_hash_index      = OFF
+
+# 禁用本地检查点
+innodb_checkpoint_disabled      = ON
+
+#------------------------------------------------------------------------------
+# Binlog 配置 (Aurora 使用自己的 Binlog 适配器)
+#------------------------------------------------------------------------------
+# 禁用原生 Binlog (使用 Aurora Binlog Adapter)
+skip-log-bin
+
+# 禁用 GTID (Aurora 使用自己的 GTID 管理)
+gtid_mode                       = OFF
+enforce_gtid_consistency        = OFF
+
+#------------------------------------------------------------------------------
+# 复制配置 (Aurora Reader 不使用原生复制)
+#------------------------------------------------------------------------------
+# Reader 实例应该是只读的
+# read_only                     = ON
+# super_read_only               = ON
+
+#------------------------------------------------------------------------------
+# 连接配置
+#------------------------------------------------------------------------------
+max_connections                 = 1000
+max_connect_errors              = 100000
+wait_timeout                    = 28800
+interactive_timeout             = 28800
+
+#------------------------------------------------------------------------------
+# 性能配置
+#------------------------------------------------------------------------------
+thread_cache_size               = 100
+table_open_cache                = 4000
+table_definition_cache          = 2000
+
+#------------------------------------------------------------------------------
+# 临时表 (使用本地存储)
+#------------------------------------------------------------------------------
+innodb_temp_data_file_path      = ibtmp1:12M:autoextend
+tmp_table_size                  = 64M
+max_heap_table_size             = 64M
+
+#------------------------------------------------------------------------------
+# 调试配置 (生产环境关闭)
+#------------------------------------------------------------------------------
+aurora_debug                    = OFF
+
+#------------------------------------------------------------------------------
+# 日志配置
+#------------------------------------------------------------------------------
+log_error                       = /var/log/mysql/error.log
+slow_query_log                  = ON
+slow_query_log_file             = /var/log/mysql/slow.log
+long_query_time                 = 1
+
+#==============================================================================
+# Reader 实例配置 (在 Writer 配置基础上修改)
+#==============================================================================
+# [mysqld]
+# aurora_instance_mode          = reader
+# read_only                     = ON
+# super_read_only               = ON
+# port                          = 3307
+# server-id                     = 2
+

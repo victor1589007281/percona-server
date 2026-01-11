@@ -1,0 +1,257 @@
+syntax = "proto3";
+
+package aurora.metadata;
+
+option go_package = "github.com/percona/aurora/pkg/proto/metadatapb";
+
+import "google/protobuf/empty.proto";
+
+// MetadataService - 元数据服务
+service MetadataService {
+    // Volume 管理
+    rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeResponse);
+    rpc GetVolume(GetVolumeRequest) returns (VolumeInfo);
+    rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty);
+    rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+    
+    // VDL 管理
+    rpc UpdateVDL(UpdateVDLRequest) returns (UpdateVDLResponse);
+    rpc GetVDL(GetVDLRequest) returns (GetVDLResponse);
+    
+    // 节点 LSN 管理
+    rpc UpdateNodeLSN(UpdateNodeLSNRequest) returns (google.protobuf.Empty);
+    rpc GetNodeLSNs(GetNodeLSNsRequest) returns (GetNodeLSNsResponse);
+    
+    // PG 映射
+    rpc GetPageLocation(GetPageLocationRequest) returns (PageLocationResponse);
+    rpc GetPGMapping(GetPGMappingRequest) returns (PGMappingResponse);
+    
+    // 实例管理
+    rpc RegisterInstance(RegisterInstanceRequest) returns (RegisterInstanceResponse);
+    rpc UnregisterInstance(UnregisterInstanceRequest) returns (google.protobuf.Empty);
+    rpc GetInstance(GetInstanceRequest) returns (InstanceInfo);
+    rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+    
+    // 健康检查
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+    rpc GetLeader(google.protobuf.Empty) returns (LeaderResponse);
+}
+
+// CreateVolumeRequest - 创建 Volume 请求
+message CreateVolumeRequest {
+    string cluster_id = 1;
+    int64 size_bytes = 2;
+    int32 pg_count = 3;
+    repeated string storage_nodes = 4;
+}
+
+// CreateVolumeResponse - 创建 Volume 响应
+message CreateVolumeResponse {
+    string volume_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+// GetVolumeRequest - 获取 Volume 请求
+message GetVolumeRequest {
+    string volume_id = 1;
+}
+
+// VolumeInfo - Volume 信息
+message VolumeInfo {
+    string volume_id = 1;
+    string cluster_id = 2;
+    int64 size_bytes = 3;
+    int64 current_vdl = 4;
+    int32 pg_count = 5;
+    VolumeState state = 6;
+    int64 created_at = 7;
+    int64 updated_at = 8;
+}
+
+// VolumeState - Volume 状态
+enum VolumeState {
+    VOLUME_STATE_UNKNOWN = 0;
+    VOLUME_STATE_CREATING = 1;
+    VOLUME_STATE_AVAILABLE = 2;
+    VOLUME_STATE_DELETING = 3;
+    VOLUME_STATE_FAILED = 4;
+}
+
+// DeleteVolumeRequest - 删除 Volume 请求
+message DeleteVolumeRequest {
+    string volume_id = 1;
+}
+
+// ListVolumesRequest - 列出 Volumes 请求
+message ListVolumesRequest {
+    string cluster_id = 1;
+    int32 page_size = 2;
+    string page_token = 3;
+}
+
+// ListVolumesResponse - 列出 Volumes 响应
+message ListVolumesResponse {
+    repeated VolumeInfo volumes = 1;
+    string next_page_token = 2;
+}
+
+// UpdateVDLRequest - 更新 VDL 请求
+message UpdateVDLRequest {
+    string volume_id = 1;
+    int64 new_vdl = 2;
+    string instance_id = 3;
+}
+
+// UpdateVDLResponse - 更新 VDL 响应
+message UpdateVDLResponse {
+    bool success = 1;
+    int64 current_vdl = 2;
+    string error_message = 3;
+}
+
+// GetVDLRequest - 获取 VDL 请求
+message GetVDLRequest {
+    string volume_id = 1;
+}
+
+// GetVDLResponse - 获取 VDL 响应
+message GetVDLResponse {
+    int64 vdl = 1;
+}
+
+// UpdateNodeLSNRequest - 更新节点 LSN 请求
+message UpdateNodeLSNRequest {
+    string volume_id = 1;
+    string node_id = 2;
+    int64 current_lsn = 3;
+}
+
+// GetNodeLSNsRequest - 获取节点 LSN 请求
+message GetNodeLSNsRequest {
+    string volume_id = 1;
+}
+
+// GetNodeLSNsResponse - 获取节点 LSN 响应
+message GetNodeLSNsResponse {
+    map<string, int64> node_lsns = 1;
+    int64 min_lsn = 2;
+    int64 max_lsn = 3;
+    int64 calculated_vdl = 4;
+}
+
+// GetPageLocationRequest - 获取 Page 位置请求
+message GetPageLocationRequest {
+    string volume_id = 1;
+    int64 space_id = 2;
+    int64 page_id = 3;
+}
+
+// PageLocationResponse - Page 位置响应
+message PageLocationResponse {
+    repeated string node_ids = 1;
+    int32 pg_id = 2;
+    int64 base_lsn = 3;
+}
+
+// GetPGMappingRequest - 获取 PG 映射请求
+message GetPGMappingRequest {
+    string volume_id = 1;
+}
+
+// PGMappingResponse - PG 映射响应
+message PGMappingResponse {
+    repeated ProtectionGroup pgs = 1;
+}
+
+// ProtectionGroup - 保护组
+message ProtectionGroup {
+    int32 pg_id = 1;
+    repeated string node_ids = 2;
+    int64 min_lsn = 3;
+    int64 max_lsn = 4;
+}
+
+// RegisterInstanceRequest - 注册实例请求
+message RegisterInstanceRequest {
+    string instance_id = 1;
+    string cluster_id = 2;
+    string volume_id = 3;
+    InstanceRole role = 4;
+    string endpoint = 5;
+}
+
+// InstanceRole - 实例角色
+enum InstanceRole {
+    INSTANCE_ROLE_UNKNOWN = 0;
+    INSTANCE_ROLE_WRITER = 1;
+    INSTANCE_ROLE_READER = 2;
+}
+
+// RegisterInstanceResponse - 注册实例响应
+message RegisterInstanceResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+// UnregisterInstanceRequest - 注销实例请求
+message UnregisterInstanceRequest {
+    string instance_id = 1;
+}
+
+// GetInstanceRequest - 获取实例请求
+message GetInstanceRequest {
+    string instance_id = 1;
+}
+
+// InstanceInfo - 实例信息
+message InstanceInfo {
+    string instance_id = 1;
+    string cluster_id = 2;
+    string volume_id = 3;
+    InstanceRole role = 4;
+    string endpoint = 5;
+    InstanceState state = 6;
+    int64 current_lsn = 7;
+    int64 registered_at = 8;
+}
+
+// InstanceState - 实例状态
+enum InstanceState {
+    INSTANCE_STATE_UNKNOWN = 0;
+    INSTANCE_STATE_STARTING = 1;
+    INSTANCE_STATE_RUNNING = 2;
+    INSTANCE_STATE_STOPPING = 3;
+    INSTANCE_STATE_STOPPED = 4;
+    INSTANCE_STATE_FAILED = 5;
+}
+
+// ListInstancesRequest - 列出实例请求
+message ListInstancesRequest {
+    string cluster_id = 1;
+}
+
+// ListInstancesResponse - 列出实例响应
+message ListInstancesResponse {
+    repeated InstanceInfo instances = 1;
+}
+
+// HealthCheckRequest - 健康检查请求
+message HealthCheckRequest {
+    string node_id = 1;
+}
+
+// HealthCheckResponse - 健康检查响应
+message HealthCheckResponse {
+    bool is_healthy = 1;
+    bool is_leader = 2;
+    string leader_id = 3;
+    int64 raft_term = 4;
+    int64 raft_index = 5;
+}
+
+// LeaderResponse - Leader 响应
+message LeaderResponse {
+    string leader_id = 1;
+    string leader_address = 2;
+}

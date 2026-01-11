@@ -108,6 +108,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 /* ut_uint64_align_down */
 #include "ut0byte.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 #ifndef UNIV_HOTBACKUP
 
 /** Updates lsn available for checkpoint.
@@ -460,6 +465,15 @@ static void log_checkpoint(log_t &log) {
   ut_a(!srv_read_only_mode);
   ut_ad(!srv_checkpoint_disabled);
   ut_ad(log.m_allow_checkpoints.load());
+
+#ifdef HAVE_AURORA
+  /* Aurora Hook: Skip local checkpoint.
+     In Aurora mode, VDL (Volume Durable LSN) from the storage layer
+     serves as the durable checkpoint. Local checkpoints are not needed. */
+  AURORA_HOOK_CHECKPOINT(log.last_checkpoint_lsn.load()) {
+    return;  /* Skip local checkpoint in Aurora mode */
+  }
+#endif /* HAVE_AURORA */
 
   /* Read the comment from log_should_checkpoint() from just before
   acquiring the limits mutex. It is ok if available_for_checkpoint_lsn

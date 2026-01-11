@@ -69,6 +69,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0math.h"
 #include "ut0stage.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 #ifdef UNIV_LINUX
 /* include defs for CPU time priority settings */
 #include <sys/resource.h>
@@ -1271,6 +1276,26 @@ returns true.
 bool buf_flush_page(buf_pool_t *buf_pool, buf_page_t *bpage,
                     buf_flush_t flush_type, bool sync) {
   BPageMutex *block_mutex;
+
+#ifdef HAVE_AURORA
+  /* Aurora Hook: Skip local page writes.
+     In Aurora mode, pages don't need to be written locally because
+     redo logs are the source of truth and are stored in remote storage. */
+  if (AURORA_IS_ENABLED()) {
+    bool is_uncompressed = (buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);
+    if (is_uncompressed) {
+      buf_block_t *block = reinterpret_cast<buf_block_t *>(bpage);
+      AURORA_HOOK_PAGE_WRITE(bpage->id.space(), bpage->id.page_no(),
+                              block->frame) {
+        /* Aurora mode: Mark page as clean without writing locally */
+        buf_page_mutex_enter(block);
+        buf_flush_remove(bpage);
+        buf_page_mutex_exit(block);
+        return true;
+      }
+    }
+  }
+#endif /* HAVE_AURORA */
 
   ut_ad(flush_type < BUF_FLUSH_N_TYPES);
   /* Hold the LRU list mutex iff called for a single page LRU

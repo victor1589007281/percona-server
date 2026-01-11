@@ -85,6 +85,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "scope_guard.h"
 
+#ifdef HAVE_AURORA
+/* Aurora distributed storage integration */
+#include "aurora/aurora_integration.h"
+#endif /* HAVE_AURORA */
+
 #endif /* !UNIV_HOTBACKUP */
 
 #ifdef UNIV_DEBUG
