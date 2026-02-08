@@ -34,3 +34,28 @@ scalability_jobs_*
 .settings/
 .idea
 
+# ============================================
+# Percona Server 本地开发环境 (work目录)
+# ============================================
+
+# 编译构建目录
+work/build/
+
+# 安装目录
+work/install/
+
+# 数据目录
+work/data/
+
+# 日志目录
+work/logs/
+
+# 运行时文件
+work/*.sock
+work/*.pid
+work/*.log
+
+# 临时文件
+work/.lldb_init
+work/*_output.log
+
