@@ -255,6 +255,8 @@ SET(INNOBASE_SOURCES
   trx/trx0sys.cc
   trx/trx0trx.cc
   trx/trx0undo.cc
+  flashback/flashback_purge_guard.cc
+  flashback/flashback_undo_engine.cc
   usr/usr0sess.cc
   ut/ut0dbg.cc
   ut/ut0list.cc

@@ -180,6 +180,9 @@ class ha_innobase : public handler {
 
   int rnd_next(uchar *buf) override;
 
+  /** Reads the next row in flashback mode (internal use). */
+  int rnd_next_flashback(uchar *buf);
+
   int rnd_pos(uchar *buf, uchar *pos) override;
 
   int ft_init() override;
@@ -736,6 +739,16 @@ class ha_innobase : public handler {
 
   /** If mysql has locked with external_lock() */
   bool m_mysql_has_locked;
+
+  /** Flashback query context: when true, row reads return historical
+  versions as of m_flashback_target_trx_id instead of current data.
+  Set by the SQL layer for SELECT ... AS OF queries. */
+  bool m_flashback_mode = false;
+
+  /** Target transaction ID for flashback queries. Transactions with
+  ID >= this value are treated as not yet committed; only versions
+  committed before this ID are visible. */
+  trx_id_t m_flashback_target_trx_id = 0;
 };
 
 struct trx_t;

@@ -816,3 +816,113 @@ void trx_sys_undo_spaces_deinit() {
     trx_sys_undo_spaces = nullptr;
   }
 }
+
+#ifndef UNIV_HOTBACKUP
+
+/** Get the oldest timestamp for which undo data is still available.
+This is determined by the start time of the oldest active transaction.
+If there are no active transactions, returns current time (meaning
+all undo history is available for flashback).
+@return oldest available timestamp as Unix epoch seconds,
+        or 0 if trx_sys is not initialized */
+my_time_t trx_sys_get_oldest_timestamp() {
+  if (trx_sys == nullptr) {
+    return 0;
+  }
+
+  trx_sys_mutex_enter();
+
+  /* Find the oldest active transaction in the rw_trx_list.
+     The list is sorted by trx_id (biggest first), so the last entry
+     is the oldest active transaction. */
+  trx_t *oldest_trx = UT_LIST_GET_LAST(trx_sys->rw_trx_list);
+
+  if (oldest_trx == nullptr) {
+    /* No active transactions: all undo history is available.
+       Return current time to indicate no retention limit. */
+    trx_sys_mutex_exit();
+    return static_cast<my_time_t>(time(nullptr));
+  }
+
+  /* Convert the oldest transaction's start_time to Unix epoch seconds. */
+  auto start_tp = oldest_trx->start_time.load(std::memory_order_relaxed);
+  my_time_t oldest_ts =
+      static_cast<my_time_t>(std::chrono::system_clock::to_time_t(start_tp));
+
+  trx_sys_mutex_exit();
+  return oldest_ts;
+}
+
+/** Find an approximate transaction ID that was active at a given timestamp.
+This is used by flashback queries to map a target timestamp to a trx_id
+for constructing a read view.
+
+The function uses a two-phase approach:
+1. Check if the target timestamp is within the available undo window
+2. Estimate the trx_id by scanning active transactions and interpolating
+
+@param[in]  target_ts  Target timestamp (Unix epoch seconds)
+@return Approximate trx_id, or TRX_ID_MAX if target is outside undo window */
+trx_id_t trx_sys_find_trx_id_by_timestamp(my_time_t target_ts) {
+  if (trx_sys == nullptr) {
+    return TRX_ID_MAX;
+  }
+
+  /* WHY: Use current time as reference for "now". We compute this before
+     acquiring the mutex to minimize lock hold time. */
+  my_time_t now_ts = static_cast<my_time_t>(time(nullptr));
+
+  /* If target is in the future, use current max trx_id. */
+  if (target_ts >= now_ts) {
+    return trx_sys_get_next_trx_id_or_no();
+  }
+
+  trx_sys_mutex_enter();
+
+  /* Phase 1: Check if target timestamp is within the undo window. */
+  trx_t *oldest_trx = UT_LIST_GET_LAST(trx_sys->rw_trx_list);
+
+  if (oldest_trx != nullptr) {
+    auto oldest_start_tp =
+        oldest_trx->start_time.load(std::memory_order_relaxed);
+    my_time_t oldest_ts = static_cast<my_time_t>(
+        std::chrono::system_clock::to_time_t(oldest_start_tp));
+
+    if (target_ts < oldest_ts) {
+      /* Target timestamp is before the oldest active transaction.
+         The undo data for this time may have been purged. */
+      trx_sys_mutex_exit();
+      return TRX_ID_MAX;
+    }
+  }
+
+  /* Phase 2: Find the best matching trx_id for the target timestamp.
+
+     Strategy: Scan the rw_trx_list to find a transaction whose start_time
+     is closest to (but not after) the target timestamp.
+
+     The rw_trx_list is sorted by trx_id descending (biggest first).
+     We walk from newest to oldest and find the first transaction
+     that started at or before target_ts. */
+  trx_id_t estimated_id = trx_sys_get_next_trx_id_or_no();
+
+  for (trx_t *trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != nullptr;
+       trx = UT_LIST_GET_NEXT(trx_list, trx)) {
+    auto trx_start_tp = trx->start_time.load(std::memory_order_relaxed);
+    my_time_t trx_ts =
+        static_cast<my_time_t>(std::chrono::system_clock::to_time_t(trx_start_tp));
+
+    if (trx_ts <= target_ts) {
+      /* Found a transaction that started at or before target_ts.
+         This trx_id is a good upper bound for the read view. */
+      estimated_id = trx->id;
+      break;
+    }
+    /* Continue to older transactions. */
+  }
+
+  trx_sys_mutex_exit();
+  return estimated_id;
+}
+
+#endif /* !UNIV_HOTBACKUP */

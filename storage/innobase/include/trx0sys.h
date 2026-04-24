@@ -38,6 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "buf0buf.h"
 #include "fil0fil.h"
+#include "my_time_t.h"
 #include "trx0types.h"
 #ifndef UNIV_HOTBACKUP
 #include "mem0mem.h"
@@ -244,6 +245,26 @@ void trx_sys_after_background_threads_shutdown_validate();
 /** Add the transaction to the RW transaction set.
 @param trx              transaction instance to add */
 static inline void trx_sys_rw_trx_add(trx_t *trx);
+
+/** Get the oldest timestamp for which undo data is still available.
+This is determined by the start time of the oldest active transaction.
+If there are no active transactions, returns current time (meaning
+all undo history is available for flashback).
+@return oldest available timestamp as Unix epoch seconds,
+        or 0 if trx_sys is not initialized */
+my_time_t trx_sys_get_oldest_timestamp();
+
+/** Find an approximate transaction ID that was active at a given timestamp.
+This is used by flashback queries to map a target timestamp to a trx_id
+for constructing a read view.
+
+The function uses a two-phase approach:
+1. Check if the target timestamp is within the available undo window
+2. Estimate the trx_id by scanning active transactions and interpolating
+
+@param[in]  target_ts  Target timestamp (Unix epoch seconds)
+@return Approximate trx_id, or TRX_ID_MAX if target is outside undo window */
+trx_id_t trx_sys_find_trx_id_by_timestamp(my_time_t target_ts);
 
 #endif /* !UNIV_HOTBACKUP */
 

@@ -215,7 +215,11 @@ const char *Command_maps::sql_commands[] = {"select",
                                             "show_thread_stats",
                                             "lock_tables_for_backup",
                                             "create_compression_dictionary",
-                                            "drop_compression_dictionary"};
+                                            "drop_compression_dictionary",
+                                            "flashback_table",
+                                            "flashback_query",
+                                            "flashback_versions",
+                                            "flashback_transaction"};
 
 Command_maps *g_command_maps{nullptr};
 }  // namespace

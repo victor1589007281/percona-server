@@ -139,6 +139,36 @@ void row_vers_build_for_semi_consistent_read(
     mem_heap_t **offset_heap, mem_heap_t *in_heap, const rec_t **old_vers,
     const dtuple_t **vrow);
 
+/** Builds a historical version of a clustered index record as of a given
+transaction ID. Used for flashback queries (SELECT ... AS OF TRX_ID).
+
+This function reuses row_vers_build_for_consistent_read() internally by
+constructing a ReadView that treats all transactions >= target_trx_id as
+"not yet committed".
+
+@param[in]  rec             Current clustered index record. Caller must hold
+                            a page latch on rec.
+@param[in]  mtr             Mini-transaction holding the latch on rec.
+@param[in]  index           Clustered index descriptor.
+@param[in]  offsets         Offsets for rec, computed via rec_get_offsets().
+@param[in]  target_trx_id   Target transaction ID. Transactions committed
+                            strictly before this ID are visible; transactions
+                            with ID >= target_trx_id are treated as not yet
+                            committed.
+@param[in,out] offset_heap  Memory heap for offset allocations.
+@param[in]  in_heap         Memory heap for the output record.
+@param[out] old_vers        Output: the historical version, or nullptr if
+                            the record was freshly inserted after the target
+                            point (or undo history has been purged).
+@param[out] vrow            Output: virtual column data, if any.
+@param[out] lob_undo        Output: LOB undo info for flashback LOB reads.
+@return DB_SUCCESS on success, DB_MISSING_HISTORY if undo log has been
+        purged before the target transaction. */
+[[nodiscard]] dberr_t row_build_flashback_version(
+    const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
+    trx_id_t target_trx_id, mem_heap_t **offset_heap, mem_heap_t *in_heap,
+    rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo);
+
 #include "row0vers.ic"
 
 #endif

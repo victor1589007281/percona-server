@@ -1472,3 +1472,113 @@ void row_vers_build_for_semi_consistent_read(
     mem_heap_free(heap);
   }
 }
+
+/** Builds a ReadView for flashback that treats all transactions with
+ID >= target_trx_id as not yet committed. This makes the view see exactly
+the state of the database before target_trx_id started.
+
+@param[in]  target_trx_id   The boundary transaction ID.
+@param[out] view            ReadView to initialise. Caller must ensure
+                            the view has not been initialised yet. */
+void row_build_flashback_read_view(trx_id_t target_trx_id, ReadView &view) {
+  /* Acquire the trx_sys mutex to safely read the active transaction list. */
+  trx_sys_mutex_enter();
+
+  /* Set the low and upper limits to target_trx_id. This means:
+     - Transactions with id < target_trx_id: visible (committed)
+     - Transactions with id >= target_trx_id: not visible (uncommitted) */
+  view.m_low_limit_id = target_trx_id;
+  view.m_up_limit_id = target_trx_id;
+  view.m_low_limit_no = trx_get_serialisation_min_trx_no();
+  view.m_creator_trx_id = TRX_ID_MAX; /* not owned by any transaction */
+  view.m_ids.clear();                 /* no active transactions in the gap */
+  view.m_closed = false;
+  view.m_cloned = false;
+
+  trx_sys_mutex_exit();
+}
+
+/** Builds a historical version of a clustered index record as of a given
+transaction ID. Used for flashback queries (SELECT ... AS OF TRX_ID).
+
+This function reuses row_vers_build_for_consistent_read() internally by
+constructing a ReadView that treats all transactions >= target_trx_id as
+"not yet committed".
+
+NOTE (C2 constraint): The caller must ensure that the purge thread is
+stopped (via trx_purge_stop()) before invoking this function in a
+FLASHBACK TABLE context, otherwise the undo history may be reclaimed
+mid-read and DB_MISSING_HISTORY will be returned. For single-record
+flashback queries this is less critical as the read is fast.
+
+@param[in]  rec             Current clustered index record. Caller must hold
+                            a page latch on rec.
+@param[in]  mtr             Mini-transaction holding the latch on rec.
+@param[in]  index           Clustered index descriptor.
+@param[in]  offsets         Offsets for rec, computed via rec_get_offsets().
+@param[in]  target_trx_id   Target transaction ID. Transactions committed
+                            strictly before this ID are visible; transactions
+                            with ID >= target_trx_id are treated as not yet
+                            committed.
+@param[in,out] offset_heap  Memory heap for offset allocations.
+@param[in]  in_heap         Memory heap for the output record.
+@param[out] old_vers        Output: the historical version, or nullptr if
+                            the record was freshly inserted after the target
+                            point (or undo history has been purged).
+@param[out] vrow            Output: virtual column data, if any.
+@param[out] lob_undo        Output: LOB undo info for flashback LOB reads.
+@return DB_SUCCESS on success, DB_MISSING_HISTORY if undo log has been
+        purged before the target transaction. */
+dberr_t row_build_flashback_version(
+    const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
+    trx_id_t target_trx_id, mem_heap_t **offset_heap, mem_heap_t *in_heap,
+    rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo) {
+  DBUG_TRACE;
+
+  ut_ad(index->is_clustered());
+  ut_ad(mtr_memo_contains_page(mtr, rec, MTR_MEMO_PAGE_X_FIX) ||
+        mtr_memo_contains_page(mtr, rec, MTR_MEMO_PAGE_S_FIX));
+  ut_ad(!rw_lock_own(&(purge_sys->latch), RW_LOCK_S));
+  ut_ad(rec_offs_validate(rec, index, *offsets));
+
+  /* Validate the target_trx_id is within a reasonable range.
+     If target_trx_id is larger than the next allocatable ID, the
+     caller is essentially asking for "current" state — we can just
+     return the record as-is (no flashback needed). */
+  trx_sys_mutex_enter();
+  trx_id_t next_trx_id = trx_sys_get_next_trx_id_or_no();
+  trx_sys_mutex_exit();
+
+  if (target_trx_id >= next_trx_id) {
+    /* Target is in the future or current; return the record itself. */
+    byte *buf =
+        static_cast<byte *>(mem_heap_alloc(in_heap, rec_offs_size(*offsets)));
+    *old_vers = rec_copy(buf, rec, *offsets);
+    rec_offs_make_valid(*old_vers, index, *offsets);
+    return DB_SUCCESS;
+  }
+
+  /* Construct a ReadView that sees all transactions committed before
+     target_trx_id. We use a stack-allocated ReadView to avoid heap
+     allocation overhead. */
+  ReadView flashback_view;
+  row_build_flashback_read_view(target_trx_id, flashback_view);
+
+  /* Reset the collected LOB undo information. */
+  if (lob_undo != nullptr) {
+    lob_undo->reset();
+  }
+
+  /* Reuse the existing version chain traversal logic.
+     WHY: This avoids duplicating the complex undo log walking logic
+     already implemented in row_vers_build_for_consistent_read(). */
+  dberr_t err = row_vers_build_for_consistent_read(
+      rec, mtr, index, offsets, &flashback_view, offset_heap, in_heap,
+      old_vers, vrow, lob_undo);
+
+  /* Mark the view as closed so its destructor won't attempt cleanup
+     through the MVCC manager (we never registered it there). */
+  flashback_view.close();
+
+  return err;
+}

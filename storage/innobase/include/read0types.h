@@ -43,6 +43,14 @@ this program; if not, write to the Free Software Foundation, Inc.,
 // Friend declaration
 class MVCC;
 
+// Forward declaration (ReadView class defined below)
+class ReadView;
+
+/** Builds a ReadView for a specific target transaction ID (flashback helper).
+@param[in]  target_trx_id   The boundary transaction ID.
+@param[out] view            ReadView to initialise. */
+void row_build_flashback_read_view(trx_id_t target_trx_id, ReadView &view);
+
 /** Read view lists the trx ids of those transactions for which a consistent
 read should not see the modifications to the database. */
 
@@ -135,6 +143,8 @@ class ReadView {
     // Prevent copying
     ids_t(const ids_t &);
     ids_t &operator=(const ids_t &);
+
+    friend void row_build_flashback_read_view(trx_id_t, ReadView &);
 
    private:
     /** Memory for the array */
@@ -300,6 +310,10 @@ class ReadView {
   }
 
   friend class MVCC;
+
+  /** Grant access to flashback version builder to construct ReadView
+  for a specific target transaction ID. */
+  friend void row_build_flashback_read_view(trx_id_t, ReadView &);
 
  private:
   // Disable copying

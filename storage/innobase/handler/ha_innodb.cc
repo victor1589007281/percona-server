@@ -172,6 +172,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "row0quiesce.h"
 #include "row0sel.h"
 #include "row0upd.h"
+#include "row0vers.h"
 #include "sql/plugin_table.h"
 #include "srv0mon.h"
 #include "srv0srv.h"
@@ -11650,13 +11651,18 @@ int ha_innobase::rnd_end(void) { return (index_end()); }
 int ha_innobase::rnd_next(uchar *buf) /*!< in/out: returns the row in this
                                       buffer, in MySQL format */
 {
-  int error;
-
   DBUG_TRACE;
 
   if (m_user_thd->transaction_rollback_request) return HA_ERR_GENERIC;
 
   ha_statistic_increment(&System_status_var::ha_read_rnd_next_count);
+
+  /* Flashback query path: build historical versions instead of current data */
+  if (m_flashback_mode) {
+    return rnd_next_flashback(buf);
+  }
+
+  int error;
 
   if (m_start_of_scan) {
     error = index_first(buf);
@@ -11671,6 +11677,123 @@ int ha_innobase::rnd_next(uchar *buf) /*!< in/out: returns the row in this
   }
 
   return error;
+}
+
+/** Reads the next row in flashback mode: navigates the clustered index
+ and builds the historical version of each record as of the target
+ transaction ID. Records inserted after the target are skipped.
+ @return 0, HA_ERR_END_OF_FILE, or error number */
+
+int ha_innobase::rnd_next_flashback(uchar *buf) {
+  DBUG_TRACE;
+
+  ut_ad(m_flashback_mode);
+  ut_ad(m_prebuilt->index->is_clustered());
+
+  /* Position the persistent cursor at the beginning of the index
+     on the first call of a scan. */
+  if (m_start_of_scan) {
+    mtr_t mtr;
+    mtr_start(&mtr);
+    mtr_s_lock(dict_index_get_lock(m_prebuilt->index), &mtr, UT_LOCATION_HERE);
+
+    btr_pcur_t *pcur = m_prebuilt->pcur;
+    pcur->open_at_side(true, m_prebuilt->index, BTR_SEARCH_LEAF, true, 0, &mtr);
+
+    mtr_commit(&mtr);
+    m_start_of_scan = false;
+  }
+
+  btr_pcur_t *pcur = m_prebuilt->pcur;
+  trx_id_t target_trx_id = m_flashback_target_trx_id;
+
+  /* Iterate through records, building the historical version for each.
+     Records that were freshly inserted after the target trx_id (old_vers
+     is null) are skipped. */
+  for (;;) {
+    mtr_t mtr;
+    mtr_start(&mtr);
+
+    /* Move to the next user-visible record on the page. */
+    dberr_t err = pcur->move_to_next_user_rec(&mtr);
+    if (err != DB_SUCCESS) {
+      /* End of index reached. */
+      mtr_commit(&mtr);
+      return HA_ERR_END_OF_FILE;
+    }
+
+    const rec_t *rec = pcur->get_rec();
+    if (rec == nullptr) {
+      mtr_commit(&mtr);
+      continue;
+    }
+
+    /* Note: we do NOT skip delete-marked records here. The flashback
+       version builder will traverse the undo chain to find the pre-delete
+       state if the deletion happened after the target transaction. */
+
+    /* Compute offsets for the current record. */
+    mem_heap_t *offset_heap =
+        mem_heap_create(256, UT_LOCATION_HERE, MEM_HEAP_FOR_BTR_SEARCH);
+    ulint *offsets = rec_get_offsets(rec, m_prebuilt->index, nullptr,
+                                     ULINT_UNDEFINED, UT_LOCATION_HERE,
+                                     &offset_heap);
+
+    /* Build the historical version of this record as of target_trx_id. */
+    mem_heap_t *rec_heap =
+        mem_heap_create(1024, UT_LOCATION_HERE, MEM_HEAP_FOR_BTR_SEARCH);
+    rec_t *old_vers = nullptr;
+    const dtuple_t *vrow = nullptr;
+    lob::undo_vers_t lob_undo;
+    lob_undo.reset();
+
+    err = row_build_flashback_version(
+        rec, &mtr, m_prebuilt->index, &offsets, target_trx_id, &offset_heap,
+        rec_heap, &old_vers, &vrow, &lob_undo);
+
+    mtr_commit(&mtr);
+    mem_heap_free(offset_heap);
+
+    if (err == DB_MISSING_HISTORY) {
+      /* Undo log has been purged before the target point; this record
+         cannot be reconstructed. Return an error to the caller. */
+      mem_heap_free(rec_heap);
+      return HA_ERR_RECORD_DELETED;
+    }
+
+    if (err != DB_SUCCESS) {
+      mem_heap_free(rec_heap);
+      return convert_error_code_to_mysql(err, m_prebuilt->table->flags,
+                                         m_user_thd);
+    }
+
+    if (old_vers == nullptr) {
+      /* The record was inserted after the target transaction — not
+         visible in the flashback view. Skip and try the next record. */
+      mem_heap_free(rec_heap);
+      continue;
+    }
+
+    /* Compute offsets for the historical version record. */
+    ulint *old_offsets = rec_get_offsets(
+        old_vers, m_prebuilt->index, nullptr, ULINT_UNDEFINED,
+        UT_LOCATION_HERE, &rec_heap);
+
+    /* Convert the historical version to MySQL row format. */
+    bool success = row_sel_store_mysql_rec(
+        buf, m_prebuilt, old_vers, vrow, true, m_prebuilt->index,
+        m_prebuilt->index, old_offsets, false, &lob_undo, m_prebuilt->blob_heap);
+
+    mem_heap_free(rec_heap);
+
+    if (!success) {
+      /* Column conversion failed; treat as error and skip. */
+      continue;
+    }
+
+    /* Successfully retrieved a historical row. */
+    return 0;
+  }
 }
 
 /** Fetches a row from the table based on a row reference.
