@@ -91,6 +91,7 @@
 #include "sql/sql_show_processlist.h"
 #include "sql/sql_show_status.h"  // build_show_session_status, ...
 #include "sql/sql_update.h"       // Sql_cmd_update...
+#include "sql/sql_flashback.h"    // Sql_cmd_flashback_table, Sql_cmd_flashback_transaction
 #include "sql/strfunc.h"
 #include "sql/system_variables.h"
 #include "sql/table_function.h"
@@ -5294,4 +5295,48 @@ Sql_cmd *PT_install_component::make_cmd(THD *thd) {
   }
 
   return new (thd->mem_root) Sql_cmd_install_component(m_urns, m_set_elements);
+}
+
+/* ================================================================
+ * FLASHBACK 语法树节点的 make_cmd 实现
+ *
+ * 设计参考: mysql_flashback_synthesis_report.md §2.4
+ *           mysql_flashback_implementation_v2.md §5.1.3-§5.1.4
+ * ================================================================ */
+
+/**
+  PT_flashback_table::make_cmd
+
+  将解析后的 FLASHBACK TABLE 语法树节点转换为 Sql_cmd 对象。
+
+  此方法在语法解析完成后被调用，负责:
+  1. 将 Sql_cmd_flashback_table 对象绑定到 LEX
+  2. 设置正确的 sql_command 枚举值
+
+  @param thd  当前线程句柄
+  @return     Sql_cmd 对象指针，失败时返回 nullptr
+*/
+Sql_cmd *PT_flashback_table::make_cmd(THD *thd) {
+  DBUG_TRACE;
+
+  thd->lex->sql_command = SQLCOM_FLASHBACK_TABLE;
+
+  return new (thd->mem_root)
+      Sql_cmd_flashback_table(m_tables, m_timestamp, m_trx_id, m_dry_run);
+}
+
+/**
+  PT_flashback_transaction::make_cmd
+
+  将解析后的 FLASHBACK TRANSACTION 语法树节点转换为 Sql_cmd 对象。
+
+  @param thd  当前线程句柄
+  @return     Sql_cmd 对象指针，失败时返回 nullptr
+*/
+Sql_cmd *PT_flashback_transaction::make_cmd(THD *thd) {
+  DBUG_TRACE;
+
+  thd->lex->sql_command = SQLCOM_FLASHBACK_TRANSACTION;
+
+  return new (thd->mem_root) Sql_cmd_flashback_transaction(m_trx_id);
 }

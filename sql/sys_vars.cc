@@ -137,6 +137,7 @@
 #include "sql/sql_show_processlist.h"  // pfs_processlist_enabled
 #include "sql/sql_tmp_table.h"         // internal_tmp_mem_storage_engine_names
 #include "sql/ssl_acceptor_context_operator.h"
+#include "sql/flashback_sysvars.h"  // Flashback system variables
 #include "sql/system_variables.h"
 #include "sql/table_cache.h"  // Table_cache_manager
 #include "sql/threadpool.h"
@@ -8237,6 +8238,70 @@ Sys_var_bool Sys_restrict_fk_on_non_standard_key(
     DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
     ON_CHECK(restrict_fk_on_non_standard_key_check), ON_UPDATE(nullptr));
 }  // namespace
+
+/* ================================================================
+ * Flashback 系统变量
+ * ================================================================ */
+
+static Sys_var_ulong Sys_innodb_flashback_retention_seconds(
+    "innodb_flashback_retention_seconds",
+    "Maximum seconds to retain undo log for flashback queries. "
+    "Controls the flashback query time window.",
+    GLOBAL_VAR(flashback::innodb_flashback_retention_seconds),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(60, 86400), DEFAULT(900), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_innodb_flashback_enable_binlog_recovery(
+    "innodb_flashback_enable_binlog_recovery",
+    "Enable binlog-based flashback for recovery beyond undo window.",
+    GLOBAL_VAR(flashback::innodb_flashback_enable_binlog_recovery),
+    CMD_LINE(OPT_ARG), DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_innodb_flashback_max_rows_per_txn(
+    "innodb_flashback_max_rows_per_txn",
+    "Maximum rows to process in a single flashback transaction.",
+    GLOBAL_VAR(flashback::innodb_flashback_max_rows_per_txn),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 10000000), DEFAULT(100000), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_flashback_dry_run_default(
+    "flashback_dry_run_default",
+    "Default DRY RUN mode for flashback operations. "
+    "When ON, flashback table evaluates but does not modify data.",
+    GLOBAL_VAR(flashback::flashback_dry_run_default), CMD_LINE(OPT_ARG),
+    DEFAULT(false), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_flashback_require_full_row_image(
+    "flashback_require_full_row_image",
+    "Require binlog_row_image=FULL for binlog-based flashback. "
+    "MINIMAL mode cannot fully reverse row operations.",
+    GLOBAL_VAR(flashback::flashback_require_full_row_image), CMD_LINE(OPT_ARG),
+    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_flashback_lock_wait_timeout(
+    "flashback_lock_wait_timeout",
+    "Lock wait timeout (seconds) for flashback table operations.",
+    GLOBAL_VAR(flashback::flashback_lock_wait_timeout),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 31536000), DEFAULT(300), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulonglong Sys_flashback_max_rows(
+    "flashback_max_rows",
+    "Maximum rows allowed per flashback operation (safety threshold).",
+    GLOBAL_VAR(flashback::flashback_max_rows),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 1000000000ULL), DEFAULT(10000000), BLOCK_SIZE(1),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+/* ================================================================
+ * End Flashback system variables
+ * ================================================================ */
 
 static const char *default_table_encryption_type_names[] = {"OFF", "ON",
                                                             nullptr};

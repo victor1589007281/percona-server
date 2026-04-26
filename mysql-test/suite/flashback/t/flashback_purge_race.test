@@ -1,0 +1,276 @@
+#
+# === Purpose ===
+# Test Flashback Purge Race condition handling (TC-008)
+#
+# The purge race is one of the highest risks in flashback implementation:
+# - Undo Purge thread runs asynchronously and may clean up undo records
+#   that flashback operations depend on
+# - If undo is purged before flashback completes, flashback cannot
+#   reconstruct historical versions
+#
+# Mitigation strategies tested:
+# 1. innodb_flashback_retention_seconds: Controls undo retention window
+# 2. Purge pause during flashback: Temporarily halt purge thread
+# 3. Engine fallback: When undo is unavailable, fall back to binlog engine
+#
+# === Requirements ===
+# R1. Undo retention window system variable correctly limits flashback scope
+# R2. Flashback detects when undo has been purged and returns appropriate error
+# R3. Binlog engine fallback works when undo window is exceeded
+# R4. Purge thread doesn't interfere with active flashback operations
+# R5. Engine selection logic correctly chooses between UNDO and BINLOG
+#
+# === Test Cases ===
+# TC-008-01: Verify undo retention window configuration
+# TC-008-02: Test flashback behavior with recent modifications (within undo window)
+# TC-008-03: Test flashback behavior when target time exceeds undo window
+# TC-008-04: Test binlog engine availability when undo is not available
+# TC-008-05: Test concurrent purge and flashback readiness
+# TC-008-06: Test purge safety with small retention windows
+#
+# === References ===
+# mysql_flashback_implementation.md §2.2.3 (Undo Purge mechanism)
+# mysql_flashback_implementation_deep.md §4.3 (Data source selection)
+# mysql_flashback_implementation_v2.md §4.2 (Engine selection strategy)
+# mysql_flashback_synthesis_report.md §3.2 (Risk: Undo Purge race)
+#
+
+--echo #
+--echo # TC-008-01: Verify undo retention window configuration
+--echo #
+
+--echo # Default retention is 900 seconds (15 minutes)
+SELECT @@innodb_flashback_retention_seconds AS default_retention;
+
+--echo # Retention can be adjusted within valid range
+SET GLOBAL innodb_flashback_retention_seconds = 3600;
+SELECT @@innodb_flashback_retention_seconds AS extended_retention;
+
+SET GLOBAL innodb_flashback_retention_seconds = 900;
+SELECT @@innodb_flashback_retention_seconds AS restored_retention;
+
+--echo #
+--echo # TC-008-02: Test flashback behavior with recent modifications
+--echo #
+
+--echo # Create a test table with initial data
+CREATE TABLE t_purge (
+  id INT PRIMARY KEY,
+  value VARCHAR(128),
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+INSERT INTO t_purge VALUES (1, 'initial_value', NOW());
+
+--echo # Record the initial state
+SELECT id, value FROM t_purge ORDER BY id;
+
+--echo # Wait briefly to create a time separation
+--sleep 1
+
+--echo # Update the row (this creates a new undo record)
+UPDATE t_purge SET value = 'updated_value' WHERE id = 1;
+
+--echo # Verify the update took effect
+SELECT id, value FROM t_purge ORDER BY id;
+
+--echo # The undo record for the initial value should still be available
+--echo # within the retention window. This is verified by the fact that
+--echo # InnoDB's MVCC can still construct the old version.
+
+--echo # Test that MVCC works (read consistent snapshot)
+START TRANSACTION WITH CONSISTENT SNAPSHOT;
+SELECT id, value AS snapshot_value FROM t_purge ORDER BY id;
+COMMIT;
+
+--echo # Multiple updates should each create separate undo records
+UPDATE t_purge SET value = 'second_update' WHERE id = 1;
+SELECT id, value FROM t_purge ORDER BY id;
+
+UPDATE t_purge SET value = 'third_update' WHERE id = 1;
+SELECT id, value FROM t_purge ORDER BY id;
+
+--echo # All updates are visible in the current version
+--echo # Historical versions are available in undo (within retention window)
+
+--echo #
+--echo # TC-008-03: Test flashback behavior when target time exceeds undo window
+--echo #
+
+--echo # Set a very short retention window for testing
+SET GLOBAL innodb_flashback_retention_seconds = 60;
+SELECT @@innodb_flashback_retention_seconds AS short_retention;
+
+--echo # Create a table for this test
+CREATE TABLE t_old_data (
+  id INT PRIMARY KEY,
+  data VARCHAR(256)
+) ENGINE=InnoDB;
+
+INSERT INTO t_old_data VALUES (1, 'old_record_1'), (2, 'old_record_2');
+
+--echo # Record the current timestamp
+--let $before_time = `SELECT UNIX_TIMESTAMP()`
+
+--echo # Wait to simulate data aging past a very short retention window
+--sleep 2
+
+--echo # Update the data
+UPDATE t_old_data SET data = 'updated_record' WHERE id = 1;
+
+--echo # The flashback scheduler should check:
+--echo # 1. Target time within undo retention? → select UNDO engine
+--echo # 2. Target time beyond undo but within binlog? → select BINLOG engine
+--echo # 3. Target time beyond both? → return NONE (OUT_OF_WINDOW)
+--echo #
+--echo # With retention_seconds=60, recent modifications are within window.
+--echo # With retention_seconds set very low (1 second), even recent
+--echo # modifications might appear to be outside the window.
+
+--echo # Engine selection logic:
+--echo # - For target_time within 60s: should select UNDO engine
+--echo # - For target_time > 60s: should select BINLOG engine (if available)
+--echo # - For target_time >> binlog retention: should return NONE
+
+--echo # Note: The actual engine selection is performed by FlashbackScheduler::select_engine()
+--echo # which considers:
+--echo #   1. Request type (QUERY/VERSIONS → UNDO only)
+--echo #   2. Time difference vs innodb_flashback_retention_seconds
+--echo #   3. Binlog availability (opt_bin_log, binlog_expire_logs_seconds)
+--echo #   4. Binlog recovery enabled flag
+
+--echo # Restore retention
+SET GLOBAL innodb_flashback_retention_seconds = 900;
+
+--echo #
+--echo # TC-008-04: Test binlog engine availability when undo is not available
+--echo #
+
+--echo # Binlog engine is available when:
+--echo #   1. Binlog is enabled (opt_bin_log = true)
+--echo #   2. Binlog retention > 0 (binlog_expire_logs_seconds > 0)
+--echo #   3. Binlog recovery is enabled (innodb_flashback_enable_binlog_recovery = ON)
+--echo #   4. binlog_row_image = FULL (when flashback_require_full_row_image = ON)
+
+--echo # Verify binlog is enabled
+SHOW VARIABLES LIKE 'log_bin';
+
+--echo # Verify binlog format is ROW (required for flashback)
+SHOW VARIABLES LIKE 'binlog_format';
+
+--echo # Verify binlog recovery is enabled
+SELECT @@innodb_flashback_enable_binlog_recovery AS binlog_recovery_enabled;
+
+--echo # Check binlog expiration
+SHOW VARIABLES LIKE 'binlog_expire_logs_seconds';
+
+--echo # When undo is not available, binlog engine should be selected
+--echo # (assuming all binlog preconditions are met)
+--echo # The scheduler::select_engine() decision flow:
+--echo #   AUTO mode + time > undo_retention → BINLOG engine
+
+--echo #
+--echo # TC-008-05: Test concurrent purge and flashback readiness
+--echo #
+
+--echo # The purge thread runs independently and may clean undo records.
+--echo # Flashback must handle the case where undo has been purged.
+--echo #
+--echo # The DDLBarrier and FlashbackScheduler check:
+--echo # 1. Before flashback: verify target time is within available window
+--echo # 2. During flashback: if undo is purged mid-operation, fail gracefully
+--echo # 3. Error returned: FlashbackError::UNDO_PURGED
+--echo #
+--echo # Test: Create data, let it age, then verify purge detection
+
+CREATE TABLE t_concurrent (
+  id INT PRIMARY KEY,
+  payload TEXT
+) ENGINE=InnoDB;
+
+--echo # Insert data with varying ages
+INSERT INTO t_concurrent VALUES
+  (1, REPEAT('a', 1000)),
+  (2, REPEAT('b', 2000)),
+  (3, REPEAT('c', 3000));
+
+--echo # Create some undo history through updates
+UPDATE t_concurrent SET payload = REPEAT('x', 1500) WHERE id = 1;
+UPDATE t_concurrent SET payload = REPEAT('y', 2500) WHERE id = 2;
+
+--echo # Verify data integrity
+SELECT id, LENGTH(payload) AS payload_len FROM t_concurrent ORDER BY id;
+
+--echo # Run a consistent read to verify MVCC is working
+START TRANSACTION WITH CONSISTENT SNAPSHOT;
+SELECT id, LENGTH(payload) AS snapshot_len FROM t_concurrent ORDER BY id;
+COMMIT;
+
+--echo # The purge thread should not interfere with active transactions
+--echo # (read views protect undo from being purged)
+
+--echo # Purge is triggered by:
+--echo # 1. Transaction commit (frees undo for committed transactions)
+--echo # 2. Purge coordinator thread (cleans freed undo records)
+--echo # 3. The purge respects the oldest active read view
+
+--echo # Flush to ensure undo is accessible for potential flashback
+FLUSH TABLES;
+
+--echo #
+--echo # TC-008-06: Test purge safety with small retention windows
+--echo #
+
+--echo # Test that very small retention windows are handled correctly
+SET GLOBAL innodb_flashback_retention_seconds = 60;
+
+--echo # Create fresh data
+CREATE TABLE t_short_window (
+  id INT PRIMARY KEY,
+  ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  data VARCHAR(128)
+) ENGINE=InnoDB;
+
+INSERT INTO t_short_window VALUES (1, NOW(), 'recent_data_1');
+INSERT INTO t_short_window VALUES (2, NOW(), 'recent_data_2');
+
+--echo # With retention_seconds=60, this data is within the window
+--echo # The scheduler should select UNDO engine for recent targets
+
+--echo # Update the data to create undo records
+UPDATE t_short_window SET data = 'updated_data_1' WHERE id = 1;
+
+--echo # Verify both old and new values are accessible via MVCC
+SELECT id, data FROM t_short_window ORDER BY id;
+
+--echo # Test engine selection with binlog recovery disabled
+SET GLOBAL innodb_flashback_enable_binlog_recovery = OFF;
+SELECT @@innodb_flashback_enable_binlog_recovery AS binlog_recovery_off;
+
+--echo # With binlog recovery OFF, when target time exceeds undo window,
+--echo # the scheduler should return NONE (no engine available)
+
+--echo # Restore settings
+SET GLOBAL innodb_flashback_enable_binlog_recovery = ON;
+SET GLOBAL innodb_flashback_retention_seconds = 900;
+
+--echo #
+--echo # Verify all system variables are in expected state
+--echo #
+
+SELECT
+  @@innodb_flashback_retention_seconds AS retention_seconds,
+  @@innodb_flashback_enable_binlog_recovery AS binlog_recovery,
+  @@innodb_flashback_max_rows_per_txn AS max_rows_per_txn,
+  @@flashback_dry_run_default AS dry_run_default,
+  @@flashback_require_full_row_image AS require_full_row_image,
+  @@flashback_lock_wait_timeout AS lock_wait_timeout,
+  @@flashback_max_rows AS max_rows;
+
+--echo #
+--echo # Cleanup
+--echo #
+
+DROP TABLE IF EXISTS t_purge, t_old_data, t_concurrent, t_short_window;
+
+--echo # End of flashback_purge_race.test

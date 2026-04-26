@@ -5744,4 +5744,125 @@ PT_set_operation *flatten_equal_set_ops(MEM_ROOT *mem_root, const POS &pos,
   }
 }
 
+/* ================================================================
+ * FLASHBACK 闪回语句语法树节点
+ *
+ * 设计参考: mysql_flashback_synthesis_report.md §2.4
+ *           mysql_flashback_implementation_v2.md §5.1.3-§5.1.4
+ *
+ * 支持的 SQL 语法:
+ *   FLASHBACK TABLE tbl1, tbl2 TO TIMESTAMP '2025-01-01 00:00:00' [DRY RUN];
+ *   FLASHBACK TABLE tbl TO TRX_ID 123456;
+ *   FLASHBACK TRANSACTION 123456;
+ * ================================================================ */
+
+/**
+  闪回表语句的顶层语法树节点 (Parse_tree_root)。
+
+  对应语法:
+    FLASHBACK TABLE table_list TO TIMESTAMP expr [DRY RUN]
+    FLASHBACK TABLE table_list TO TRX_ID expr
+
+  成员说明:
+  - m_tables:      需要闪回的表列表 (由 yacc table_list 规则解析)
+  - m_timestamp:   目标时间戳表达式 (TIMESTAMP 模式下非空)
+  - m_trx_id:      目标事务 ID 表达式 (TRX_ID 模式下非空)
+  - m_dry_run:     是否为 DRY RUN 模式 (只评估不执行)
+
+  WHY: timestamp 和 trx_id 使用 Item* 而非直接存储数值，因为表达式可能
+  是函数调用 (如 NOW() - INTERVAL 15 MINUTE) 而非简单的字面量。
+  表达式在 contextualize 阶段求值。
+*/
+class PT_flashback_table final : public Parse_tree_root {
+ public:
+  /**
+    构造函数
+
+    @param pos          语法位置 (用于错误报告)
+    @param tables       闪回表列表 (由调用者管理生命周期，分配在 MEM_ROOT 上)
+    @param timestamp    目标时间戳表达式 (TIMESTAMP 模式)。TRX_ID 模式时为 nullptr
+    @param trx_id       目标事务 ID 表达式 (TRX_ID 模式)。TIMESTAMP 模式时为 nullptr
+    @param dry_run      是否为 DRY RUN 模式
+  */
+  PT_flashback_table(const POS &pos,
+                     Mem_root_array_YY<Table_ident *> *tables,
+                     Item *timestamp,
+                     Item *trx_id,
+                     bool dry_run)
+      : Parse_tree_root(pos),
+        m_tables(tables),
+        m_timestamp(timestamp),
+        m_trx_id(trx_id),
+        m_dry_run(dry_run) {}
+
+  /**
+    创建对应的 SQL 命令对象。
+
+    @param thd  当前线程句柄
+    @return     指向 Sql_cmd 对象的指针 (由本节点内部管理生命周期)
+  */
+  Sql_cmd *make_cmd(THD *thd) override;
+
+  /** 获取闪回表列表 */
+  Mem_root_array_YY<Table_ident *> *tables() const { return m_tables; }
+
+  /** 获取时间戳表达式 (TIMESTAMP 模式) */
+  Item *timestamp_expr() const { return m_timestamp; }
+
+  /** 获取事务 ID 表达式 (TRX_ID 模式) */
+  Item *trx_id_expr() const { return m_trx_id; }
+
+  /** 是否为 DRY RUN 模式 */
+  bool is_dry_run() const { return m_dry_run; }
+
+ private:
+  /** 闪回表列表 */
+  Mem_root_array_YY<Table_ident *> *m_tables;
+
+  /** 目标时间戳表达式 (TIMESTAMP 模式非空, TRX_ID 模式为空) */
+  Item *m_timestamp;
+
+  /** 目标事务 ID 表达式 (TRX_ID 模式非空, TIMESTAMP 模式为空) */
+  Item *m_trx_id;
+
+  /** DRY RUN 标志: true=仅评估，false=实际执行 */
+  bool m_dry_run;
+};
+
+/**
+  闪回事务语句的顶层语法树节点 (Parse_tree_root)。
+
+  对应语法:
+    FLASHBACK TRANSACTION expr
+
+  成员说明:
+  - m_trx_id:  目标事务 ID 表达式 (应为整数字面量)
+*/
+class PT_flashback_transaction final : public Parse_tree_root {
+ public:
+  /**
+    构造函数
+
+    @param pos     语法位置 (用于错误报告)
+    @param trx_id  目标事务 ID 表达式
+  */
+  PT_flashback_transaction(const POS &pos, Item *trx_id)
+      : Parse_tree_root(pos), m_trx_id(trx_id) {}
+
+  /**
+    创建对应的 SQL 命令对象。
+
+    @param thd  当前线程句柄
+    @return     指向 Sql_cmd 对象的指针 (由本节点内部管理生命周期)
+  */
+  Sql_cmd *make_cmd(THD *thd) override;
+
+  /** 获取事务 ID 表达式 */
+  Item *trx_id_expr() const { return m_trx_id; }
+
+ private:
+  /** 目标事务 ID 表达式 */
+  Item *m_trx_id;
+};
+
 #endif /* PARSE_TREE_NODES_INCLUDED */

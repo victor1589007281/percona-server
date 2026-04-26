@@ -561,6 +561,7 @@ SET(SQL_SHARED_SOURCES
   sql_handler.cc
   sql_help.cc
   sql_import.cc
+  sql_flashback.cc
   sql_insert.cc
   sql_lex.cc
   sql_lex_hash.cc
@@ -822,6 +823,10 @@ SET(SQL_SOURCE
   srv_session_service.cc
   aggregated_stats_buffer.cc
   aggregated_stats.cc
+  flashback_ddl_barrier.cc
+  flashback_sysvars.cc
+  flashback_scheduler.cc
+  flashback_binlog_engine.cc
   )
 
 IF ((NOT WITHOUT_MYSQL_NATIVE_PASSWORD)

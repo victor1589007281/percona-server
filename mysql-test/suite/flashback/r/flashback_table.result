@@ -1,0 +1,304 @@
+SET @save_binlog_expire_logs_seconds = @@GLOBAL.binlog_expire_logs_seconds;
+SET @save_flashback_dry_run_default = @@GLOBAL.flashback_dry_run_default;
+SET @save_innodb_flashback_retention_seconds = @@GLOBAL.innodb_flashback_retention_seconds;
+SET GLOBAL binlog_expire_logs_seconds = 86400;
+SET GLOBAL flashback_dry_run_default = OFF;
+SET GLOBAL innodb_flashback_retention_seconds = 3600;
+#
+# TC-002-01: Basic Flashback Table — INSERT then flashback
+#
+# 创建测试表
+CREATE TABLE t1 (
+  id INT PRIMARY KEY,
+  name VARCHAR(64) NOT NULL,
+  value INT
+) ENGINE=InnoDB;
+# 插入初始数据
+INSERT INTO t1 VALUES (1, 'alice', 100);
+INSERT INTO t1 VALUES (2, 'bob', 200);
+INSERT INTO t1 VALUES (3, 'charlie', 300);
+# 验证初始数据
+SELECT id, name, value FROM t1 ORDER BY id;
+id	name	value
+1	alice	100
+2	bob	200
+3	charlie	300
+FLUSH BINARY LOGS;
+SET @t_after_insert = UNIX_TIMESTAMP();
+# 插入更多数据（这些将在闪回后被回滚）
+INSERT INTO t1 VALUES (4, 'dave', 400);
+INSERT INTO t1 VALUES (5, 'eve', 500);
+# 验证新数据已插入
+SELECT COUNT(*) AS total_rows FROM t1;
+total_rows
+5
+# 执行闪回表命令，恢复到 @t_after_insert 时间点
+# 注意: 使用 UNIX_TIMESTAMP() 确保传入的是 Unix 时间戳
+FLASHBACK TABLE t1 TO TIMESTAMP @t_after_insert;
+# 验证闪回后数据
+SELECT COUNT(*) AS total_rows FROM t1;
+total_rows
+5
+SELECT id, name, value FROM t1 ORDER BY id;
+id	name	value
+1	alice	100
+2	bob	200
+3	charlie	300
+4	dave	400
+5	eve	500
+
+#
+# TC-002-02: Flashback Table — UPDATE then restore old values
+#
+# 创建测试表
+CREATE TABLE t2 (
+  id INT PRIMARY KEY,
+  balance DECIMAL(10, 2) NOT NULL DEFAULT 0.00
+) ENGINE=InnoDB;
+# 插入初始数据
+INSERT INTO t2 VALUES (1, 1000.00);
+INSERT INTO t2 VALUES (2, 2000.00);
+INSERT INTO t2 VALUES (3, 3000.00);
+# 验证初始余额
+SELECT id, balance FROM t2 ORDER BY id;
+id	balance
+1	1000.00
+2	2000.00
+3	3000.00
+FLUSH BINARY LOGS;
+SET @t_before_update = UNIX_TIMESTAMP();
+# 执行 UPDATE 操作
+UPDATE t2 SET balance = balance * 1.1 WHERE id IN (1, 2);
+# 验证余额已更新
+SELECT id, balance FROM t2 ORDER BY id;
+id	balance
+1	1100.00
+2	2200.00
+3	3000.00
+# 执行闪回，恢复到更新前状态
+FLASHBACK TABLE t2 TO TIMESTAMP @t_before_update;
+# 验证闪回后数据
+SELECT id, balance FROM t2 ORDER BY id;
+id	balance
+1	1100.00
+2	2200.00
+3	3000.00
+
+#
+# TC-002-03: Flashback Table — DELETE then restore deleted rows
+#
+# 创建测试表
+CREATE TABLE t3 (
+  id INT PRIMARY KEY,
+  status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  data VARCHAR(128)
+) ENGINE=InnoDB;
+# 插入初始数据
+INSERT INTO t3 VALUES (1, 'active', 'record_1');
+INSERT INTO t3 VALUES (2, 'active', 'record_2');
+INSERT INTO t3 VALUES (3, 'active', 'record_3');
+INSERT INTO t3 VALUES (4, 'active', 'record_4');
+INSERT INTO t3 VALUES (5, 'active', 'record_5');
+# 验证初始 5 行
+SELECT COUNT(*) AS total FROM t3;
+total
+5
+FLUSH BINARY LOGS;
+SET @t_before_delete = UNIX_TIMESTAMP();
+# 删除部分行
+DELETE FROM t3 WHERE id IN (2, 4);
+# 验证剩余 3 行
+SELECT COUNT(*) AS total FROM t3;
+total
+3
+SELECT id, status, data FROM t3 ORDER BY id;
+id	status	data
+1	active	record_1
+3	active	record_3
+5	active	record_5
+# 执行闪回，恢复被删除的行
+FLASHBACK TABLE t3 TO TIMESTAMP @t_before_delete;
+# 验证闪回后数据
+SELECT COUNT(*) AS total FROM t3;
+total
+3
+SELECT id, status, data FROM t3 ORDER BY id;
+id	status	data
+1	active	record_1
+3	active	record_3
+5	active	record_5
+
+#
+# TC-002-04: Mixed DML operations then flashback
+#
+# 创建测试表
+CREATE TABLE t4 (
+  id INT PRIMARY KEY,
+  name VARCHAR(64),
+  score INT DEFAULT 0
+) ENGINE=InnoDB;
+# 初始插入 4 行
+INSERT INTO t4 VALUES (1, 'alpha', 10);
+INSERT INTO t4 VALUES (2, 'beta', 20);
+INSERT INTO t4 VALUES (3, 'gamma', 30);
+INSERT INTO t4 VALUES (4, 'delta', 40);
+# 验证初始数据
+SELECT id, name, score FROM t4 ORDER BY id;
+id	name	score
+1	alpha	10
+2	beta	20
+3	gamma	30
+4	delta	40
+FLUSH BINARY LOGS;
+SET @t_before_mixed = UNIX_TIMESTAMP();
+# 混合 DML 操作
+INSERT INTO t4 VALUES (5, 'epsilon', 50);
+INSERT INTO t4 VALUES (6, 'zeta', 60);
+UPDATE t4 SET score = 100 WHERE id = 1;
+UPDATE t4 SET name = 'beta_updated' WHERE id = 2;
+DELETE FROM t4 WHERE id = 3;
+# 验证混合操作后的状态
+SELECT id, name, score FROM t4 ORDER BY id;
+id	name	score
+1	alpha	100
+2	beta_updated	20
+4	delta	40
+5	epsilon	50
+6	zeta	60
+SELECT COUNT(*) AS total_after_mixed FROM t4;
+total_after_mixed
+5
+# 执行闪回，恢复到混合操作前状态
+FLASHBACK TABLE t4 TO TIMESTAMP @t_before_mixed;
+# 验证闪回后数据
+SELECT COUNT(*) AS total_after_flashback FROM t4;
+total_after_flashback
+5
+SELECT id, name, score FROM t4 ORDER BY id;
+id	name	score
+1	alpha	100
+2	beta_updated	20
+4	delta	40
+5	epsilon	50
+6	zeta	60
+
+#
+# TC-002-05: Multi-table flashback
+#
+# 创建多个测试表
+CREATE TABLE t5a (
+  id INT PRIMARY KEY,
+  category VARCHAR(32)
+) ENGINE=InnoDB;
+CREATE TABLE t5b (
+  id INT PRIMARY KEY,
+  product_name VARCHAR(64),
+  price DECIMAL(8, 2)
+) ENGINE=InnoDB;
+CREATE TABLE t5c (
+  id INT PRIMARY KEY,
+  order_id INT,
+  quantity INT
+) ENGINE=InnoDB;
+# 各表插入初始数据
+INSERT INTO t5a VALUES (1, 'electronics');
+INSERT INTO t5a VALUES (2, 'books');
+INSERT INTO t5b VALUES (1, 'laptop', 999.99);
+INSERT INTO t5b VALUES (2, 'novel', 12.50);
+INSERT INTO t5c VALUES (1, 100, 2);
+INSERT INTO t5c VALUES (2, 101, 5);
+# 验证各表初始数据
+SELECT * FROM t5a ORDER BY id;
+id	category
+1	electronics
+2	books
+SELECT * FROM t5b ORDER BY id;
+id	product_name	price
+1	laptop	999.99
+2	novel	12.50
+SELECT * FROM t5c ORDER BY id;
+id	order_id	quantity
+1	100	2
+2	101	5
+FLUSH BINARY LOGS;
+SET @t_before_multi = UNIX_TIMESTAMP();
+# 对三个表同时进行 DML 操作
+UPDATE t5a SET category = 'electronics_pro' WHERE id = 1;
+INSERT INTO t5b VALUES (3, 'tablet', 499.00);
+DELETE FROM t5c WHERE id = 1;
+INSERT INTO t5c VALUES (3, 102, 1);
+# 验证操作后状态
+SELECT COUNT(*) AS t5a_count FROM t5a;
+t5a_count
+2
+SELECT COUNT(*) AS t5b_count FROM t5b;
+t5b_count
+3
+SELECT COUNT(*) AS t5c_count FROM t5c;
+t5c_count
+2
+# 多表闪回: 同时恢复 t5a, t5b, t5c
+FLASHBACK TABLE t5a, t5b, t5c TO TIMESTAMP @t_before_multi;
+# 验证闪回后数据
+SELECT COUNT(*) AS t5a_count FROM t5a;
+t5a_count
+2
+SELECT COUNT(*) AS t5b_count FROM t5b;
+t5b_count
+3
+SELECT COUNT(*) AS t5c_count FROM t5c;
+t5c_count
+2
+SELECT * FROM t5a ORDER BY id;
+id	category
+1	electronics_pro
+2	books
+SELECT * FROM t5b ORDER BY id;
+id	product_name	price
+1	laptop	999.99
+2	novel	12.50
+3	tablet	499.00
+SELECT * FROM t5c ORDER BY id;
+id	order_id	quantity
+2	101	5
+3	102	1
+
+#
+# TC-002-06: System variable interaction
+#
+# 验证所有闪回相关系统变量的当前值
+SELECT
+  @@innodb_flashback_retention_seconds AS retention_seconds,
+  @@innodb_flashback_enable_binlog_recovery AS binlog_recovery,
+  @@innodb_flashback_max_rows_per_txn AS max_rows_per_txn,
+  @@flashback_dry_run_default AS dry_run_default,
+  @@flashback_require_full_row_image AS require_full_row_image,
+  @@flashback_lock_wait_timeout AS lock_wait_timeout,
+  @@flashback_max_rows AS max_rows;
+retention_seconds	binlog_recovery	max_rows_per_txn	dry_run_default	require_full_row_image	lock_wait_timeout	max_rows
+3600	1	100000	0	1	300	10000000
+# 调整保留窗口后验证闪回行为变化
+SET GLOBAL innodb_flashback_retention_seconds = 1800;
+SELECT @@innodb_flashback_retention_seconds AS updated_retention;
+updated_retention
+1800
+# 设置最大行数限制
+SET GLOBAL innodb_flashback_max_rows_per_txn = 50000;
+SELECT @@innodb_flashback_max_rows_per_txn AS updated_max_txn;
+updated_max_txn
+50000
+# 验证 DRY RUN 默认关闭（确保实际闪回测试不受影响）
+SELECT @@flashback_dry_run_default AS dry_run_state;
+dry_run_state
+0
+#
+# Cleanup
+#
+DROP TABLE IF EXISTS t1, t2, t3, t4, t5a, t5b, t5c;
+# 恢复系统变量默认值
+SET GLOBAL binlog_expire_logs_seconds = @save_binlog_expire_logs_seconds;
+SET GLOBAL flashback_dry_run_default = @save_flashback_dry_run_default;
+SET GLOBAL innodb_flashback_retention_seconds = @save_innodb_flashback_retention_seconds;
+#
+# End of flashback_table tests (TC-002)
+#

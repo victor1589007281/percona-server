@@ -10620,6 +10620,39 @@ ER_CANT_DROP_CF
 # End of MyRocks specific client messages
 #
 
+#
+# Flashback feature error messages
+#
+ER_FLASHBACK_UNDO_PURGED
+  eng "Target time %s is beyond the undo log retention window. The oldest available undo timestamp is %s."
+
+ER_FLASHBACK_DDL_CONFLICT
+  eng "Incompatible DDL operation detected on table '%s' after target time %s. Flashback is not safe."
+
+ER_FLASHBACK_NO_PRIMARY_KEY
+  eng "Table '%s' has no PRIMARY KEY. Binlog-based flashback requires a primary key."
+
+ER_FLASHBACK_ROW_IMAGE_INCOMPLETE
+  eng "binlog_row_image is set to '%s'. Binlog-based flashback requires binlog_row_image=FULL."
+
+ER_FLASHBACK_LOCK_TIMEOUT
+  eng "Failed to acquire exclusive lock for flashback within %lu seconds. Another transaction may be accessing the table."
+
+ER_FLASHBACK_MEMORY_LIMIT
+  eng "Flashback operation exceeded memory limit of %lu MB."
+
+ER_FLASHBACK_NOT_ENABLED
+  eng "Flashback feature is not enabled. Set flashback_enabled=ON to enable."
+
+ER_FLASHBACK_MISSING_HISTORY
+  eng "Historical version for row at position %s is not available. Undo log may have been purged."
+
+ER_FLASHBACK_ENGINE_NONE
+  eng "No flashback engine available for target time %s. The data is beyond both undo and binlog retention windows."
+
+ER_FLASHBACK_PRIVILEGE
+  eng "Access denied; you need the FLASHBACK privilege on '%s.%s' to perform this operation."
+
 
 ################################################################################
 # DO NOT add messages for the error-log to this file;

@@ -51,6 +51,7 @@
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"  // TODO: replace with cstdint
+#include "my_time_t.h"
 #include "my_sqlcommand.h"
 #include "my_sys.h"
 #include "my_table_map.h"
@@ -4667,6 +4668,24 @@ struct LEX : public Query_tables_list {
   void set_rewrite_required() { rewrite_required = true; }
   void reset_rewrite_required() { rewrite_required = false; }
   bool is_rewrite_required() { return rewrite_required; }
+
+  /* === Flashback 扩展字段 === */
+  /** SELECT ... AS OF TIMESTAMP: 是否为闪回查询 */
+  bool flashback_query{false};
+  /** SELECT ... VERSIONS BETWEEN: 是否为闪回版本查询 */
+  bool flashback_versions{false};
+  /** 闪回目标时间戳 (TABLE/QUERY) */
+  my_time_t flashback_timestamp{0};
+  /** 版本查询开始时间 (VERSIONS) */
+  my_time_t flashback_start_time{0};
+  /** 版本查询结束时间 (VERSIONS) */
+  my_time_t flashback_end_time{0};
+  /** 按事务号闪回的事务 ID (TRANSACTION) */
+  ulonglong flashback_trx_id{0};
+  /** DRY RUN 模式: 仅统计不修改 */
+  bool flashback_dry_run{false};
+  /** 闪回表列表 (FLASHBACK TABLE) */
+  List<LEX_CSTRING> flashback_tables;
 };
 
 /**

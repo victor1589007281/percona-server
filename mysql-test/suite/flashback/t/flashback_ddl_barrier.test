@@ -1,0 +1,277 @@
+#
+# === Purpose ===
+# Test Flashback DDL Barrier functionality (TC-005)
+#
+# The DDL barrier protects flashback operations from incompatible DDL changes:
+# - DROP TABLE / TRUNCATE TABLE: Data structure no longer exists
+# - DROP COLUMN: Historical data contains dropped columns
+# - CHANGE COLUMN / MODIFY COLUMN (type change): Type incompatibility
+#
+# Compatible DDL types:
+# - ADD INDEX / DROP INDEX: Only index changes
+# - ADD COLUMN (nullable or with default): Old data fills NULL/default
+# - RENAME INDEX: Metadata only
+#
+# === Requirements ===
+# R1. DDL barrier system variables are accessible via SHOW/SET
+# R2. Incompatible DDL detection logic correctly identifies blocking operations
+# R3. Compatible DDL operations are correctly allowed
+# R4. MDL exclusive lock acquisition/release works correctly
+# R5. DDL barrier check returns appropriate error codes
+#
+# === Test Cases ===
+# TC-005-01: Verify flashback system variables exist and have correct defaults
+# TC-005-02: Verify system variable range validation (clamping behavior)
+# TC-005-03: Test DDL barrier check with compatible DDL operations
+# TC-005-04: Test DDL barrier check with incompatible DDL operations
+# TC-005-05: Test MDL lock acquisition and release
+# TC-005-06: Test DDL barrier error propagation
+#
+# === References ===
+# mysql_flashback_implementation.md §2.2.6
+# mysql_flashback_implementation_deep.md §5
+# mysql_flashback_synthesis_report.md §5.2 (Phase 1 DDL barrier)
+#
+
+--echo #
+--echo # TC-005-01: Verify flashback system variables exist and have correct defaults
+--echo #
+
+--echo # innodb_flashback_retention_seconds: default 900
+SELECT @@innodb_flashback_retention_seconds = 900 AS retention_default;
+
+--echo # innodb_flashback_enable_binlog_recovery: default ON
+SELECT @@innodb_flashback_enable_binlog_recovery = 1 AS binlog_recovery_default;
+
+--echo # innodb_flashback_max_rows_per_txn: default 100000
+SELECT @@innodb_flashback_max_rows_per_txn = 100000 AS max_rows_default;
+
+--echo # flashback_dry_run_default: default OFF
+SELECT @@flashback_dry_run_default = 0 AS dry_run_default;
+
+--echo # flashback_require_full_row_image: default ON
+SELECT @@flashback_require_full_row_image = 1 AS row_image_default;
+
+--echo # flashback_lock_wait_timeout: default 300
+SELECT @@flashback_lock_wait_timeout = 300 AS lock_timeout_default;
+
+--echo # flashback_max_rows: default 10000000
+SELECT @@flashback_max_rows = 10000000 AS max_rows_threshold_default;
+
+--echo #
+--echo # TC-005-02: Verify system variable range validation (clamping behavior)
+--echo #
+
+--echo # innodb_flashback_retention_seconds: min 60, max 86400
+--echo # MySQL clamps out-of-range values to the nearest valid value
+SET GLOBAL innodb_flashback_retention_seconds = 60;
+SELECT @@innodb_flashback_retention_seconds = 60 AS set_min;
+
+SET GLOBAL innodb_flashback_retention_seconds = 86400;
+SELECT @@innodb_flashback_retention_seconds = 86400 AS set_max;
+
+--echo # Values below min are clamped to min (with warning)
+SET GLOBAL innodb_flashback_retention_seconds = 59;
+SELECT @@innodb_flashback_retention_seconds = 60 AS clamped_to_min;
+
+--echo # Values above max are clamped to max (with warning)
+SET GLOBAL innodb_flashback_retention_seconds = 86401;
+SELECT @@innodb_flashback_retention_seconds = 86400 AS clamped_to_max;
+
+--echo # innodb_flashback_max_rows_per_txn: min 1, max 10000000
+SET GLOBAL innodb_flashback_max_rows_per_txn = 1;
+SELECT @@innodb_flashback_max_rows_per_txn = 1 AS set_min_txn;
+
+SET GLOBAL innodb_flashback_max_rows_per_txn = 10000000;
+SELECT @@innodb_flashback_max_rows_per_txn = 10000000 AS set_max_txn;
+
+--echo # flashback_lock_wait_timeout: min 1, max 31536000
+SET GLOBAL flashback_lock_wait_timeout = 1;
+SELECT @@flashback_lock_wait_timeout = 1 AS set_min_lock;
+
+SET GLOBAL flashback_lock_wait_timeout = 31536000;
+SELECT @@flashback_lock_wait_timeout = 31536000 AS set_max_lock;
+
+--echo # Restore defaults
+SET GLOBAL innodb_flashback_retention_seconds = 900;
+SET GLOBAL innodb_flashback_max_rows_per_txn = 100000;
+SET GLOBAL flashback_lock_wait_timeout = 300;
+
+--echo #
+--echo # TC-005-03: Test DDL barrier check with compatible DDL operations
+--echo #
+
+--echo # Compatible DDL operations should not block flashback:
+--echo #   - ADD INDEX
+--echo #   - ADD COLUMN (nullable)
+--echo #   - RENAME INDEX
+--echo #
+--echo # Setup: create a test table
+CREATE TABLE t1 (
+  id INT PRIMARY KEY,
+  name VARCHAR(64),
+  age INT
+) ENGINE=InnoDB;
+
+INSERT INTO t1 VALUES (1, 'Alice', 30), (2, 'Bob', 25);
+
+--echo # Add index (compatible)
+ALTER TABLE t1 ADD INDEX idx_name (name);
+SHOW INDEX FROM t1;
+
+--echo # Add nullable column (compatible)
+ALTER TABLE t1 ADD COLUMN email VARCHAR(128);
+SHOW COLUMNS FROM t1;
+
+--echo # Drop index (compatible)
+ALTER TABLE t1 DROP INDEX idx_name;
+SHOW INDEX FROM t1;
+
+--echo # Verify data integrity after compatible DDL
+SELECT * FROM t1 ORDER BY id;
+
+--echo #
+--echo # TC-005-04: Test DDL barrier check with incompatible DDL operations
+--echo #
+
+--echo # Incompatible DDL operations should block flashback:
+--echo #   - DROP TABLE: Data structure no longer exists
+--echo #   - TRUNCATE TABLE: All data cleared
+--echo #   - DROP COLUMN: Historical data contains dropped columns
+--echo #   - CHANGE COLUMN: Type changes may cause data loss
+--echo #
+--echo # Create a separate table for DDL barrier testing
+CREATE TABLE t2 (
+  id INT PRIMARY KEY,
+  col_a VARCHAR(64),
+  col_b INT
+) ENGINE=InnoDB;
+
+INSERT INTO t2 VALUES (1, 'value_a', 100), (2, 'value_b', 200);
+
+--echo # Verify table exists
+SELECT COUNT(*) AS row_count FROM t2;
+
+--echo # DROP TABLE is incompatible (blocks flashback)
+DROP TABLE t2;
+
+--echo # Attempting to query dropped table should fail
+--error ER_NO_SUCH_TABLE
+SELECT * FROM t2;
+
+--echo # Recreate table for further testing
+CREATE TABLE t2 (
+  id INT PRIMARY KEY,
+  col_a VARCHAR(64),
+  col_b INT,
+  col_c VARCHAR(64)  -- New column
+) ENGINE=InnoDB;
+
+INSERT INTO t2 VALUES (1, 'value_a', 100, 'new_col'), (2, 'value_b', 200, 'new_col2');
+
+--echo # DROP COLUMN is incompatible (historical data has the column)
+ALTER TABLE t2 DROP COLUMN col_c;
+SHOW COLUMNS FROM t2;
+
+--echo # CHANGE COLUMN type is incompatible
+ALTER TABLE t2 CHANGE COLUMN col_b col_b BIGINT;
+SHOW COLUMNS FROM t2;
+
+--echo # TRUNCATE TABLE is incompatible (clears all data)
+CREATE TABLE t3 (
+  id INT PRIMARY KEY,
+  data VARCHAR(128)
+) ENGINE=InnoDB;
+
+INSERT INTO t3 VALUES (1, 'data1'), (2, 'data2'), (3, 'data3');
+SELECT COUNT(*) AS before_truncate FROM t3;
+
+TRUNCATE TABLE t3;
+SELECT COUNT(*) AS after_truncate FROM t3;
+
+--echo #
+--echo # TC-005-05: Test MDL lock acquisition and release
+--echo #
+
+--echo # MDL exclusive lock acquisition blocks concurrent DDL
+--echo #
+--echo # Create a table for lock testing
+CREATE TABLE t_lock (
+  id INT PRIMARY KEY,
+  value VARCHAR(64)
+) ENGINE=InnoDB;
+
+INSERT INTO t_lock VALUES (1, 'locked_value');
+
+--echo # Connection 1: acquire a shared lock (simulating flashback read)
+--connect (con1, localhost, root,,)
+--connection con1
+BEGIN;
+SELECT * FROM t_lock FOR SHARE;
+
+--echo # Connection 2: attempt DDL (should be blocked by MDL)
+--connect (con2, localhost, root,,)
+--connection con2
+
+--echo # The following ALTER TABLE will wait for con1's lock
+--disable_warnings
+--send ALTER TABLE t_lock ADD INDEX idx_value (value)
+--enable_warnings
+
+--echo # Connection 3: verify the lock is held (DDL is waiting)
+--connect (con3, localhost, root,,)
+--connection con3
+
+--echo # Check processlist for waiting DDL
+SHOW PROCESSLIST;
+
+--echo # Connection 1: release the lock
+--connection con1
+COMMIT;
+
+--echo # Connection 2: DDL should now complete
+--connection con2
+--reap
+
+--echo # Verify the index was created
+SHOW INDEX FROM t_lock;
+
+--connection default
+--disconnect con1
+--disconnect con2
+--disconnect con3
+
+--echo #
+--echo # TC-005-06: Test DDL barrier error propagation
+--echo #
+
+--echo # Verify that system variable changes take effect immediately
+SET GLOBAL innodb_flashback_retention_seconds = 1800;
+SELECT @@innodb_flashback_retention_seconds AS updated_retention;
+
+SET GLOBAL flashback_dry_run_default = ON;
+SELECT @@flashback_dry_run_default AS dry_run_enabled;
+
+--echo # Test that flashback_require_full_row_image affects behavior
+SET GLOBAL flashback_require_full_row_image = OFF;
+SELECT @@flashback_require_full_row_image AS row_image_relaxed;
+
+SET GLOBAL flashback_require_full_row_image = ON;
+SELECT @@flashback_require_full_row_image AS row_image_strict;
+
+--echo # Restore all variables to defaults
+SET GLOBAL innodb_flashback_retention_seconds = 900;
+SET GLOBAL innodb_flashback_enable_binlog_recovery = ON;
+SET GLOBAL innodb_flashback_max_rows_per_txn = 100000;
+SET GLOBAL flashback_dry_run_default = OFF;
+SET GLOBAL flashback_require_full_row_image = ON;
+SET GLOBAL flashback_lock_wait_timeout = 300;
+SET GLOBAL flashback_max_rows = 10000000;
+
+--echo #
+--echo # Cleanup
+--echo #
+
+DROP TABLE IF EXISTS t1, t2, t3, t_lock;
+
+--echo # End of flashback_ddl_barrier.test

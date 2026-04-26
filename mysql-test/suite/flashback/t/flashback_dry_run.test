@@ -1,0 +1,364 @@
+# =====================================================================
+# flashback_dry_run.test — MTR Test for TC-003
+# =====================================================================
+#
+# TC-003: Flashback DRY RUN Mode
+#
+# 验证闪回 DRY RUN 模式的功能: 评估闪回影响而不实际修改数据。
+#
+# DRY RUN 模式是闪回操作的关键安全特性:
+# - 允许 DBA 在执行实际闪回前预览影响范围
+# - 评估将恢复的行数、涉及的表、可能的错误
+# - 不修改任何数据，无副作用
+#
+# 测试场景:
+#   TC-003-01: DRY RUN 基本功能 — 评估闪回不影响数据
+#   TC-003-02: DRY RUN 报告评估行数
+#   TC-003-03: flashback_dry_run_default 系统变量
+#   TC-003-04: DRY RUN 后执行实际闪回
+#   TC-003-05: DRY RUN 多表评估
+#   TC-003-06: DRY RUN 与 DDL 屏障交互
+#
+# 约束:
+#   C2: DRY RUN 不需要获取 MDL 排他锁（只读评估）
+#   C3: DRY RUN 不产生事务，不影响 binlog
+#   C7: DRY RUN 使用与实际操作相同的引擎选择逻辑
+#
+# 注意: execute_undo_flashback 和 execute_dry_run 当前为框架实现 (stub),
+# 返回成功但不实际修改数据。本测试验证命令可执行且返回成功。
+# =====================================================================
+
+--source include/have_log_bin.inc
+--source include/have_binlog_format_row.inc
+
+# -------------------------------------------------------------------
+# 准备: 保存原始系统变量值
+# -------------------------------------------------------------------
+SET @save_binlog_expire_logs_seconds = @@GLOBAL.binlog_expire_logs_seconds;
+SET @save_flashback_dry_run_default = @@GLOBAL.flashback_dry_run_default;
+SET @save_innodb_flashback_retention_seconds = @@GLOBAL.innodb_flashback_retention_seconds;
+
+SET GLOBAL binlog_expire_logs_seconds = 86400;
+SET GLOBAL innodb_flashback_retention_seconds = 3600;
+
+# =====================================================================
+# TC-003-01: DRY RUN 基本功能 — 评估闪回不影响数据
+# =====================================================================
+--echo #
+--echo # TC-003-01: DRY RUN basic functionality — no data modification
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t_dry1 (
+  id INT PRIMARY KEY,
+  name VARCHAR(64),
+  score INT
+) ENGINE=InnoDB;
+
+--echo # 插入初始数据
+INSERT INTO t_dry1 VALUES (1, 'Alice', 90);
+INSERT INTO t_dry1 VALUES (2, 'Bob', 85);
+INSERT INTO t_dry1 VALUES (3, 'Charlie', 95);
+
+--echo # 记录初始状态快照
+SELECT id, name, score FROM t_dry1 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_initial = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 修改数据（模拟误操作）
+UPDATE t_dry1 SET score = 0 WHERE id IN (1, 2);
+INSERT INTO t_dry1 VALUES (4, 'Dave', 60);
+DELETE FROM t_dry1 WHERE id = 3;
+
+--echo # 验证数据已被修改
+SELECT id, name, score FROM t_dry1 ORDER BY id;
+SELECT COUNT(*) AS current_rows FROM t_dry1;
+
+--echo # 执行 DRY RUN 评估 (不修改数据)
+FLASHBACK TABLE t_dry1 TO TIMESTAMP @t_initial DRY RUN;
+
+--echo # 验证 DRY RUN 后数据未改变
+SELECT id, name, score FROM t_dry1 ORDER BY id;
+SELECT COUNT(*) AS current_rows FROM t_dry1;
+
+--echo #
+--echo # TC-003-01 result: DRY RUN 命令执行成功，数据不变
+--echo #
+
+# =====================================================================
+# TC-003-02: DRY RUN 报告评估行数
+# =====================================================================
+--echo #
+--echo # TC-003-02: DRY RUN reports estimated rows
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t_dry2 (
+  id INT PRIMARY KEY,
+  category VARCHAR(32),
+  amount DECIMAL(10, 2)
+) ENGINE=InnoDB;
+
+--echo # 插入 10 行初始数据
+INSERT INTO t_dry2 VALUES (1, 'A', 100.00);
+INSERT INTO t_dry2 VALUES (2, 'A', 200.00);
+INSERT INTO t_dry2 VALUES (3, 'B', 300.00);
+INSERT INTO t_dry2 VALUES (4, 'B', 400.00);
+INSERT INTO t_dry2 VALUES (5, 'C', 500.00);
+INSERT INTO t_dry2 VALUES (6, 'C', 600.00);
+INSERT INTO t_dry2 VALUES (7, 'A', 700.00);
+INSERT INTO t_dry2 VALUES (8, 'B', 800.00);
+INSERT INTO t_dry2 VALUES (9, 'C', 900.00);
+INSERT INTO t_dry2 VALUES (10, 'A', 1000.00);
+
+--echo # 验证初始 10 行
+SELECT COUNT(*) AS initial_count FROM t_dry2;
+
+FLUSH BINARY LOGS;
+SET @t_dry2_initial = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 批量修改: 更新 5 行，删除 3 行，插入 2 行
+UPDATE t_dry2 SET amount = amount * 2 WHERE category = 'A';
+DELETE FROM t_dry2 WHERE category = 'C';
+INSERT INTO t_dry2 VALUES (11, 'D', 1100.00);
+INSERT INTO t_dry2 VALUES (12, 'D', 1200.00);
+
+--echo # 验证修改后状态
+SELECT COUNT(*) AS modified_count FROM t_dry2;
+SELECT category, COUNT(*) AS cnt FROM t_dry2 GROUP BY category ORDER BY category;
+
+--echo # 执行 DRY RUN 评估
+FLASHBACK TABLE t_dry2 TO TIMESTAMP @t_dry2_initial DRY RUN;
+
+--echo # 验证 DRY RUN 后数据不变
+SELECT COUNT(*) AS modified_count FROM t_dry2;
+
+--echo #
+--echo # TC-003-02 result: DRY RUN 命令执行成功，数据不变
+--echo #
+
+# =====================================================================
+# TC-003-03: flashback_dry_run_default 系统变量
+# =====================================================================
+--echo #
+--echo # TC-003-03: flashback_dry_run_default system variable
+--echo #
+
+--echo # 验证默认值 (默认关闭)
+SELECT @@flashback_dry_run_default AS default_dry_run;
+
+--echo # 开启 DRY RUN 默认模式
+SET GLOBAL flashback_dry_run_default = ON;
+SELECT @@flashback_dry_run_default AS dry_run_enabled;
+
+--echo # 创建测试表用于验证系统变量生效
+CREATE TABLE t_dry3 (
+  id INT PRIMARY KEY,
+  val INT
+) ENGINE=InnoDB;
+
+INSERT INTO t_dry3 VALUES (1, 100);
+FLUSH BINARY LOGS;
+SET @t_dry3_ts = UNIX_TIMESTAMP();
+--sleep 1
+
+UPDATE t_dry3 SET val = 200 WHERE id = 1;
+SELECT val AS current_val FROM t_dry3 WHERE id = 1;
+
+--echo # 在 flashback_dry_run_default=ON 时，FLASHBACK TABLE 自动以 DRY RUN 执行
+FLASHBACK TABLE t_dry3 TO TIMESTAMP @t_dry3_ts;
+
+--echo # 验证数据未修改（因为 DRY RUN 默认开启）
+SELECT val AS current_val FROM t_dry3 WHERE id = 1;
+
+--echo # 关闭 DRY RUN 默认模式
+SET GLOBAL flashback_dry_run_default = OFF;
+SELECT @@flashback_dry_run_default AS dry_run_disabled;
+
+--echo #
+--echo # TC-003-03 result: flashback_dry_run_default 控制默认 DRY RUN 行为
+--echo #
+
+# =====================================================================
+# TC-003-04: DRY RUN 后执行实际闪回
+# =====================================================================
+--echo #
+--echo # TC-003-04: DRY RUN followed by actual flashback
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t_dry4 (
+  id INT PRIMARY KEY,
+  data VARCHAR(128),
+  version INT DEFAULT 1
+) ENGINE=InnoDB;
+
+--echo # 初始数据
+INSERT INTO t_dry4 VALUES (1, 'version_1_data', 1);
+INSERT INTO t_dry4 VALUES (2, 'version_1_data', 1);
+
+--echo # 记录初始状态
+SELECT id, data, version FROM t_dry4 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_dry4_v1 = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 更新到版本 2
+UPDATE t_dry4 SET data = 'version_2_data', version = 2;
+
+--echo # 验证版本 2
+SELECT id, data, version FROM t_dry4 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_dry4_v2 = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 更新到版本 3 (当前状态)
+UPDATE t_dry4 SET data = 'version_3_data', version = 3;
+
+--echo # 验证当前版本 3
+SELECT id, data, version FROM t_dry4 ORDER BY id;
+
+--echo # DRY RUN 评估闪回到版本 1
+FLASHBACK TABLE t_dry4 TO TIMESTAMP @t_dry4_v1 DRY RUN;
+
+--echo # 数据在 DRY RUN 后保持不变
+SELECT id, data, version FROM t_dry4 ORDER BY id;
+
+--echo # 确认评估结果后，执行实际闪回
+--echo # 注意: 当前 execute_undo_flashback 为 stub，数据不会实际改变
+FLASHBACK TABLE t_dry4 TO TIMESTAMP @t_dry4_v1;
+
+--echo # 验证闪回后数据 (stub 实现不修改数据)
+SELECT id, data, version FROM t_dry4 ORDER BY id;
+
+--echo #
+--echo # TC-003-04 result: DRY RUN → 实际闪回 命令均执行成功
+--echo #
+
+# =====================================================================
+# TC-003-05: DRY RUN 多表评估
+# =====================================================================
+--echo #
+--echo # TC-003-05: DRY RUN multi-table evaluation
+--echo #
+
+--echo # 创建多个测试表
+CREATE TABLE t_dry5a (
+  id INT PRIMARY KEY,
+  name VARCHAR(64)
+) ENGINE=InnoDB;
+
+CREATE TABLE t_dry5b (
+  id INT PRIMARY KEY,
+  price DECIMAL(8, 2)
+) ENGINE=InnoDB;
+
+CREATE TABLE t_dry5c (
+  id INT PRIMARY KEY,
+  quantity INT
+) ENGINE=InnoDB;
+
+--echo # 各表插入初始数据
+INSERT INTO t_dry5a VALUES (1, 'item_a'), (2, 'item_b'), (3, 'item_c');
+INSERT INTO t_dry5b VALUES (1, 10.50), (2, 20.75), (3, 30.00);
+INSERT INTO t_dry5c VALUES (1, 100), (2, 200), (3, 300);
+
+--echo # 记录初始状态
+SELECT 't_dry5a' AS tbl, COUNT(*) AS cnt FROM t_dry5a
+UNION ALL
+SELECT 't_dry5b', COUNT(*) FROM t_dry5b
+UNION ALL
+SELECT 't_dry5c', COUNT(*) FROM t_dry5c;
+
+FLUSH BINARY LOGS;
+SET @t_dry5_initial = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 对各表进行不同的修改
+INSERT INTO t_dry5a VALUES (4, 'item_d');
+UPDATE t_dry5b SET price = price * 1.5 WHERE id = 1;
+DELETE FROM t_dry5c WHERE id = 2;
+INSERT INTO t_dry5c VALUES (4, 400);
+
+--echo # 验证修改后状态
+SELECT 't_dry5a' AS tbl, COUNT(*) AS cnt FROM t_dry5a
+UNION ALL
+SELECT 't_dry5b', COUNT(*) FROM t_dry5b
+UNION ALL
+SELECT 't_dry5c', COUNT(*) FROM t_dry5c;
+
+--echo # DRY RUN 多表闪回评估
+FLASHBACK TABLE t_dry5a, t_dry5b, t_dry5c TO TIMESTAMP @t_dry5_initial DRY RUN;
+
+--echo # 验证数据不变
+SELECT 't_dry5a' AS tbl, COUNT(*) AS cnt FROM t_dry5a
+UNION ALL
+SELECT 't_dry5b', COUNT(*) FROM t_dry5b
+UNION ALL
+SELECT 't_dry5c', COUNT(*) FROM t_dry5c;
+
+--echo #
+--echo # TC-003-05 result: DRY RUN 多表评估命令执行成功，数据不变
+--echo #
+
+# =====================================================================
+# TC-003-06: DRY RUN 与 DDL 屏障交互
+# =====================================================================
+--echo #
+--echo # TC-003-06: DRY RUN interaction with DDL barrier
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t_dry6 (
+  id INT PRIMARY KEY,
+  col_a VARCHAR(64),
+  col_b INT
+) ENGINE=InnoDB;
+
+INSERT INTO t_dry6 VALUES (1, 'value_a', 100);
+INSERT INTO t_dry6 VALUES (2, 'value_b', 200);
+
+--echo # 记录初始状态
+SELECT id, col_a, col_b FROM t_dry6 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_dry6_initial = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 修改数据
+UPDATE t_dry6 SET col_b = col_b * 2;
+
+--echo # 执行兼容的 DDL 操作 (ADD INDEX)
+ALTER TABLE t_dry6 ADD INDEX idx_col_a (col_a);
+
+--echo # DRY RUN 应能正常执行（兼容 DDL 不阻塞）
+FLASHBACK TABLE t_dry6 TO TIMESTAMP @t_dry6_initial DRY RUN;
+
+--echo # 验证数据不变
+SELECT id, col_a, col_b FROM t_dry6 ORDER BY id;
+
+--echo #
+--echo # TC-003-06 result: DRY RUN 与 DDL 屏障兼容，命令执行成功
+--echo #
+
+# =====================================================================
+# 清理
+# =====================================================================
+--echo #
+--echo # Cleanup
+--echo #
+DROP TABLE IF EXISTS t_dry1, t_dry2, t_dry3, t_dry4, t_dry5a, t_dry5b, t_dry5c, t_dry6;
+
+--echo # 恢复系统变量默认值
+SET GLOBAL binlog_expire_logs_seconds = @save_binlog_expire_logs_seconds;
+SET GLOBAL flashback_dry_run_default = @save_flashback_dry_run_default;
+SET GLOBAL innodb_flashback_retention_seconds = @save_innodb_flashback_retention_seconds;
+
+--echo #
+--echo # End of flashback_dry_run tests (TC-003)
+--echo #

@@ -582,6 +582,22 @@ void init_sql_command_flags() {
   sql_command_flags[SQLCOM_DROP_EVENT] = CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
   sql_command_flags[SQLCOM_IMPORT] = CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
 
+  /* === Flashback SQL Commands ===
+     FLASHBACK TABLE 是数据变更操作，需要自动提交事务。
+     FLASHBACK TRANSACTION 同样修改数据，需要自动提交。
+     两者都禁止在只读事务中执行。 */
+  sql_command_flags[SQLCOM_FLASHBACK_TABLE] =
+      CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
+  sql_command_flags[SQLCOM_FLASHBACK_TRANSACTION] =
+      CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
+  /* FLASHBACK_QUERY 和 FLASHBACK_VERSIONS 是只读操作，不需要 CF_CHANGES_DATA */
+  sql_command_flags[SQLCOM_FLASHBACK_QUERY] =
+      CF_REEXECUTION_FRAGILE | CF_OPTIMIZER_TRACE | CF_CAN_BE_EXPLAINED;
+  sql_command_flags[SQLCOM_FLASHBACK_VERSIONS] =
+      CF_REEXECUTION_FRAGILE | CF_OPTIMIZER_TRACE | CF_HAS_RESULT_SET;
+
+  /* Flashback 命令禁止在只读事务中执行 (TABLE/TRANSACTION 类型) */
+
   sql_command_flags[SQLCOM_UPDATE] = CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                      CF_CAN_GENERATE_ROW_EVENTS |
                                      CF_OPTIMIZER_TRACE | CF_CAN_BE_EXPLAINED;
@@ -931,6 +947,8 @@ void init_sql_command_flags() {
   sql_command_flags[SQLCOM_UNINSTALL_COMPONENT] |= CF_DISALLOW_IN_RO_TRANS;
   sql_command_flags[SQLCOM_ALTER_INSTANCE] |= CF_DISALLOW_IN_RO_TRANS;
   sql_command_flags[SQLCOM_IMPORT] |= CF_DISALLOW_IN_RO_TRANS;
+  sql_command_flags[SQLCOM_FLASHBACK_TABLE] |= CF_DISALLOW_IN_RO_TRANS;
+  sql_command_flags[SQLCOM_FLASHBACK_TRANSACTION] |= CF_DISALLOW_IN_RO_TRANS;
   sql_command_flags[SQLCOM_CREATE_SRS] |= CF_DISALLOW_IN_RO_TRANS;
   sql_command_flags[SQLCOM_DROP_SRS] |= CF_DISALLOW_IN_RO_TRANS;
   sql_command_flags[SQLCOM_CREATE_COMPRESSION_DICTIONARY] |=
@@ -4043,6 +4061,11 @@ int mysql_execute_command(THD *thd, bool first_level) {
       break;
 
     case SQLCOM_IMPORT:
+      res = lex->m_sql_cmd->execute(thd);
+      break;
+
+    case SQLCOM_FLASHBACK_TABLE:
+    case SQLCOM_FLASHBACK_TRANSACTION:
       res = lex->m_sql_cmd->execute(thd);
       break;
 

@@ -1,0 +1,327 @@
+#
+# TC-002: Flashback Table (FLASHBACK TABLE ... TO TIMESTAMP)
+#
+# 验证闪回表的核心功能: 将表数据恢复到指定时间点的状态。
+#
+# 测试场景:
+#   TC-002-01: 基本闪回表 — INSERT 后闪回
+#   TC-002-02: 闪回表 — UPDATE 后恢复到旧值
+#   TC-002-03: 闪回表 — DELETE 后恢复已删除行
+#   TC-002-04: 混合 DML 操作后闪回 (INSERT + UPDATE + DELETE)
+#   TC-002-05: 多表闪回
+#   TC-002-06: 系统变量交互验证
+#
+# 注意: execute_undo_flashback 当前为框架实现 (stub),
+# 返回成功但不实际修改数据。本测试验证命令可执行且返回成功。
+#
+--source include/have_log_bin.inc
+--source include/have_binlog_format_row.inc
+
+# -------------------------------------------------------------------
+# 准备: 保存原始系统变量值
+# -------------------------------------------------------------------
+SET @save_binlog_expire_logs_seconds = @@GLOBAL.binlog_expire_logs_seconds;
+SET @save_flashback_dry_run_default = @@GLOBAL.flashback_dry_run_default;
+SET @save_innodb_flashback_retention_seconds = @@GLOBAL.innodb_flashback_retention_seconds;
+
+SET GLOBAL binlog_expire_logs_seconds = 86400;
+SET GLOBAL flashback_dry_run_default = OFF;
+SET GLOBAL innodb_flashback_retention_seconds = 3600;
+
+# =====================================================================
+# TC-002-01: 基本闪回表 — INSERT 后闪回
+# =====================================================================
+--echo #
+--echo # TC-002-01: Basic Flashback Table — INSERT then flashback
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t1 (
+  id INT PRIMARY KEY,
+  name VARCHAR(64) NOT NULL,
+  value INT
+) ENGINE=InnoDB;
+
+--echo # 插入初始数据
+INSERT INTO t1 VALUES (1, 'alice', 100);
+INSERT INTO t1 VALUES (2, 'bob', 200);
+INSERT INTO t1 VALUES (3, 'charlie', 300);
+
+--echo # 验证初始数据
+SELECT id, name, value FROM t1 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_after_insert = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 插入更多数据（这些将在闪回后被回滚）
+INSERT INTO t1 VALUES (4, 'dave', 400);
+INSERT INTO t1 VALUES (5, 'eve', 500);
+
+--echo # 验证新数据已插入
+SELECT COUNT(*) AS total_rows FROM t1;
+
+--echo # 执行闪回表命令，恢复到 @t_after_insert 时间点
+--echo # 注意: 使用 UNIX_TIMESTAMP() 确保传入的是 Unix 时间戳
+FLASHBACK TABLE t1 TO TIMESTAMP @t_after_insert;
+
+--echo # 验证闪回后数据
+SELECT COUNT(*) AS total_rows FROM t1;
+SELECT id, name, value FROM t1 ORDER BY id;
+
+--echo #
+--echo # TC-002-01 result: FLASHBACK TABLE 命令执行成功
+--echo #
+
+# =====================================================================
+# TC-002-02: 闪回表 — UPDATE 后恢复到旧值
+# =====================================================================
+--echo #
+--echo # TC-002-02: Flashback Table — UPDATE then restore old values
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t2 (
+  id INT PRIMARY KEY,
+  balance DECIMAL(10, 2) NOT NULL DEFAULT 0.00
+) ENGINE=InnoDB;
+
+--echo # 插入初始数据
+INSERT INTO t2 VALUES (1, 1000.00);
+INSERT INTO t2 VALUES (2, 2000.00);
+INSERT INTO t2 VALUES (3, 3000.00);
+
+--echo # 验证初始余额
+SELECT id, balance FROM t2 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_before_update = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 执行 UPDATE 操作
+UPDATE t2 SET balance = balance * 1.1 WHERE id IN (1, 2);
+
+--echo # 验证余额已更新
+SELECT id, balance FROM t2 ORDER BY id;
+
+--echo # 执行闪回，恢复到更新前状态
+FLASHBACK TABLE t2 TO TIMESTAMP @t_before_update;
+
+--echo # 验证闪回后数据
+SELECT id, balance FROM t2 ORDER BY id;
+
+--echo #
+--echo # TC-002-02 result: FLASHBACK TABLE 命令执行成功
+--echo #
+
+# =====================================================================
+# TC-002-03: 闪回表 — DELETE 后恢复已删除行
+# =====================================================================
+--echo #
+--echo # TC-002-03: Flashback Table — DELETE then restore deleted rows
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t3 (
+  id INT PRIMARY KEY,
+  status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  data VARCHAR(128)
+) ENGINE=InnoDB;
+
+--echo # 插入初始数据
+INSERT INTO t3 VALUES (1, 'active', 'record_1');
+INSERT INTO t3 VALUES (2, 'active', 'record_2');
+INSERT INTO t3 VALUES (3, 'active', 'record_3');
+INSERT INTO t3 VALUES (4, 'active', 'record_4');
+INSERT INTO t3 VALUES (5, 'active', 'record_5');
+
+--echo # 验证初始 5 行
+SELECT COUNT(*) AS total FROM t3;
+
+FLUSH BINARY LOGS;
+SET @t_before_delete = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 删除部分行
+DELETE FROM t3 WHERE id IN (2, 4);
+
+--echo # 验证剩余 3 行
+SELECT COUNT(*) AS total FROM t3;
+SELECT id, status, data FROM t3 ORDER BY id;
+
+--echo # 执行闪回，恢复被删除的行
+FLASHBACK TABLE t3 TO TIMESTAMP @t_before_delete;
+
+--echo # 验证闪回后数据
+SELECT COUNT(*) AS total FROM t3;
+SELECT id, status, data FROM t3 ORDER BY id;
+
+--echo #
+--echo # TC-002-03 result: FLASHBACK TABLE 命令执行成功
+--echo #
+
+# =====================================================================
+# TC-002-04: 混合 DML 操作后闪回
+# =====================================================================
+--echo #
+--echo # TC-002-04: Mixed DML operations then flashback
+--echo #
+
+--echo # 创建测试表
+CREATE TABLE t4 (
+  id INT PRIMARY KEY,
+  name VARCHAR(64),
+  score INT DEFAULT 0
+) ENGINE=InnoDB;
+
+--echo # 初始插入 4 行
+INSERT INTO t4 VALUES (1, 'alpha', 10);
+INSERT INTO t4 VALUES (2, 'beta', 20);
+INSERT INTO t4 VALUES (3, 'gamma', 30);
+INSERT INTO t4 VALUES (4, 'delta', 40);
+
+--echo # 验证初始数据
+SELECT id, name, score FROM t4 ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_before_mixed = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 混合 DML 操作
+INSERT INTO t4 VALUES (5, 'epsilon', 50);
+INSERT INTO t4 VALUES (6, 'zeta', 60);
+UPDATE t4 SET score = 100 WHERE id = 1;
+UPDATE t4 SET name = 'beta_updated' WHERE id = 2;
+DELETE FROM t4 WHERE id = 3;
+
+--echo # 验证混合操作后的状态
+SELECT id, name, score FROM t4 ORDER BY id;
+SELECT COUNT(*) AS total_after_mixed FROM t4;
+
+--echo # 执行闪回，恢复到混合操作前状态
+FLASHBACK TABLE t4 TO TIMESTAMP @t_before_mixed;
+
+--echo # 验证闪回后数据
+SELECT COUNT(*) AS total_after_flashback FROM t4;
+SELECT id, name, score FROM t4 ORDER BY id;
+
+--echo #
+--echo # TC-002-04 result: FLASHBACK TABLE 命令执行成功
+--echo #
+
+# =====================================================================
+# TC-002-05: 多表闪回
+# =====================================================================
+--echo #
+--echo # TC-002-05: Multi-table flashback
+--echo #
+
+--echo # 创建多个测试表
+CREATE TABLE t5a (
+  id INT PRIMARY KEY,
+  category VARCHAR(32)
+) ENGINE=InnoDB;
+
+CREATE TABLE t5b (
+  id INT PRIMARY KEY,
+  product_name VARCHAR(64),
+  price DECIMAL(8, 2)
+) ENGINE=InnoDB;
+
+CREATE TABLE t5c (
+  id INT PRIMARY KEY,
+  order_id INT,
+  quantity INT
+) ENGINE=InnoDB;
+
+--echo # 各表插入初始数据
+INSERT INTO t5a VALUES (1, 'electronics');
+INSERT INTO t5a VALUES (2, 'books');
+INSERT INTO t5b VALUES (1, 'laptop', 999.99);
+INSERT INTO t5b VALUES (2, 'novel', 12.50);
+INSERT INTO t5c VALUES (1, 100, 2);
+INSERT INTO t5c VALUES (2, 101, 5);
+
+--echo # 验证各表初始数据
+SELECT * FROM t5a ORDER BY id;
+SELECT * FROM t5b ORDER BY id;
+SELECT * FROM t5c ORDER BY id;
+
+FLUSH BINARY LOGS;
+SET @t_before_multi = UNIX_TIMESTAMP();
+--sleep 1
+
+--echo # 对三个表同时进行 DML 操作
+UPDATE t5a SET category = 'electronics_pro' WHERE id = 1;
+INSERT INTO t5b VALUES (3, 'tablet', 499.00);
+DELETE FROM t5c WHERE id = 1;
+INSERT INTO t5c VALUES (3, 102, 1);
+
+--echo # 验证操作后状态
+SELECT COUNT(*) AS t5a_count FROM t5a;
+SELECT COUNT(*) AS t5b_count FROM t5b;
+SELECT COUNT(*) AS t5c_count FROM t5c;
+
+--echo # 多表闪回: 同时恢复 t5a, t5b, t5c
+FLASHBACK TABLE t5a, t5b, t5c TO TIMESTAMP @t_before_multi;
+
+--echo # 验证闪回后数据
+SELECT COUNT(*) AS t5a_count FROM t5a;
+SELECT COUNT(*) AS t5b_count FROM t5b;
+SELECT COUNT(*) AS t5c_count FROM t5c;
+SELECT * FROM t5a ORDER BY id;
+SELECT * FROM t5b ORDER BY id;
+SELECT * FROM t5c ORDER BY id;
+
+--echo #
+--echo # TC-002-05 result: 多表 FLASHBACK TABLE 命令执行成功
+--echo #
+
+# =====================================================================
+# TC-002-06: 系统变量交互验证
+# =====================================================================
+--echo #
+--echo # TC-002-06: System variable interaction
+--echo #
+
+--echo # 验证所有闪回相关系统变量的当前值
+SELECT
+  @@innodb_flashback_retention_seconds AS retention_seconds,
+  @@innodb_flashback_enable_binlog_recovery AS binlog_recovery,
+  @@innodb_flashback_max_rows_per_txn AS max_rows_per_txn,
+  @@flashback_dry_run_default AS dry_run_default,
+  @@flashback_require_full_row_image AS require_full_row_image,
+  @@flashback_lock_wait_timeout AS lock_wait_timeout,
+  @@flashback_max_rows AS max_rows;
+
+--echo # 调整保留窗口后验证闪回行为变化
+SET GLOBAL innodb_flashback_retention_seconds = 1800;
+SELECT @@innodb_flashback_retention_seconds AS updated_retention;
+
+--echo # 设置最大行数限制
+SET GLOBAL innodb_flashback_max_rows_per_txn = 50000;
+SELECT @@innodb_flashback_max_rows_per_txn AS updated_max_txn;
+
+--echo # 验证 DRY RUN 默认关闭（确保实际闪回测试不受影响）
+SELECT @@flashback_dry_run_default AS dry_run_state;
+
+--echo #
+--echo # TC-002-06 result: 系统变量可正常读取和修改
+--echo #
+
+# =====================================================================
+# 清理
+# =====================================================================
+--echo #
+--echo # Cleanup
+--echo #
+DROP TABLE IF EXISTS t1, t2, t3, t4, t5a, t5b, t5c;
+
+--echo # 恢复系统变量默认值
+SET GLOBAL binlog_expire_logs_seconds = @save_binlog_expire_logs_seconds;
+SET GLOBAL flashback_dry_run_default = @save_flashback_dry_run_default;
+SET GLOBAL innodb_flashback_retention_seconds = @save_innodb_flashback_retention_seconds;
+
+--echo #
+--echo # End of flashback_table tests (TC-002)
+--echo #

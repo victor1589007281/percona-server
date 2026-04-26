@@ -798,6 +798,9 @@ void warn_on_deprecated_user_defined_collation(
 %token  EXTRACT_SYM 433                   /* SQL-2003-N */
 %token  FALSE_SYM 434                     /* SQL-2003-R */
 %token<lexer.keyword> FAST_SYM 435
+%token<lexer.keyword> FLASHBACK_SYM 2004          /* MYSQL */
+%token<lexer.keyword> DRY_SYM 2005              /* MYSQL */
+%token<lexer.keyword> RUN_SYM 2006              /* MYSQL */
 %token<lexer.keyword> FAULTS_SYM 436
 %token  FETCH_SYM 437                     /* SQL-2003-R */
 %token<lexer.keyword> FILE_SYM 438
@@ -1207,7 +1210,8 @@ void warn_on_deprecated_user_defined_collation(
 %token  TRIGGER_SYM 842                   /* SQL-2003-R */
 %token  TRIM 843                          /* SQL-2003-N */
 %token  TRUE_SYM 844                      /* SQL-2003-R */
-%token<lexer.keyword> TRUNCATE_SYM 845
+%token  TRUNCATE_SYM 845
+%token<lexer.keyword> TRX_ID_SYM 2007           /* MYSQL */
 %token<lexer.keyword> TYPES_SYM 846
 %token<lexer.keyword> TYPE_SYM 847              /* SQL-2003-N */
 %token  OBSOLETE_TOKEN_848 848            /* was:  UDF_RETURNS_SYM */
@@ -1985,6 +1989,7 @@ void warn_on_deprecated_user_defined_collation(
         drop_role_stmt
         drop_srs_stmt
         explain_stmt
+        flashback_stmt
         handler_stmt
         insert_stmt
         keycache_stmt
@@ -2052,7 +2057,11 @@ void warn_on_deprecated_user_defined_collation(
 
 %type <table_ident> table_ident_opt_wild
 
-%type <table_ident_list> table_alias_ref_list table_locking_list
+%type <table_ident_list> table_alias_ref_list table_locking_list flashback_table_list
+
+%type <item> flashback_target flashback_trx_id
+
+%type <num> opt_dry_run
 
 %type <simple_ident_list> simple_ident_list opt_derived_column_list
 
@@ -2472,6 +2481,7 @@ simple_statement:
         | drop_view_stmt                { $$= nullptr; }
         | execute                       { $$= nullptr; }
         | explain_stmt
+        | flashback_stmt
         | flush                         { $$= nullptr; }
         | get_diagnostics               { $$= nullptr; }
         | group_replication             { $$= nullptr; }
@@ -13644,6 +13654,78 @@ truncate_stmt:
           {
             $$= NEW_PTN PT_truncate_table_stmt(@$, $3);
           }
+        ;
+
+/* =================================================================
+ * FLASHBACK TABLE / FLASHBACK TRANSACTION
+ * ================================================================= */
+
+/**
+  FLASHBACK TABLE 语句
+
+  SQL 语法:
+    FLASHBACK TABLE tbl1, tbl2 TO TIMESTAMP '...' [DRY RUN];
+    FLASHBACK TABLE tbl TO TRX_ID 123456;
+
+  WHY: timestamp 和 trx_id 使用 Item* 传递给 PT_flashback_table，
+  因为表达式可能是函数调用 (如 NOW() - INTERVAL 15 MINUTE)。
+*/
+flashback_stmt:
+          FLASHBACK_SYM TABLE_SYM flashback_table_list TO_SYM TIMESTAMP_SYM flashback_target opt_dry_run
+          {
+            $$= NEW_PTN PT_flashback_table(@$, &$3, $6, nullptr, (bool)$7);
+          }
+        | FLASHBACK_SYM TABLE_SYM flashback_table_list TO_SYM TRX_ID_SYM flashback_target opt_dry_run
+          {
+            $$= NEW_PTN PT_flashback_table(@$, &$3, nullptr, $6, (bool)$7);
+          }
+        | FLASHBACK_SYM TRANSACTION_SYM flashback_trx_id
+          {
+            $$= NEW_PTN PT_flashback_transaction(@$, $3);
+          }
+        ;
+
+flashback_table_list:
+          table_ident
+          {
+            $$.init(YYMEM_ROOT);
+            if ($$.push_back($1))
+              MYSQL_YYABORT;
+          }
+        | flashback_table_list ',' table_ident
+          {
+            $$= $1;
+            if ($$.push_back($3))
+              MYSQL_YYABORT;
+          }
+        ;
+
+flashback_target:
+          expr
+          {
+            /* WHY: Accept general expressions (user variables, functions,
+               arithmetic, literals) to allow flexible timestamp specification:
+               FLASHBACK TABLE t1 TO TIMESTAMP '2025-07-28 10:30:00';
+               FLASHBACK TABLE t1 TO TIMESTAMP @my_ts;
+               FLASHBACK TABLE t1 TO TIMESTAMP UNIX_TIMESTAMP() - 60;
+               FLASHBACK TABLE t1 TO TIMESTAMP 1234567890;
+               Using expr avoids reduce/reduce conflicts with text_literal/NUM_literal. */
+            $$ = $1;
+          }
+        ;
+
+flashback_trx_id:
+          expr
+          {
+            /* WHY: Accept expressions for transaction ID specification.
+               Using expr avoids reduce/reduce conflicts with int64_literal. */
+            $$ = $1;
+          }
+        ;
+
+opt_dry_run:
+          %empty                    { $$= 0; }
+        | DRY_SYM RUN_SYM           { $$= 1; }
         ;
 
 opt_table:
