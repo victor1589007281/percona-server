@@ -25,9 +25,9 @@
   @file sql/flashback_sysvars.cc
   Flashback 模块系统变量实现
 
-  本文件定义 Flashback 功能的 7 个系统变量。
+  本文件定义 Flashback 功能的系统变量。
 
-  变量列表:
+  第一批 (初始 7 个):
   ┌──────────────────────────────────────────┬────────┬───────────────┐
   │ 变量名                                   │ 类型   │ 默认值        │
   ├──────────────────────────────────────────┼────────┼───────────────┤
@@ -40,8 +40,39 @@
   │ flashback_max_rows                       │ ulong  │ 10000000      │
   └──────────────────────────────────────────┴────────┴───────────────┘
 
+  第二批 (新增 10 个, 设计参考 DESIGN_UNDO_ARCHITECTURE.md §7):
+
+  §7.1 H1 相关变量 (Flashback ReadView 管理):
+  ┌──────────────────────────────────────────┬────────┬───────────────┐
+  │ 变量名                                   │ 类型   │ 默认值        │
+  ├──────────────────────────────────────────┼────────┼───────────────┤
+  │ innodb_flashback_enabled                 │ bool   │ ON            │
+  │ innodb_flashback_window_seconds          │ ulong  │ 900           │
+  │ innodb_flashback_max_views               │ ulong  │ 256           │
+  │ innodb_flashback_view_ttl_seconds        │ ulong  │ 300           │
+  └──────────────────────────────────────────┴────────┴───────────────┘
+
+  §7.2 H5 相关变量 (Purge Hold 调度):
+  ┌──────────────────────────────────────────┬────────┬───────────────┐
+  │ 变量名                                   │ 类型   │ 默认值        │
+  ├──────────────────────────────────────────┼────────┼───────────────┤
+  │ innodb_purge_hold_enabled                │ bool   │ ON            │
+  │ innodb_purge_hold_max_requests           │ ulong  │ 1024          │
+  │ innodb_purge_hold_time_multiplier        │ double │ 1.5           │
+  └──────────────────────────────────────────┴────────┴───────────────┘
+
+  §7.3 空间管理变量:
+  ┌──────────────────────────────────────────┬────────┬───────────────┐
+  │ 变量名                                   │ 类型   │ 默认值        │
+  ├──────────────────────────────────────────┼────────┼───────────────┤
+  │ innodb_undo_space_warning_threshold      │ double │ 0.75          │
+  │ innodb_undo_space_critical_threshold     │ double │ 0.90          │
+  │ innodb_undo_auto_truncate                │ bool   │ ON            │
+  └──────────────────────────────────────────┴────────┴───────────────┘
+
   设计参考: mysql_flashback_implementation_v2.md §4.3
             mysql_flashback_synthesis_report.md §2.5
+            DESIGN_UNDO_ARCHITECTURE.md §7
 */
 
 #include "sql/flashback_sysvars.h"
@@ -80,6 +111,51 @@ ulong flashback::flashback_lock_wait_timeout = 300;
 ulonglong flashback::flashback_max_rows = 10000000;
 
 /* ================================================================
+ * §7.1 H1 相关变量: Flashback ReadView 管理
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.1
+ * ================================================================ */
+
+/** 闪回功能总开关。默认 ON */
+bool flashback::innodb_flashback_enabled = true;
+
+/** 闪回时间窗口（秒）。默认 900 (15 分钟) */
+ulong flashback::innodb_flashback_window_seconds = 900;
+
+/** 最大并发 ReadView 数。默认 256 */
+ulong flashback::innodb_flashback_max_views = 256;
+
+/** 单个 ReadView 的 TTL（秒）。默认 300 (5 分钟) */
+ulong flashback::innodb_flashback_view_ttl_seconds = 300;
+
+/* ================================================================
+ * §7.2 H5 相关变量: Purge Hold 调度
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.2
+ * ================================================================ */
+
+/** Purge Hold 调度开关。默认 ON */
+bool flashback::innodb_purge_hold_enabled = true;
+
+/** 最大 Hold 请求数。默认 1024 */
+ulong flashback::innodb_purge_hold_max_requests = 1024;
+
+/** 时间延迟乘数。默认 1.5 */
+double flashback::innodb_purge_hold_time_multiplier = 1.5;
+
+/* ================================================================
+ * §7.3 空间管理变量
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.3
+ * ================================================================ */
+
+/** Undo 空间警告阈值。默认 0.75 (75%) */
+double flashback::innodb_undo_space_warning_threshold = 0.75;
+
+/** Undo 空间严重阈值。默认 0.90 (90%) */
+double flashback::innodb_undo_space_critical_threshold = 0.90;
+
+/** Undo 自动截断开关。默认 ON */
+bool flashback::innodb_undo_auto_truncate = true;
+
+/* ================================================================
  * 便捷访问函数实现
  * ================================================================ */
 
@@ -111,6 +187,58 @@ ulong get_lock_wait_timeout() {
 
 ulonglong get_max_rows() {
   return flashback_max_rows;
+}
+
+/* ================================================================
+ * §7.1 H1 便捷访问函数: Flashback ReadView 管理
+ * ================================================================ */
+
+bool is_flashback_enabled() {
+  return innodb_flashback_enabled;
+}
+
+ulong get_flashback_window_seconds() {
+  return innodb_flashback_window_seconds;
+}
+
+ulong get_flashback_max_views() {
+  return innodb_flashback_max_views;
+}
+
+ulong get_flashback_view_ttl_seconds() {
+  return innodb_flashback_view_ttl_seconds;
+}
+
+/* ================================================================
+ * §7.2 H5 便捷访问函数: Purge Hold 调度
+ * ================================================================ */
+
+bool is_purge_hold_enabled() {
+  return innodb_purge_hold_enabled;
+}
+
+ulong get_purge_hold_max_requests() {
+  return innodb_purge_hold_max_requests;
+}
+
+double get_purge_hold_time_multiplier() {
+  return innodb_purge_hold_time_multiplier;
+}
+
+/* ================================================================
+ * §7.3 便捷访问函数: 空间管理
+ * ================================================================ */
+
+double get_undo_space_warning_threshold() {
+  return innodb_undo_space_warning_threshold;
+}
+
+double get_undo_space_critical_threshold() {
+  return innodb_undo_space_critical_threshold;
+}
+
+bool is_undo_auto_truncate() {
+  return innodb_undo_auto_truncate;
 }
 
 }  // namespace flashback

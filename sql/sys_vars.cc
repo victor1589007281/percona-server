@@ -8300,6 +8300,110 @@ static Sys_var_ulonglong Sys_flashback_max_rows(
     NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
 
 /* ================================================================
+ * §7.1 H1 相关变量: Flashback ReadView 管理
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.1
+ * ================================================================ */
+
+static Sys_var_bool Sys_innodb_flashback_enabled(
+    "innodb_flashback_enabled",
+    "Enable or disable the flashback feature. When ON, flashback queries "
+    "(AS OF TIMESTAMP) and flashback table operations are allowed.",
+    GLOBAL_VAR(flashback::innodb_flashback_enabled), CMD_LINE(OPT_ARG),
+    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_innodb_flashback_window_seconds(
+    "innodb_flashback_window_seconds",
+    "Maximum time window (in seconds) for flashback queries. "
+    "Controls how far back in time the flashback can reach. "
+    "Corresponds to undo log retention window.",
+    GLOBAL_VAR(flashback::innodb_flashback_window_seconds),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(60, 86400), DEFAULT(900), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_innodb_flashback_max_views(
+    "innodb_flashback_max_views",
+    "Maximum number of concurrent flashback ReadViews. "
+    "Each AS OF TIMESTAMP query consumes one ReadView slot. "
+    "Increase if you see 'too many views' errors under high concurrency.",
+    GLOBAL_VAR(flashback::innodb_flashback_max_views),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(16, 4096), DEFAULT(256), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_innodb_flashback_view_ttl_seconds(
+    "innodb_flashback_view_ttl_seconds",
+    "Time-to-live (TTL) in seconds for a single flashback ReadView. "
+    "After this period, the ReadView is automatically reclaimed.",
+    GLOBAL_VAR(flashback::innodb_flashback_view_ttl_seconds),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(30, 3600), DEFAULT(300), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+/* ================================================================
+ * §7.2 H5 相关变量: Purge Hold 调度
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.2
+ * ================================================================ */
+
+static Sys_var_bool Sys_innodb_purge_hold_enabled(
+    "innodb_purge_hold_enabled",
+    "Enable or disable the Purge Hold scheduling mechanism. "
+    "When ON, purge operations may be delayed to preserve undo logs "
+    "needed by active flashback queries.",
+    GLOBAL_VAR(flashback::innodb_purge_hold_enabled), CMD_LINE(OPT_ARG),
+    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_ulong Sys_innodb_purge_hold_max_requests(
+    "innodb_purge_hold_max_requests",
+    "Maximum number of concurrent Purge Hold requests. "
+    "Each hold request reserves undo log retention for a time window.",
+    GLOBAL_VAR(flashback::innodb_purge_hold_max_requests),
+    CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(16, 65536), DEFAULT(1024), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_double Sys_innodb_purge_hold_time_multiplier(
+    "innodb_purge_hold_time_multiplier",
+    "Time delay multiplier for purge hold scheduling. "
+    "Higher values increase the delay applied to purge operations "
+    "when flashback queries are active.",
+    GLOBAL_VAR(flashback::innodb_purge_hold_time_multiplier),
+    CMD_LINE(REQUIRED_ARG), VALID_RANGE(0.1, 10.0), DEFAULT(1.5),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+/* ================================================================
+ * §7.3 空间管理变量
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.3
+ * ================================================================ */
+
+static Sys_var_double Sys_innodb_undo_space_warning_threshold(
+    "innodb_undo_space_warning_threshold",
+    "Threshold (0.0-1.0) at which undo space usage triggers a warning. "
+    "When usage exceeds this fraction, a warning is logged.",
+    GLOBAL_VAR(flashback::innodb_undo_space_warning_threshold),
+    CMD_LINE(REQUIRED_ARG), VALID_RANGE(0.1, 0.99), DEFAULT(0.75),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_double Sys_innodb_undo_space_critical_threshold(
+    "innodb_undo_space_critical_threshold",
+    "Threshold (0.0-1.0) at which undo space usage is considered critical. "
+    "When usage exceeds this fraction, aggressive cleanup may be triggered.",
+    GLOBAL_VAR(flashback::innodb_undo_space_critical_threshold),
+    CMD_LINE(REQUIRED_ARG), VALID_RANGE(0.5, 0.99), DEFAULT(0.90),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+static Sys_var_bool Sys_innodb_undo_auto_truncate(
+    "innodb_undo_auto_truncate",
+    "Enable automatic truncation of undo tablespaces when usage exceeds "
+    "the critical threshold. When ON, InnoDB will attempt to truncate "
+    "idle undo tablespaces to reclaim space.",
+    GLOBAL_VAR(flashback::innodb_undo_auto_truncate), CMD_LINE(OPT_ARG),
+    DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(nullptr), ON_UPDATE(nullptr));
+
+/* ================================================================
  * End Flashback system variables
  * ================================================================ */
 

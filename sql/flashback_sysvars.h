@@ -25,7 +25,9 @@
   @file sql/flashback_sysvars.h
   Flashback 模块系统变量声明
 
-  本文件定义 Flashback 功能的 7 个系统变量:
+  本文件定义 Flashback 功能的系统变量:
+
+  第一批 (初始 7 个):
   - innodb_flashback_retention_seconds:      Undo 保留窗口 (秒)
   - innodb_flashback_enable_binlog_recovery: Binlog 长窗口闪回开关
   - innodb_flashback_max_rows_per_txn:       单次事务最大行数
@@ -34,12 +36,32 @@
   - flashback_lock_wait_timeout:             锁等待超时 (秒)
   - flashback_max_rows:                      单次闪回最大行数上限
 
+  第二批 (新增 10 个, 设计参考 DESIGN_UNDO_ARCHITECTURE.md §7):
+
+  §7.1 H1 相关变量 (Flashback ReadView 管理):
+  - innodb_flashback_enabled:                闪回功能总开关
+  - innodb_flashback_window_seconds:         闪回时间窗口 (秒)
+  - innodb_flashback_max_views:              最大并发 ReadView 数
+  - innodb_flashback_view_ttl_seconds:       单个 ReadView TTL
+
+  §7.2 H5 相关变量 (Purge Hold 调度):
+  - innodb_purge_hold_enabled:               Purge Hold 调度开关
+  - innodb_purge_hold_max_requests:          最大 Hold 请求数
+  - innodb_purge_hold_time_multiplier:       时间延迟乘数
+
+  §7.3 空间管理变量:
+  - innodb_undo_space_warning_threshold:     空间警告阈值
+  - innodb_undo_space_critical_threshold:    空间严重阈值
+  - innodb_undo_auto_truncate:               自动截断开关
+
   设计参考: mysql_flashback_implementation_v2.md §4.3
             mysql_flashback_synthesis_report.md §2.5
+            DESIGN_UNDO_ARCHITECTURE.md §7
 
   使用方式:
     #include "sql/flashback_sysvars.h"
     ulong retention = flashback::get_retention_seconds();
+    bool  enabled   = flashback::is_flashback_enabled();
 */
 
 #ifndef FLASHBACK_SYSVARS_INCLUDED
@@ -73,6 +95,51 @@ extern ulong flashback_lock_wait_timeout;
 
 /** 单次闪回最大行数上限（安全阀值）。默认 10000000 */
 extern ulonglong flashback_max_rows;
+
+/* ================================================================
+ * §7.1 H1 相关变量: Flashback ReadView 管理
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.1
+ * ================================================================ */
+
+/** 闪回功能总开关。默认 ON */
+extern bool innodb_flashback_enabled;
+
+/** 闪回时间窗口（秒）。默认 900 (15 分钟) */
+extern ulong innodb_flashback_window_seconds;
+
+/** 最大并发 ReadView 数。默认 256 */
+extern ulong innodb_flashback_max_views;
+
+/** 单个 ReadView 的 TTL（秒）。默认 300 (5 分钟) */
+extern ulong innodb_flashback_view_ttl_seconds;
+
+/* ================================================================
+ * §7.2 H5 相关变量: Purge Hold 调度
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.2
+ * ================================================================ */
+
+/** Purge Hold 调度开关。默认 ON */
+extern bool innodb_purge_hold_enabled;
+
+/** 最大 Hold 请求数。默认 1024 */
+extern ulong innodb_purge_hold_max_requests;
+
+/** 时间延迟乘数。默认 1.5 */
+extern double innodb_purge_hold_time_multiplier;
+
+/* ================================================================
+ * §7.3 空间管理变量
+ * 设计参考: DESIGN_UNDO_ARCHITECTURE.md §7.3
+ * ================================================================ */
+
+/** Undo 空间警告阈值。默认 0.75 (75%) */
+extern double innodb_undo_space_warning_threshold;
+
+/** Undo 空间严重阈值。默认 0.90 (90%) */
+extern double innodb_undo_space_critical_threshold;
+
+/** Undo 自动截断开关。默认 ON */
+extern bool innodb_undo_auto_truncate;
 
 /* ================================================================
  * 便捷访问函数
@@ -125,6 +192,79 @@ ulong get_lock_wait_timeout();
   @return 最大行数上限
 */
 ulonglong get_max_rows();
+
+/* ================================================================
+ * §7.1 H1 便捷访问函数: Flashback ReadView 管理
+ * ================================================================ */
+
+/**
+  检查闪回功能总开关是否启用。
+  @return true 表示启用，false 表示禁用
+*/
+bool is_flashback_enabled();
+
+/**
+  获取闪回时间窗口（秒）。
+  控制闪回查询可回溯的最大时间窗口。
+  @return 时间窗口，单位秒
+*/
+ulong get_flashback_window_seconds();
+
+/**
+  获取最大并发 ReadView 数量。
+  @return 最大并发视图数
+*/
+ulong get_flashback_max_views();
+
+/**
+  获取单个 ReadView 的 TTL（秒）。
+  @return TTL，单位秒
+*/
+ulong get_flashback_view_ttl_seconds();
+
+/* ================================================================
+ * §7.2 H5 便捷访问函数: Purge Hold 调度
+ * ================================================================ */
+
+/**
+  检查 Purge Hold 调度是否启用。
+  @return true 表示启用，false 表示禁用
+*/
+bool is_purge_hold_enabled();
+
+/**
+  获取最大 Hold 请求数。
+  @return 最大请求数
+*/
+ulong get_purge_hold_max_requests();
+
+/**
+  获取时间延迟乘数。
+  @return 乘数值
+*/
+double get_purge_hold_time_multiplier();
+
+/* ================================================================
+ * §7.3 便捷访问函数: 空间管理
+ * ================================================================ */
+
+/**
+  获取 Undo 空间警告阈值。
+  @return 阈值 (0.0-1.0)
+*/
+double get_undo_space_warning_threshold();
+
+/**
+  获取 Undo 空间严重阈值。
+  @return 阈值 (0.0-1.0)
+*/
+double get_undo_space_critical_threshold();
+
+/**
+  检查 Undo 自动截断是否启用。
+  @return true 表示启用
+*/
+bool is_undo_auto_truncate();
 
 }  // namespace flashback
 
