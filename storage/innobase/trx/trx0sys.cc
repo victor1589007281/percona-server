@@ -57,6 +57,38 @@ this program; if not, write to the Free Software Foundation, Inc.,
 /** The transaction system */
 trx_sys_t *trx_sys = nullptr;
 
+/* ============================================================
+   Time Mapping Cache for Flashback Queries
+   Globals for the trx_id → timestamp mapping cache.
+   Implements §8.1 algorithm from the design document.
+   ============================================================ */
+
+/** Maximum entries in the time mapping cache before LRU eviction. */
+static const size_t TRX_SYS_TIME_MAPPING_MAX_ENTRIES = 10000;
+
+/** Ordered mapping from trx_id to commit timestamp.
+   Sorted by trx_id (ascending) to support binary search. */
+static std::map<trx_id_t, trx_sys_time_mapping_entry_t>
+    g_time_mapping_cache;
+
+/** Mutex protecting g_time_mapping_cache.
+    WHY: Separate from trx_sys->mutex to avoid contention.
+    Time mapping operations are read-heavy and should not block
+    core transaction processing. */
+static TrxSysMutex g_time_mapping_mutex;
+
+/** LRU eviction list: trx_ids in insertion order.
+    When cache is full, the oldest entry (front) is evicted. */
+static std::list<trx_id_t> g_time_mapping_lru_list;
+
+/** Cache statistics. */
+static std::atomic<size_t> g_time_mapping_hits{0};
+static std::atomic<size_t> g_time_mapping_misses{0};
+
+/* Forward declarations (defined later in the file). */
+static void trx_sys_time_mapping_mutex_init();
+static void trx_sys_time_mapping_mutex_destroy();
+
 /** Check whether transaction id is valid.
 @param[in]      id      transaction id to check
 @param[in]      name    table name */
@@ -600,6 +632,9 @@ void trx_sys_create(void) {
   mutex_create(LATCH_ID_TRX_SYS, &trx_sys->mutex);
   mutex_create(LATCH_ID_TRX_SYS_SERIALISATION, &trx_sys->serialisation_mutex);
 
+  /* Initialize the time mapping cache mutex for flashback queries. */
+  trx_sys_time_mapping_mutex_init();
+
   UT_LIST_INIT(trx_sys->serialisation_list);
   UT_LIST_INIT(trx_sys->rw_trx_list);
   UT_LIST_INIT(trx_sys->mysql_trx_list);
@@ -687,6 +722,11 @@ void trx_sys_close(void) {
   /* We used placement new to create this mutex. Call the destructor. */
   mutex_free(&trx_sys->serialisation_mutex);
   mutex_free(&trx_sys->mutex);
+
+  /* Cleanup time mapping cache for flashback queries. */
+  trx_sys_time_mapping_mutex_destroy();
+  g_time_mapping_cache.clear();
+  g_time_mapping_lru_list.clear();
 
   trx_sys->rw_trx_ids.~trx_ids_t();
 
@@ -923,6 +963,307 @@ trx_id_t trx_sys_find_trx_id_by_timestamp(my_time_t target_ts) {
 
   trx_sys_mutex_exit();
   return estimated_id;
+}
+
+/* ============================================================
+   Time Mapping Cache for Flashback Queries
+   Implements §8.1 algorithm from the design document.
+   ============================================================ */
+
+/** Initialize the time mapping mutex (called from trx_sys_create). */
+static void trx_sys_time_mapping_mutex_init() {
+  mutex_create(LATCH_ID_TRX_SYS, &g_time_mapping_mutex);
+}
+
+/** Destroy the time mapping mutex (called from trx_sys_close). */
+static void trx_sys_time_mapping_mutex_destroy() {
+  mutex_free(&g_time_mapping_mutex);
+}
+
+/** Acquire the time mapping cache mutex. */
+static void trx_sys_time_mapping_mutex_enter() {
+  mutex_enter(&g_time_mapping_mutex);
+}
+
+/** Release the time mapping cache mutex. */
+static void trx_sys_time_mapping_mutex_exit() {
+  g_time_mapping_mutex.exit();
+}
+
+/** Evict the oldest entry from the cache (LRU policy).
+    Caller must hold g_time_mapping_mutex. */
+static void trx_sys_time_mapping_evict_oldest() {
+  if (g_time_mapping_lru_list.empty()) {
+    return;
+  }
+
+  /* Evict from the front (oldest inserted). */
+  trx_id_t oldest_trx_id = g_time_mapping_lru_list.front();
+  g_time_mapping_lru_list.pop_front();
+  g_time_mapping_cache.erase(oldest_trx_id);
+}
+
+/** Register a transaction commit in the time mapping cache.
+    Caller must hold g_time_mapping_mutex.
+
+    @param[in] trx_id           Transaction ID
+    @param[in] commit_timestamp Commit timestamp */
+static void trx_sys_time_mapping_register_internal(
+    trx_id_t trx_id, my_time_t commit_timestamp) {
+  /* Check for duplicate: if trx_id already exists, update it
+     and move to end of LRU list. */
+  auto it = g_time_mapping_cache.find(trx_id);
+  if (it != g_time_mapping_cache.end()) {
+    it->second.commit_timestamp = commit_timestamp;
+
+    /* Move to end of LRU list (most recently updated). */
+    g_time_mapping_lru_list.remove(trx_id);
+    g_time_mapping_lru_list.push_back(trx_id);
+    return;
+  }
+
+  /* Evict if cache is full. */
+  if (g_time_mapping_cache.size() >= TRX_SYS_TIME_MAPPING_MAX_ENTRIES) {
+    trx_sys_time_mapping_evict_oldest();
+  }
+
+  /* Insert new entry. */
+  trx_sys_time_mapping_entry_t entry{trx_id, commit_timestamp};
+  g_time_mapping_cache.emplace(trx_id, entry);
+  g_time_mapping_lru_list.push_back(trx_id);
+}
+
+/** Register a transaction commit in the time mapping cache.
+    Thread-safe wrapper.
+
+    @param[in] trx_id           Transaction ID
+    @param[in] commit_timestamp Commit timestamp */
+void trx_sys_time_mapping_register(trx_id_t trx_id,
+                                   my_time_t commit_timestamp) {
+  if (trx_sys == nullptr) {
+    return;
+  }
+
+  trx_sys_time_mapping_mutex_enter();
+  trx_sys_time_mapping_register_internal(trx_id, commit_timestamp);
+  trx_sys_time_mapping_mutex_exit();
+}
+
+/** Binary search helper: find the first entry with commit_timestamp >= target.
+    Caller must hold g_time_mapping_mutex.
+
+    WHY: std::map is ordered by key (trx_id), not by value (timestamp).
+    We need to scan linearly to find the timestamp boundary.
+    This is O(N) worst case, but in practice the cache is small and
+    timestamps are roughly monotonic with trx_id, so the scan is fast.
+
+    @param[in] target Target timestamp
+    @return Iterator to the first entry >= target, or end() if none */
+static std::map<trx_id_t, trx_sys_time_mapping_entry_t>::iterator
+trx_sys_time_mapping_binary_search(my_time_t target) {
+  if (g_time_mapping_cache.empty()) {
+    return g_time_mapping_cache.end();
+  }
+
+  /* Since trx_id is roughly monotonic with timestamp, we can use
+     a simple forward scan. For better performance, we could maintain
+     a secondary index by timestamp, but that adds complexity. */
+  for (auto it = g_time_mapping_cache.begin();
+       it != g_time_mapping_cache.end(); ++it) {
+    if (it->second.commit_timestamp >= target) {
+      return it;
+    }
+  }
+
+  return g_time_mapping_cache.end();
+}
+
+/** Query the transaction ID that was active at a given timestamp.
+    Implements §8.1 algorithm: binary search on the mapping cache.
+
+    @param[in] target_ts Target timestamp (Unix epoch seconds)
+    @return Query result with estimated trx_id and window info */
+trx_sys_time_mapping_result_t trx_sys_time_mapping_query(
+    my_time_t target_ts) {
+  trx_sys_time_mapping_result_t result{};
+  result.trx_id = TRX_ID_MAX;
+  result.timestamp = 0;
+  result.is_exact = false;
+  result.oldest_undo_ts = 0;
+  result.is_within_window = false;
+
+  if (trx_sys == nullptr) {
+    return result;
+  }
+
+  trx_sys_time_mapping_mutex_enter();
+
+  if (g_time_mapping_cache.empty()) {
+    /* WHY: No mapping data available. This could mean:
+       - The cache was evicted due to LRU
+       - The system just started and hasn't loaded data yet
+       Return TRX_ID_MAX to indicate the caller should fall back
+       to the heuristic approach (trx_sys_find_trx_id_by_timestamp). */
+    g_time_mapping_misses.fetch_add(1, std::memory_order_relaxed);
+    trx_sys_time_mapping_mutex_exit();
+    return result;
+  }
+
+  /* Step 1: Binary search for the target timestamp (§8.1 step 3-6). */
+  auto it = trx_sys_time_mapping_binary_search(target_ts);
+
+  if (it == g_time_mapping_cache.end()) {
+    /* Target is after all cached entries: use the newest entry. */
+    auto last = std::prev(g_time_mapping_cache.end());
+    result.trx_id = last->second.trx_id;
+    result.timestamp = last->second.commit_timestamp;
+    result.is_exact = true;
+    g_time_mapping_hits.fetch_add(1, std::memory_order_relaxed);
+  } else if (it->second.commit_timestamp == target_ts) {
+    /* Exact match found (§8.1 step 5). */
+    result.trx_id = it->second.trx_id;
+    result.timestamp = it->second.commit_timestamp;
+    result.is_exact = true;
+    g_time_mapping_hits.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    /* Approximate match (§8.1 step 6).
+       The found entry has timestamp > target, so the transaction
+       that was active at target_ts is between the previous entry
+       and this one. We return the found entry's trx_id as an
+       upper bound for the ReadView. */
+    result.trx_id = it->second.trx_id;
+    result.timestamp = it->second.commit_timestamp;
+    result.is_exact = false;
+    g_time_mapping_misses.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  /* Step 2: Get the oldest available timestamp from the cache. */
+  auto first = g_time_mapping_cache.begin();
+  result.oldest_undo_ts = first->second.commit_timestamp;
+
+  /* Step 3: Check if target is within the undo window. */
+  result.is_within_window = (target_ts >= result.oldest_undo_ts);
+
+  trx_sys_time_mapping_mutex_exit();
+  return result;
+}
+
+/** Batch register multiple transaction commit entries.
+    Used during startup to load the mapping cache from persisted data.
+
+    @param[in] entries Array of mapping entries
+    @param[in] count   Number of entries */
+void trx_sys_time_mapping_batch_load(
+    const trx_sys_time_mapping_entry_t *entries, size_t count) {
+  if (entries == nullptr || count == 0) {
+    return;
+  }
+
+  trx_sys_time_mapping_mutex_enter();
+
+  for (size_t i = 0; i < count; ++i) {
+    /* Evict if cache is full. */
+    while (g_time_mapping_cache.size() >= TRX_SYS_TIME_MAPPING_MAX_ENTRIES) {
+      trx_sys_time_mapping_evict_oldest();
+    }
+    trx_sys_time_mapping_register_internal(entries[i].trx_id,
+                                           entries[i].commit_timestamp);
+  }
+
+  trx_sys_time_mapping_mutex_exit();
+}
+
+/** Get the oldest available undo timestamp from the mapping cache.
+    @return Oldest timestamp, or 0 if cache is empty */
+my_time_t trx_sys_time_mapping_get_oldest_timestamp(void) {
+  if (trx_sys == nullptr) {
+    return 0;
+  }
+
+  trx_sys_time_mapping_mutex_enter();
+
+  my_time_t oldest_ts = 0;
+  if (!g_time_mapping_cache.empty()) {
+    oldest_ts = g_time_mapping_cache.begin()->second.commit_timestamp;
+  }
+
+  trx_sys_time_mapping_mutex_exit();
+  return oldest_ts;
+}
+
+/** Get the number of entries currently in the mapping cache.
+    @return Cache entry count */
+size_t trx_sys_time_mapping_entry_count(void) {
+  if (trx_sys == nullptr) {
+    return 0;
+  }
+
+  trx_sys_time_mapping_mutex_enter();
+  size_t count = g_time_mapping_cache.size();
+  trx_sys_time_mapping_mutex_exit();
+  return count;
+}
+
+/** Rebuild the time mapping cache from undo logs during crash recovery.
+    Scans the undo log headers in rollback segments to recover the
+    trx_id -> timestamp mapping.
+
+    @return Number of entries recovered, or 0 on failure */
+size_t trx_sys_time_mapping_recover_from_undo(void) {
+  if (trx_sys == nullptr) {
+    return 0;
+  }
+
+  /* WHY: During crash recovery, the in-memory mapping cache is lost.
+     We need to rebuild it from the persistent undo logs.
+     Each undo log header contains the trx_id of the transaction that
+     created it.
+
+     Note: Undo logs don't store commit timestamps directly.
+     We use the current time as an approximation during recovery.
+     The cache will be populated with accurate timestamps as new
+     transactions commit after recovery is complete. */
+
+  size_t recovered_count = 0;
+  my_time_t recovery_ts = static_cast<my_time_t>(
+      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+
+  trx_sys_time_mapping_mutex_enter();
+
+  /* Iterate through all rollback segments. */
+  for (auto *rseg : trx_sys->rsegs) {
+    if (rseg == nullptr) {
+      continue;
+    }
+
+    /* Scan the history list (committed update undo logs) for this rseg.
+       The history list is stored in the rseg header page as a file-based
+       list. We iterate it using the in-memory representation. */
+    for (auto *undo = UT_LIST_GET_FIRST(rseg->update_undo_list);
+         undo != nullptr &&
+         recovered_count < TRX_SYS_TIME_MAPPING_MAX_ENTRIES;
+         undo = UT_LIST_GET_NEXT(undo_list, undo)) {
+      trx_sys_time_mapping_entry_t entry{undo->trx_id, recovery_ts};
+      trx_sys_time_mapping_register_internal(entry.trx_id,
+                                             entry.commit_timestamp);
+      recovered_count++;
+    }
+
+    /* Also scan the cached update undo logs. */
+    for (auto *undo = UT_LIST_GET_FIRST(rseg->update_undo_cached);
+         undo != nullptr &&
+         recovered_count < TRX_SYS_TIME_MAPPING_MAX_ENTRIES;
+         undo = UT_LIST_GET_NEXT(undo_list, undo)) {
+      trx_sys_time_mapping_entry_t entry{undo->trx_id, recovery_ts};
+      trx_sys_time_mapping_register_internal(entry.trx_id,
+                                             entry.commit_timestamp);
+      recovered_count++;
+    }
+  }
+
+  trx_sys_time_mapping_mutex_exit();
+
+  return recovered_count;
 }
 
 #endif /* !UNIV_HOTBACKUP */

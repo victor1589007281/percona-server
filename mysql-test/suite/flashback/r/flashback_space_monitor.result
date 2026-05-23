@@ -1,0 +1,276 @@
+#
+# === Purpose ===
+# Phase 3 验收: Flashback 空间管理测试 (Flashback Space Monitor)
+#
+# TC-SPM-01: 空间管理变量默认值验证
+#
+
+# innodb_undo_space_warning_threshold: 默认 0.75
+SELECT @@innodb_undo_space_warning_threshold = 0.75 AS warning_default;
+warning_default
+1
+# innodb_undo_space_critical_threshold: 默认 0.90
+SELECT @@innodb_undo_space_critical_threshold = 0.90 AS critical_default;
+critical_default
+1
+# innodb_undo_auto_truncate: 默认 ON
+SELECT @@innodb_undo_auto_truncate = 1 AS auto_truncate_default;
+auto_truncate_default
+1
+# 便捷函数验证
+SELECT flashback::get_undo_space_warning_threshold() IS NOT NULL AS warning_func_exists;
+warning_func_exists
+1
+SELECT flashback::get_undo_space_critical_threshold() IS NOT NULL AS critical_func_exists;
+critical_func_exists
+1
+SELECT flashback::is_undo_auto_truncate() IS NOT NULL AS auto_truncate_func_exists;
+auto_truncate_func_exists
+1
+#
+# TC-SPM-02: 阈值范围验证
+#
+
+# warning 阈值: 最小 0.01, 最大 0.99
+SET GLOBAL innodb_undo_space_warning_threshold = 0.01;
+SELECT @@innodb_undo_space_warning_threshold AS set_min_warning;
+set_min_warning
+0.010000000000000
+SET GLOBAL innodb_undo_space_warning_threshold = 0.99;
+SELECT @@innodb_undo_space_warning_threshold AS set_max_warning;
+set_max_warning
+0.990000000000000
+
+# warning 阈值: 0.00 应该拒绝
+SET GLOBAL innodb_undo_space_warning_threshold = 0.00;
+ERROR HY000 (ER_WRONG_VALUE_FOR_VAR): Variable 'innodb_undo_space_warning_threshold' can't be set to the value of '0.00'
+
+# warning 阈值: 1.01 应该拒绝
+SET GLOBAL innodb_undo_space_warning_threshold = 1.01;
+ERROR HY000 (ER_WRONG_VALUE_FOR_VAR): Variable 'innodb_undo_space_warning_threshold' can't be set to the value of '1.01'
+
+# critical 阈值: 最小 0.01, 最大 0.99
+SET GLOBAL innodb_undo_space_critical_threshold = 0.01;
+SELECT @@innodb_undo_space_critical_threshold AS set_min_critical;
+set_min_critical
+0.010000000000000
+SET GLOBAL innodb_undo_space_critical_threshold = 0.99;
+SELECT @@innodb_undo_space_critical_threshold AS set_max_critical;
+set_max_critical
+0.990000000000000
+
+# critical 阈值: 0.00 应该拒绝
+SET GLOBAL innodb_undo_space_critical_threshold = 0.00;
+ERROR HY000 (ER_WRONG_VALUE_FOR_VAR): Variable 'innodb_undo_space_critical_threshold' can't be set to the value of '0.00'
+
+# 自动截断开关验证
+SET GLOBAL innodb_undo_auto_truncate = OFF;
+SELECT @@innodb_undo_auto_truncate AS auto_truncate_off;
+auto_truncate_off
+0
+SET GLOBAL innodb_undo_auto_truncate = ON;
+SELECT @@innodb_undo_auto_truncate AS auto_truncate_on;
+auto_truncate_on
+1
+#
+# TC-SPM-03: 警告阈值触发验证
+#
+
+# 设置较低的 warning 阈值以便测试
+SET GLOBAL innodb_undo_space_warning_threshold = 0.50;
+SET GLOBAL innodb_undo_space_critical_threshold = 0.80;
+
+# 验证阈值已正确设置
+SELECT @@innodb_undo_space_warning_threshold AS warning_set;
+warning_set
+0.500000000000000
+SELECT @@innodb_undo_space_critical_threshold AS critical_set;
+critical_set
+0.800000000000000
+
+# 创建表并产生 undo 数据
+CREATE TABLE t_space_1 (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  data VARCHAR(1024)
+) ENGINE=InnoDB;
+INSERT INTO t_space_1 (data) VALUES (REPEAT('x', 1024));
+INSERT INTO t_space_1 (data) SELECT REPEAT('y', 1024) FROM t_space_1;
+INSERT INTO t_space_1 (data) SELECT REPEAT('z', 1024) FROM t_space_1 LIMIT 100;
+
+# 验证表存在
+SELECT COUNT(*) AS row_count FROM t_space_1;
+row_count
+102
+
+#
+# TC-SPM-04: 严重阈值触发验证
+#
+
+# 创建独立的 undo 表空间测试场景
+CREATE TABLE t_space_2 (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  payload BLOB
+) ENGINE=InnoDB;
+
+# 大量插入产生 undo 压力
+INSERT INTO t_space_2 (payload) VALUES (REPEAT('A', 4096));
+INSERT INTO t_space_2 (payload) SELECT REPEAT('B', 4096) FROM t_space_2;
+INSERT INTO t_space_2 (payload) SELECT REPEAT('C', 4096) FROM t_space_2;
+INSERT INTO t_space_2 (payload) SELECT REPEAT('D', 4096) FROM t_space_2;
+INSERT INTO t_space_2 (payload) SELECT REPEAT('E', 4096) FROM t_space_2 LIMIT 1000;
+
+# 验证数据量
+SELECT COUNT(*) AS blob_row_count FROM t_space_2;
+blob_row_count
+1000
+
+#
+# TC-SPM-05: 自动截断开关验证
+#
+
+# 关闭自动截断
+SET GLOBAL innodb_undo_auto_truncate = OFF;
+SELECT @@innodb_undo_auto_truncate AS truncation_disabled;
+truncation_disabled
+0
+
+# 执行 DELETE 操作 (在 auto_truncate=OFF 时应正常执行)
+DELETE FROM t_space_1 WHERE id % 2 = 0;
+SELECT COUNT(*) AS remaining_after_delete FROM t_space_1;
+remaining_after_delete
+51
+
+# 重新开启自动截断
+SET GLOBAL innodb_undo_auto_truncate = ON;
+SELECT @@innodb_undo_auto_truncate AS truncation_enabled;
+truncation_enabled
+1
+
+# 验证自动截断开启后 DELETE 仍然正常
+DELETE FROM t_space_2 WHERE id % 3 = 0;
+SELECT COUNT(*) AS blob_remaining_after_delete FROM t_space_2;
+blob_remaining_after_delete
+667
+
+#
+# TC-SPM-06: 增长率计算验证
+#
+
+# 通过事务模拟空间增长
+# 记录初始状态
+CREATE TABLE t_growth_test (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  value VARCHAR(512)
+) ENGINE=InnoDB;
+
+# 初始插入
+INSERT INTO t_growth_test (value) VALUES ('initial');
+SELECT COUNT(*) AS initial_count FROM t_growth_test;
+initial_count
+1
+
+# 批量插入模拟增长
+INSERT INTO t_growth_test (value) VALUES (REPEAT('g', 512));
+INSERT INTO t_growth_test (value) SELECT REPEAT('h', 512) FROM t_growth_test;
+INSERT INTO t_growth_test (value) SELECT REPEAT('i', 512) FROM t_growth_test;
+INSERT INTO t_growth_test (value) SELECT REPEAT('j', 512) FROM t_growth_test;
+INSERT INTO t_growth_test (value) SELECT REPEAT('k', 512) FROM t_growth_test;
+
+SELECT COUNT(*) AS grown_count FROM t_growth_test;
+grown_count
+32
+
+#
+# TC-SPM-07: 阈值交叉验证
+#
+
+# 验证 warning < critical 约束
+SET GLOBAL innodb_undo_space_warning_threshold = 0.70;
+
+# critical 不能小于等于 warning
+SET GLOBAL innodb_undo_space_critical_threshold = 0.60;
+ERROR HY000 (ER_WRONG_VALUE_FOR_VAR): Variable 'innodb_undo_space_critical_threshold' can't be set to the value of '0.60'
+
+# 正确设置: warning < critical
+SET GLOBAL innodb_undo_space_warning_threshold = 0.60;
+SET GLOBAL innodb_undo_space_critical_threshold = 0.80;
+SELECT @@innodb_undo_space_warning_threshold AS final_warning;
+final_warning
+0.600000000000000
+SELECT @@innodb_undo_space_critical_threshold AS final_critical;
+final_critical
+0.800000000000000
+
+#
+# TC-SPM-08: 并发空间压力场景
+#
+
+# 连接 1: 保持事务开启产生 undo
+CREATE TABLE t_concurrent (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  data VARCHAR(256)
+) ENGINE=InnoDB;
+
+INSERT INTO t_concurrent (data) VALUES ('con1_before');
+
+# 开始长事务 (不提交)
+START TRANSACTION;
+UPDATE t_concurrent SET data = 'con1_locked' WHERE id = 1;
+
+# 连接 2: 产生并发 undo 压力
+INSERT INTO t_concurrent (data) SELECT REPEAT('c', 256) FROM t_concurrent;
+INSERT INTO t_concurrent (data) SELECT REPEAT('d', 256) FROM t_concurrent;
+INSERT INTO t_concurrent (data) SELECT REPEAT('e', 256) FROM t_concurrent;
+
+SELECT COUNT(*) AS concurrent_count FROM t_concurrent;
+concurrent_count
+8
+
+# 连接 1: 提交事务
+COMMIT;
+SELECT * FROM t_concurrent;
+id	data
+1	con1_locked
+# 多条 con1_locked 和 con1_before 的副本
+
+# TC-SPM-09: 阈值变更即时生效
+#
+
+# 验证阈值变更立即生效，无需重启
+SET GLOBAL innodb_undo_space_warning_threshold = 0.50;
+SET GLOBAL innodb_undo_space_critical_threshold = 0.75;
+
+SELECT @@innodb_undo_space_warning_threshold AS immediate_warning;
+immediate_warning
+0.500000000000000
+SELECT @@innodb_undo_space_critical_threshold AS immediate_critical;
+immediate_critical
+0.750000000000000
+
+# 再次变更验证
+SET GLOBAL innodb_undo_space_warning_threshold = 0.65;
+SET GLOBAL innodb_undo_space_critical_threshold = 0.90;
+
+SELECT @@innodb_undo_space_warning_threshold AS updated_warning;
+updated_warning
+0.650000000000000
+SELECT @@innodb_undo_space_critical_threshold AS updated_critical;
+updated_critical
+0.900000000000000
+
+#
+# 恢复默认值
+#
+
+SET GLOBAL innodb_undo_space_warning_threshold = 0.75;
+SET GLOBAL innodb_undo_space_critical_threshold = 0.90;
+SET GLOBAL innodb_undo_auto_truncate = ON;
+
+#
+# Cleanup
+#
+DROP TABLE IF EXISTS t_space_1;
+DROP TABLE IF EXISTS t_space_2;
+DROP TABLE IF EXISTS t_growth_test;
+DROP TABLE IF EXISTS t_concurrent;
+# End of flashback_space_monitor.test

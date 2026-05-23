@@ -34,7 +34,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <stddef.h>
 
 #include "btr0btr.h"
-#include "current_thd.h"
+#include <current_thd.h>
 #include "dict0boot.h"
 #include "dict0dict.h"
 #include "ha_prototypes.h"
@@ -55,6 +55,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0trx.h"
 #include "trx0undo.h"
 
+#include <sql_class.h>
 #include "my_dbug.h"
 
 /** Check whether all non-virtual columns in a index entries match
@@ -1498,6 +1499,21 @@ void row_build_flashback_read_view(trx_id_t target_trx_id, ReadView &view) {
   trx_sys_mutex_exit();
 }
 
+/** Check if the current thread has been interrupted (killed).
+ *
+ * WHY: Flashback operations may traverse long version chains. Checking
+ * thd->killed at the entry point allows the caller to abort early if the
+ * query was cancelled (e.g. via KILL QUERY or server shutdown).
+ *
+ * @return true if interrupted, false otherwise */
+static inline bool flashback_check_interrupted() {
+  THD *thd = current_thd;
+  if (thd == nullptr) {
+    return false; /* No THD context (background thread) — not interruptible */
+  }
+  return thd->is_killed() != 0;
+}
+
 /** Builds a historical version of a clustered index record as of a given
 transaction ID. Used for flashback queries (SELECT ... AS OF TRX_ID).
 
@@ -1528,8 +1544,9 @@ flashback queries this is less critical as the read is fast.
 @param[out] vrow            Output: virtual column data, if any.
 @param[out] lob_undo        Output: LOB undo info for flashback LOB reads.
 @return DB_SUCCESS on success, DB_MISSING_HISTORY if undo log has been
-        purged before the target transaction. */
-dberr_t row_build_flashback_version(
+        purged before the target transaction, DB_INTERRUPTED if the query
+        was cancelled. */
+[[nodiscard]] dberr_t row_build_flashback_version(
     const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
     trx_id_t target_trx_id, mem_heap_t **offset_heap, mem_heap_t *in_heap,
     rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo) {
@@ -1540,6 +1557,13 @@ dberr_t row_build_flashback_version(
         mtr_memo_contains_page(mtr, rec, MTR_MEMO_PAGE_S_FIX));
   ut_ad(!rw_lock_own(&(purge_sys->latch), RW_LOCK_S));
   ut_ad(rec_offs_validate(rec, index, *offsets));
+
+  /* Check if the query has been interrupted before starting the flashback.
+     WHY: Flashback may traverse long version chains; check early to avoid
+     unnecessary work if the query was already cancelled. */
+  if (flashback_check_interrupted()) {
+    return DB_INTERRUPTED;
+  }
 
   /* Validate the target_trx_id is within a reasonable range.
      If target_trx_id is larger than the next allocatable ID, the
@@ -1576,9 +1600,60 @@ dberr_t row_build_flashback_version(
       rec, mtr, index, offsets, &flashback_view, offset_heap, in_heap,
       old_vers, vrow, lob_undo);
 
-  /* Mark the view as closed so its destructor won't attempt cleanup
-     through the MVCC manager (we never registered it there). */
-  flashback_view.close();
+  /* Do NOT call flashback_view.close():
+     WHY: close() asserts m_creator_trx_id != TRX_ID_MAX, but we set
+     m_creator_trx_id to TRX_ID_MAX in row_build_flashback_read_view() to
+     indicate this view is not owned by any transaction. Since we never
+     registered this view with the MVCC manager, there is nothing to
+     clean up — the stack-allocated object's destructor handles everything. */
 
   return err;
+}
+
+/** Builds a historical version of a clustered index record using a caller-
+provided ReadView. This overload is useful when the caller has already
+constructed a ReadView (e.g. from a timestamp via trx_sys_find_trx_id_by_
+timestamp) and wants to reuse it across multiple rows.
+
+@param[in]  rec             Current clustered index record. Caller must hold
+                            a page latch on rec.
+@param[in]  mtr             Mini-transaction holding the latch on rec.
+@param[in]  index           Clustered index descriptor.
+@param[in]  offsets         Offsets for rec, computed via rec_get_offsets().
+@param[in]  view            Pre-constructed ReadView defining visibility.
+                            Must remain valid for the duration of the call.
+@param[in,out] offset_heap  Memory heap for offset allocations.
+@param[in]  in_heap         Memory heap for the output record.
+@param[out] old_vers        Output: the historical version, or nullptr if
+                            the record was freshly inserted after the target
+                            point (or undo history has been purged).
+@param[out] vrow            Output: virtual column data, if any.
+@param[out] lob_undo        Output: LOB undo info for flashback LOB reads.
+@return DB_SUCCESS on success, DB_MISSING_HISTORY if undo log has been
+        purged before the target point, DB_INTERRUPTED if the query
+        was cancelled. */
+[[nodiscard]] dberr_t row_build_flashback_version_with_view(
+    const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
+    ReadView *view, mem_heap_t **offset_heap, mem_heap_t *in_heap,
+    rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo) {
+  DBUG_TRACE;
+
+  ut_ad(index->is_clustered());
+  ut_ad(view != nullptr);
+  ut_ad(rec_offs_validate(rec, index, *offsets));
+
+  /* Check if the query has been interrupted before starting the flashback. */
+  if (flashback_check_interrupted()) {
+    return DB_INTERRUPTED;
+  }
+
+  /* Reset the collected LOB undo information. */
+  if (lob_undo != nullptr) {
+    lob_undo->reset();
+  }
+
+  /* Reuse the existing version chain traversal logic. */
+  return row_vers_build_for_consistent_read(
+      rec, mtr, index, offsets, view, offset_heap, in_heap, old_vers, vrow,
+      lob_undo);
 }

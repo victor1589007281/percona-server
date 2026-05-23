@@ -47,8 +47,14 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0sys.h"
 #endif /* UNIV_HOTBACKUP */
 
+/** 前向声明 */
+class PurgeHoldScheduler;
+
 /** The global data structure coordinating a purge */
 extern trx_purge_t *purge_sys;
+
+/** Purge Hold 调度器全局实例 (供 flashback 模块创建和使用) */
+extern PurgeHoldScheduler *purge_hold_scheduler;
 
 /** Calculates the file address of an undo log header when we have the file
  address of its history list node.

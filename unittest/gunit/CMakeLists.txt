@@ -298,6 +298,12 @@ SET(SERVER_TESTS
   ha_info_iterator
   xid_extract
   log_event_status_size
+  flashback_asof_e2e
+  flashback_view_manager
+  flashback_ddl_barrier
+  flashback_checkpoint
+  flashback_purge_guard
+  flashback_types
 )
 # Hangs forever.
 IF(LINUX_ARM AND CMAKE_BUILD_TYPE_UPPER STREQUAL "RELWITHDEBINFO")

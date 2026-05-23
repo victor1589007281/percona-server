@@ -257,6 +257,11 @@ SET(INNOBASE_SOURCES
   trx/trx0undo.cc
   flashback/flashback_purge_guard.cc
   flashback/flashback_undo_engine.cc
+  flashback/flashback_view_manager.cc
+  flashback/flashback_space_monitor.cc
+  flashback/purge_hold_scheduler.cc
+  flashback/undo_timestamp_mapper.cc
+  flashback/version_chain_guard.cc
   usr/usr0sess.cc
   ut/ut0dbg.cc
   ut/ut0list.cc

@@ -163,10 +163,31 @@ constructing a ReadView that treats all transactions >= target_trx_id as
 @param[out] vrow            Output: virtual column data, if any.
 @param[out] lob_undo        Output: LOB undo info for flashback LOB reads.
 @return DB_SUCCESS on success, DB_MISSING_HISTORY if undo log has been
-        purged before the target transaction. */
+        purged before the target transaction, DB_INTERRUPTED if the query
+        was cancelled. */
 [[nodiscard]] dberr_t row_build_flashback_version(
     const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
     trx_id_t target_trx_id, mem_heap_t **offset_heap, mem_heap_t *in_heap,
+    rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo);
+
+/** Builds a historical version of a clustered index record using a caller-
+provided ReadView. Useful when the caller has already constructed a ReadView
+and wants to reuse it across multiple rows.
+
+@param[in]  rec             Current clustered index record.
+@param[in]  mtr             Mini-transaction holding the latch on rec.
+@param[in]  index           Clustered index descriptor.
+@param[in]  offsets         Offsets for rec.
+@param[in]  view            Pre-constructed ReadView defining visibility.
+@param[in,out] offset_heap  Memory heap for offset allocations.
+@param[in]  in_heap         Memory heap for the output record.
+@param[out] old_vers        Output: the historical version, or nullptr.
+@param[out] vrow            Output: virtual column data, if any.
+@param[out] lob_undo        Output: LOB undo info.
+@return DB_SUCCESS on success, DB_MISSING_HISTORY or DB_INTERRUPTED. */
+[[nodiscard]] dberr_t row_build_flashback_version_with_view(
+    const rec_t *rec, mtr_t *mtr, dict_index_t *index, ulint **offsets,
+    ReadView *view, mem_heap_t **offset_heap, mem_heap_t *in_heap,
     rec_t **old_vers, const dtuple_t **vrow, lob::undo_vers_t *lob_undo);
 
 #include "row0vers.ic"

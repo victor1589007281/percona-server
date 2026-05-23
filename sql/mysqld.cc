@@ -4398,6 +4398,22 @@ SHOW_VAR com_status_vars[] = {
      SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
     {"clone", (char *)offsetof(System_status_var, com_stat[(uint)SQLCOM_CLONE]),
      SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
+    {"flashback_table",
+     (char *)offsetof(System_status_var,
+                      com_stat[(uint)SQLCOM_FLASHBACK_TABLE]),
+     SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
+    {"flashback_query",
+     (char *)offsetof(System_status_var,
+                      com_stat[(uint)SQLCOM_FLASHBACK_QUERY]),
+     SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
+    {"flashback_versions",
+     (char *)offsetof(System_status_var,
+                      com_stat[(uint)SQLCOM_FLASHBACK_VERSIONS]),
+     SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
+    {"flashback_transaction",
+     (char *)offsetof(System_status_var,
+                      com_stat[(uint)SQLCOM_FLASHBACK_TRANSACTION]),
+     SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
     {"commit",
      (char *)offsetof(System_status_var, com_stat[(uint)SQLCOM_COMMIT]),
      SHOW_LONG_STATUS, SHOW_SCOPE_ALL},
@@ -6831,7 +6847,7 @@ int init_common_variables() {
     of SQLCOM_ constants.
   */
   static_assert(sizeof(com_status_vars) / sizeof(com_status_vars[0]) - 1 ==
-                    SQLCOM_END + 7,
+                    SQLCOM_END + 11,
                 "");
 #endif
 

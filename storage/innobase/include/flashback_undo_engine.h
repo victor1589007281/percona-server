@@ -22,9 +22,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
  Provides three core operations:
  1. execute_query()    — Flashback query: read a record's historical version
-    as of a given timestamp (SELECT ... AS OF).
+    as of a given transaction ID (SELECT ... AS OF).
  2. execute_table()    — Flashback table: walk all rows in a table and restore
-    them to the state at a given timestamp.
+    them to the state at a given transaction ID.
  3. execute_dry_run()  — Dry-run mode: estimate how many rows would be
     restored by execute_table() without modifying any data.
 
@@ -34,6 +34,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
  - Does NOT panic; all errors are returned via dberr_t.
  - Supports dry_run mode and max_rows limit for safety.
  - Thread-safe: each call operates on its own prebuilt/mtr context.
+ - m_prebuilt is lazy-initialized to avoid overhead for single-row queries.
 
  Usage example:
    UndoFlashbackEngine engine(table, target_trx_id, max_rows);
@@ -73,7 +74,8 @@ struct FlashbackResult {
   /** Number of rows skipped because undo history was purged */
   ulint m_rows_skipped{0};
 
-  /** Number of rows that were already at the target version (no change needed) */
+  /** Number of rows that were already at the target version (no change needed)
+   */
   ulint m_rows_unchanged{0};
 
   /** Human-readable error message (empty if m_error == DB_SUCCESS) */
@@ -104,7 +106,12 @@ class UndoFlashbackEngine {
   UndoFlashbackEngine(dict_table_t *table, trx_id_t target_trx_id,
                       ulint max_rows = 0);
 
-  /** Destructor: cleans up internal resources */
+  /** Destructor: cleans up internal resources.
+   *
+   * If m_prebuilt was allocated by this engine (m_own_prebuilt == true),
+   * it is freed via row_prebuilt_free(). Otherwise the caller retains
+   * ownership and is responsible for cleanup.
+   */
   ~UndoFlashbackEngine();
 
   /** Disable copy/move */
@@ -116,16 +123,17 @@ class UndoFlashbackEngine {
   /** Execute a flashback query: build the historical version of a single
    * record as of the target transaction ID.
    *
-   * @param[in] rec        Current clustered index record. Caller must hold
-   *                       a page latch on rec.
-   * @param[in] offsets    Offsets for rec (from rec_get_offsets).
-   * @param[out] old_vers  Output: the historical version record, or nullptr
-   *                       if the record was inserted after target_trx_id.
-   * @param[in] heap       Memory heap for allocating the output record.
+   * @param[in]  rec        Current clustered index record. Caller must hold
+   *                        a page latch on rec.
+   * @param[in]  offsets    Offsets for rec (from rec_get_offsets).
+   *                        May be internally reallocated by the callee.
+   * @param[out] old_vers   Output: the historical version record, or nullptr
+   *                        if the record was inserted after target_trx_id.
+   * @param[in]  heap       Memory heap for allocating the output record.
    * @return DB_SUCCESS on success, DB_MISSING_HISTORY if undo was purged,
    *         or other error codes on failure.
    */
-  [[nodiscard]] dberr_t execute_query(const rec_t *rec, const ulint *offsets,
+  [[nodiscard]] dberr_t execute_query(const rec_t *rec, ulint *offsets,
                                       const rec_t **old_vers,
                                       mem_heap_t *heap);
 
@@ -169,6 +177,16 @@ class UndoFlashbackEngine {
   bool is_limited() const { return m_limited; }
 
  private:
+  /** Ensure m_prebuilt is initialized (lazy initialization).
+   *
+   * Allocates the row_prebuilt_t structure on first call if not yet done.
+   * Uses the clustered index row length as a conservative estimate for
+   * mysql_row_len.
+   *
+   * @return true if prebuilt is available, false on allocation failure.
+   */
+  bool ensure_prebuilt();
+
   /** Scan and flashback a single row during execute_table.
    *
    * @param[in] rec        Current clustered index record.
@@ -213,10 +231,19 @@ class UndoFlashbackEngine {
   /** Whether the operation was stopped due to max_rows limit */
   bool m_limited;
 
-  /** Pre-built structure for MySQL-InnoDB interface (lazy-initialized) */
+  /** Pre-built structure for MySQL-InnoDB interface (lazy-initialized).
+   *
+   * Used for full table scan operations (execute_table).
+   * For single-row queries (execute_query), this is not needed.
+   */
   row_prebuilt_t *m_prebuilt;
 
-  /** Whether m_prebuilt was allocated by this engine */
+  /** Whether m_prebuilt was allocated by this engine.
+   *
+   * If true, the destructor is responsible for freeing m_prebuilt.
+   * If false, m_prebuilt was provided by the caller and should not
+   * be freed by this engine.
+   */
   bool m_own_prebuilt;
 };
 

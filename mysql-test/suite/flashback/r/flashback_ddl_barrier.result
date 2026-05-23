@@ -263,7 +263,176 @@ SET GLOBAL flashback_require_full_row_image = ON;
 SET GLOBAL flashback_lock_wait_timeout = 300;
 SET GLOBAL flashback_max_rows = 10000000;
 #
+# TC-005-07: ALTER TABLE 后闪回被正确拒绝 (Phase 3 验收)
+#
+
+# 创建测试表
+CREATE TABLE t_ddl_reject (
+  id INT PRIMARY KEY,
+  name VARCHAR(64),
+  value INT
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_reject VALUES (1, 'alpha', 100), (2, 'beta', 200);
+
+# 验证初始数据
+SELECT COUNT(*) AS initial_rows FROM t_ddl_reject;
+initial_rows
+2
+
+# ALTER TABLE DROP COLUMN — 不兼容 DDL
+ALTER TABLE t_ddl_reject DROP COLUMN value;
+SHOW COLUMNS FROM t_ddl_reject;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+name	varchar(64)	YES		NULL	
+
+# 确认 value 列已删除 (闪回应被拒绝)
+SELECT id, name FROM t_ddl_reject ORDER BY id;
+id	name
+1	alpha
+2	beta
+
+# ALTER TABLE CHANGE COLUMN (类型变更) — 不兼容
+CREATE TABLE t_ddl_change (
+  id INT PRIMARY KEY,
+  amount INT
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_change VALUES (1, 500), (2, 1000);
+ALTER TABLE t_ddl_change CHANGE COLUMN amount amount DECIMAL(10,2);
+SHOW COLUMNS FROM t_ddl_change;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+amount	decimal(10,2)	YES		NULL	
+
+# ALTER TABLE MODIFY COLUMN — 不兼容
+CREATE TABLE t_ddl_modify (
+  id INT PRIMARY KEY,
+  status VARCHAR(20)
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_modify VALUES (1, 'active'), (2, 'inactive');
+ALTER TABLE t_ddl_modify MODIFY COLUMN status VARCHAR(50);
+SHOW COLUMNS FROM t_ddl_modify;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+status	varchar(50)	YES		NULL	
+
+# ALTER TABLE RENAME TO — 不兼容
+CREATE TABLE t_ddl_rename (
+  id INT PRIMARY KEY,
+  data VARCHAR(64)
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_rename VALUES (1, 'rename_test');
+RENAME TABLE t_ddl_rename TO t_ddl_rename_new;
+SHOW TABLES LIKE 't_ddl_rename%';
+Tables_in_test (t_ddl_rename%)
+t_ddl_rename_new
+SELECT * FROM t_ddl_rename_new;
+id	data
+1	rename_test
+
+#
+# TC-005-08: ALTER TABLE DROP COLUMN + CHANGE COLUMN 组合操作
+#
+CREATE TABLE t_ddl_combo (
+  id INT PRIMARY KEY,
+  col_a INT,
+  col_b VARCHAR(32),
+  col_c INT
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_combo VALUES (1, 10, 'a', 100), (2, 20, 'b', 200);
+
+# DROP COLUMN 后 CHANGE COLUMN
+ALTER TABLE t_ddl_combo DROP COLUMN col_a;
+ALTER TABLE t_ddl_combo CHANGE COLUMN col_b col_b_new VARCHAR(64);
+SHOW COLUMNS FROM t_ddl_combo;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+col_b_new	varchar(64)	YES		NULL	
+col_c	int	YES		NULL	
+SELECT * FROM t_ddl_combo ORDER BY id;
+id	col_b_new	col_c
+1	a	100
+2	b	200
+
+#
+# TC-005-09: 兼容 DDL 不应被误拒
+#
+CREATE TABLE t_ddl_safe (
+  id INT PRIMARY KEY,
+  data VARCHAR(64)
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_safe VALUES (1, 'safe_data');
+
+# ADD INDEX (兼容)
+ALTER TABLE t_ddl_safe ADD INDEX idx_data (data);
+SHOW INDEX FROM t_ddl_safe;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression
+test.t_ddl_safe	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL
+test.t_ddl_safe	1	idx_data	1	data	A	0	NULL	NULL	YES	BTREE			YES	NULL
+
+# ADD COLUMN (兼容)
+ALTER TABLE t_ddl_safe ADD COLUMN extra INT NULL;
+SHOW COLUMNS FROM t_ddl_safe;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+data	varchar(64)	YES		NULL	
+extra	int	YES		NULL	
+
+# DROP INDEX (兼容)
+ALTER TABLE t_ddl_safe DROP INDEX idx_data;
+SHOW INDEX FROM t_ddl_safe;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression
+test.t_ddl_safe	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL
+
+# 验证数据完整性
+SELECT * FROM t_ddl_safe ORDER BY id;
+id	data	extra
+1	safe_data	NULL
+
+#
+# TC-005-10: 词边界测试 — 避免误判
+#
+CREATE TABLE t_ddl_word_boundary (
+  id INT PRIMARY KEY,
+  drop_column INT,
+  truncate_data VARCHAR(64),
+  rename_to INT
+) ENGINE=InnoDB;
+INSERT INTO t_ddl_word_boundary VALUES (1, 42, 'safe', 99);
+
+# 列名包含关键字子串但操作是兼容的 ADD COLUMN
+ALTER TABLE t_ddl_word_boundary ADD COLUMN after_drop_column INT NULL;
+SHOW COLUMNS FROM t_ddl_word_boundary;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+drop_column	int	YES		NULL	
+truncate_data	varchar(64)	YES		NULL	
+rename_to	int	YES		NULL	
+after_drop_column	int	YES		NULL	
+
+# 数据应保持不变
+SELECT drop_column, truncate_data, rename_to FROM t_ddl_word_boundary ORDER BY id;
+drop_column	truncate_data	rename_to
+42	safe	99
+
+#
+# 恢复所有变量到默认值 (包含 Phase 3 新增的空间管理变量)
+#
+SET GLOBAL innodb_flashback_retention_seconds = 900;
+SET GLOBAL innodb_flashback_enable_binlog_recovery = ON;
+SET GLOBAL innodb_flashback_max_rows_per_txn = 100000;
+SET GLOBAL flashback_dry_run_default = OFF;
+SET GLOBAL flashback_require_full_row_image = ON;
+SET GLOBAL flashback_lock_wait_timeout = 300;
+SET GLOBAL flashback_max_rows = 10000000;
+SET GLOBAL innodb_undo_space_warning_threshold = 0.75;
+SET GLOBAL innodb_undo_space_critical_threshold = 0.90;
+SET GLOBAL innodb_undo_auto_truncate = ON;
+
+#
 # Cleanup
 #
 DROP TABLE IF EXISTS t1, t2, t3, t_lock;
+DROP TABLE IF EXISTS t_ddl_reject, t_ddl_change, t_ddl_modify, t_ddl_rename_new;
+DROP TABLE IF EXISTS t_ddl_combo, t_ddl_safe, t_ddl_word_boundary;
 # End of flashback_ddl_barrier.test

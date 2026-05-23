@@ -69,6 +69,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0rseg.h"
 #include "trx0trx.h"
 #include "ut0math.h"
+#include "purge_hold_scheduler.h"
 
 /** Maximum allowable purge history length.  <=0 means 'infinite'. */
 ulong srv_max_purge_lag = 0;
@@ -78,6 +79,11 @@ ulong srv_max_purge_lag_delay = 0;
 
 /** The global data structure coordinating a purge */
 trx_purge_t *purge_sys = nullptr;
+
+/** Purge Hold 调度器全局实例
+ * 由 flashback 模块初始化/销毁，purge 线程只读访问。
+ * 初始为 nullptr，表示未启用 flashback 功能。 */
+PurgeHoldScheduler *purge_hold_scheduler = nullptr;
 
 /** Wait for a short delay between checks. */
 #ifdef UNIV_DEBUG
@@ -2430,7 +2436,45 @@ ulint trx_purge(ulint n_purge_threads, /*!< in: number of purge tasks
 
   ut_a(n_purge_threads > 0);
 
+  /* ==== Purge Hold Scheduler: 查询调度决策 ====
+   * 在每批次 purge 前调用 query_schedule()，综合时间延迟和空间压力。
+   * 如果 flashback 模块持有了 purge，则可能暂停或延迟当前批次。
+   * 此逻辑与现有的 srv_max_purge_lag (record_count_lag) 机制独立运行，
+   * 两者取更严格的限制生效。 */
+  PurgeHoldScheduler::ScheduleResult hold_sched{};
+  if (purge_hold_scheduler != nullptr) {
+    hold_sched = purge_hold_scheduler->query_schedule(batch_size);
+
+    if (hold_sched.should_pause) {
+      /* 高优先级 Hold 请求: 跳过本批次，等待下次调度 */
+      MONITOR_INC_VALUE(MONITOR_PURGE_INVOKED, 1);
+      MONITOR_INC_VALUE(MONITOR_PURGE_N_PAGE_HANDLED, 0);
+      return 0;
+    }
+
+    /* 将 Hold 延迟传递给 srv_dml_needed_delay，与 srv_max_purge_lag
+     * 计算的延迟取最大值，确保 DML 线程受到足够的反压。
+     * 注意: estimated_delay_us 是秒级差值转微秒，可能很大，
+     * 因此对 purge 线程自身的 sleep 使用 capped 值。 */
+    if (hold_sched.estimated_delay_us > 0) {
+      /* purge 线程自身的延迟: 使用 srv_max_purge_lag_delay 作为上限 */
+      ulint purge_sleep_us = static_cast<ulint>(hold_sched.estimated_delay_us);
+      if (srv_max_purge_lag_delay > 0 &&
+          purge_sleep_us > srv_max_purge_lag_delay) {
+        purge_sleep_us = srv_max_purge_lag_delay;
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(purge_sleep_us));
+    }
+  }
+
   srv_dml_needed_delay = trx_purge_dml_delay();
+
+  /* 如果 Hold 调度器要求延迟，将延迟值合并到 srv_dml_needed_delay 中，
+   * 取两者最大值以确保 DML 线程受到足够的反压。 */
+  if (hold_sched.estimated_delay_us > 0 &&
+      hold_sched.estimated_delay_us > srv_dml_needed_delay) {
+    srv_dml_needed_delay = static_cast<ulint>(hold_sched.estimated_delay_us);
+  }
 
   /* The number of tasks submitted should be completed. */
   ut_a(purge_sys->n_submitted == purge_sys->n_completed);

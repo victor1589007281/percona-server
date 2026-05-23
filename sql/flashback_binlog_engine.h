@@ -22,6 +22,7 @@
   - reverse_rows_event(): 逆向单个 Rows Event（Write→Delete, Delete→Insert,
     Update 前后镜像互换）
   - check_row_image_compatibility(): 检查当前 binlog_row_image 是否支持闪回
+  - Table_map_event 缓存: 解析 Rows_event 前需要先获取对应的表元信息
 
   设计参考: mysql_flashback_implementation_v2.md §5.2.2
             mysql_flashback_implementation.md §2.2.5
@@ -37,7 +38,12 @@
 #ifndef FLASHBACK_BINLOG_ENGINE_INCLUDED
 #define FLASHBACK_BINLOG_ENGINE_INCLUDED
 
+#include <atomic>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "my_inttypes.h"
@@ -50,8 +56,297 @@ class Update_rows_log_event;
 class Write_rows_log_event;
 class Delete_rows_log_event;
 class Log_event;
+class Table_map_log_event;
 
 namespace flashback {
+
+/**
+  Table_map_event 缓存条目
+
+  记录从 binlog 中读取到的 Table_map_log_event，供后续 Rows_event 使用。
+  WHY: binlog 中的 Rows_event 只包含 table_id 和行数据，表名/列类型等
+  元信息需要从最近的 Table_map_event 中获取。
+*/
+struct TableMapEntry {
+  std::string db_name;             /* 数据库名 */
+  std::string table_name;          /* 表名 */
+  uint16_t column_count;           /* 列数 */
+  bool is_valid;                   /* 条目是否有效 */
+
+  /**
+    列类型数组（对应 m_coltype）。
+    存储每个列的 MySQL 类型（如 MYSQL_TYPE_LONG, MYSQL_TYPE_STRING 等）。
+  */
+  std::vector<uint8_t> column_types;
+
+  /**
+    列名数组（从 Optional_metadata_fields::m_column_name 提取）。
+    用于生成完整的 INSERT INTO table (col1, col2, ...) SQL。
+    如果 binlog 未记录列名（binlog_row_metadata 配置），则为空。
+  */
+  std::vector<std::string> column_names;
+
+  TableMapEntry()
+      : column_count(0), is_valid(false) {}
+};
+
+/**
+  TableMapCache — Table_map_event 缓存管理器
+
+  独立于 BinlogFlashbackEngine 的缓存类，负责:
+  1. 注册（缓存）Table_map_event 的表元信息
+  2. 按 table_id 查询缓存条目
+  3. 清空缓存（通常在 Rotate_event 或新会话开始时调用）
+
+  设计动机:
+  WHY: 原始设计中缓存逻辑直接嵌入 BinlogFlashbackEngine，
+  违反了单一职责原则。将缓存抽离为独立类后:
+  - 缓存逻辑可独立测试
+  - BinlogFlashbackEngine 更专注于事件逆向逻辑
+  - 未来可扩展为线程安全版本（添加 mutex）
+
+  线程安全: 实例不可跨线程共享（与 BinlogFlashbackEngine 一致）。
+*/
+class TableMapCache {
+ public:
+  TableMapCache() = default;
+  ~TableMapCache() = default;
+
+  /* 禁止拷贝（缓存独占） */
+  TableMapCache(const TableMapCache &) = delete;
+  TableMapCache &operator=(const TableMapCache &) = delete;
+
+  /* 允许移动（转移缓存所有权） */
+  TableMapCache(TableMapCache &&) = default;
+  TableMapCache &operator=(TableMapCache &&) = default;
+
+  /**
+    注册（缓存）一条 Table_map_event
+
+    当 binlog 解析遇到 Table_map_log_event 时，提取其表元信息
+    并缓存起来，供后续 Rows_event 查询使用。
+
+    WHY: 同一个 table_id 可能被多次注册（例如 Rotate_event 后重置），
+    使用 emplace 覆盖旧条目而非插入失败。
+
+    @param table_id     binlog 中的 table_id
+    @param db_name      数据库名
+    @param table_name   表名
+    @param column_count 列数
+  */
+  void register_table_map(uint64_t table_id, const std::string &db_name,
+                          const std::string &table_name,
+                          uint16_t column_count) {
+    TableMapEntry entry;
+    entry.db_name = db_name;
+    entry.table_name = table_name;
+    entry.column_count = column_count;
+    entry.is_valid = true;
+
+    /* WHY: 使用 [] 覆盖旧值而非 emplace，避免重复 table_id 时插入失败 */
+    m_cache[table_id] = std::move(entry);
+  }
+
+  /**
+    注册（缓存）一条 Table_map_event（完整信息）
+
+    重载版本: 同时接收列类型数组。
+  */
+  void register_table_map(uint64_t table_id, const std::string &db_name,
+                          const std::string &table_name,
+                          uint16_t column_count,
+                          const uint8_t *col_types,
+                          unsigned long col_count,
+                          const unsigned char * /*optional_metadata*/) {
+    /* 先调用基础版本 */
+    register_table_map(table_id, db_name, table_name, column_count);
+
+    /* 然后填充列类型 */
+    TableMapEntry &entry = m_cache[table_id];
+    if (col_types != nullptr && col_count > 0) {
+      entry.column_types.resize(col_count);
+      for (unsigned long i = 0; i < col_count; i++) {
+        entry.column_types[i] = col_types[i];
+      }
+    }
+  }
+
+  /**
+    注册（缓存）一条 Table_map_event（从 Log_event 对象提取）
+
+    便捷方法: 直接从 Table_map_log_event 对象中提取信息并缓存，
+    包括列类型和列名（如果可用）。
+
+    @param tmev Table_map_log_event 指针（不可为 nullptr）
+  */
+  void register_table_map(const Table_map_log_event *tmev);
+
+  /**
+    按 table_id 查询缓存条目
+
+    WHY: std::optional 不能持有引用类型，因此返回 const TableMapEntry*。
+    返回 nullptr 表示未找到对应条目。
+
+    @param table_id 要查找的 table_id
+    @return 缓存条目指针，未找到返回 nullptr
+  */
+  const TableMapEntry *get_table_map(uint64_t table_id) const {
+    auto it = m_cache.find(table_id);
+    if (it == m_cache.end()) return nullptr;
+    return &(it->second);
+  }
+
+  /**
+    清空缓存
+
+    通常在以下场景调用:
+    - 遇到 Rotate_event（table_id 可能在新文件中重置）
+    - 新的闪回会话开始
+    - 内存回收需求
+  */
+  void clear() { m_cache.clear(); }
+
+  /**
+    获取缓存条目数（调试用）
+
+    @return 当前缓存中的条目数
+  */
+  size_t size() const { return m_cache.size(); }
+
+  /**
+    检查缓存是否为空
+
+    @return true 如果缓存中没有任何条目
+  */
+  bool empty() const { return m_cache.empty(); }
+
+ private:
+  /**
+    内部缓存存储
+
+    key: table_id, value: 缓存的表元信息
+  */
+  std::map<uint64_t, TableMapEntry> m_cache;
+};
+
+/**
+  单个逆向 SQL 操作
+
+  记录从 Rows_event 逆向生成的 SQL 语句及其元信息，
+  用于事务提交时逆序执行。
+*/
+struct ReverseSqlOp {
+  /** 表名（db.table 格式） */
+  std::string table_name;
+
+  /** 逆向后的 SQL 语句 */
+  std::string sql;
+
+  /** 原始 binlog position（用于断点续传） */
+  my_off_t binlog_pos;
+
+  /** binlog 文件名 */
+  std::string binlog_file;
+
+  /** 原始事件类型 (WRITE/UPDATE/DELETE) */
+  int original_event_type;
+};
+
+/**
+  事务收集器 — 按事务分组收集 Rows_event 的逆向 SQL
+
+  WHY: Binlog 闪回的核心是按事务边界组织逆序执行。
+  每个事务内的 Rows_event 需要按逆序执行 (rbegin→rend) 才能保证
+  事务级别的回滚正确性。
+
+  生命周期:
+  1. 遇到 GTID/BEGIN 事件时，开始新事务收集
+  2. 遇到 Rows_event 时，逆向生成 SQL 并追加到当前事务
+  3. 遇到 XID_EVENT 时，标记事务完成，触发逆序执行
+  4. 遇到 ROLLBACK 事件时，丢弃当前事务的收集结果
+
+  线程安全: 实例不可跨线程共享。
+*/
+class TransactionCollector {
+ public:
+  TransactionCollector() : m_gtid(""), m_in_transaction(false) {}
+  ~TransactionCollector() = default;
+
+  /* 禁止拷贝 */
+  TransactionCollector(const TransactionCollector &) = delete;
+  TransactionCollector &operator=(const TransactionCollector &) = delete;
+
+  /**
+    开始新事务收集
+
+    @param gtid 事务的 GTID 字符串（空字符串表示匿名事务）
+  */
+  void begin_transaction(const std::string &gtid) {
+    m_gtid = gtid;
+    m_in_transaction = true;
+    m_ops.clear();
+  }
+
+  /**
+    追加一条逆向 SQL 操作到当前事务
+
+    @param op 逆向 SQL 操作
+  */
+  void append_op(ReverseSqlOp &&op) {
+    if (m_in_transaction) {
+      m_ops.push_back(std::move(op));
+    }
+  }
+
+  /**
+    丢弃当前事务（ROLLBACK 场景）
+  */
+  void discard() {
+    m_gtid.clear();
+    m_in_transaction = false;
+    m_ops.clear();
+  }
+
+  /**
+    获取收集到的逆向操作列表（只读）
+    @return 逆向操作向量
+  */
+  const std::vector<ReverseSqlOp> &ops() const { return m_ops; }
+
+  /**
+    获取事务 GTID
+  */
+  const std::string &gtid() const { return m_gtid; }
+
+  /**
+    是否正在收集中
+  */
+  bool in_transaction() const { return m_in_transaction; }
+
+  /**
+    操作数量
+  */
+  size_t size() const { return m_ops.size(); }
+
+  /**
+    逆序迭代器 (rbegin)
+
+    WHY: 闪回需要逆序执行事务内的操作，以撤销后发生的操作为先。
+    例如: 事务内先 UPDATE 再 DELETE，闪回时需要先 INSERT 再反向 UPDATE。
+  */
+  auto rbegin() const { return m_ops.rbegin(); }
+  auto rend() const { return m_ops.rend(); }
+
+ private:
+  /** 事务 GTID */
+  std::string m_gtid;
+
+  /** 是否正在收集当前事务 */
+  bool m_in_transaction;
+
+  /** 收集到的逆向 SQL 操作列表 */
+  std::vector<ReverseSqlOp> m_ops;
+};
 
 /**
   Binlog 闪回引擎
@@ -60,8 +355,10 @@ namespace flashback {
   工作原理:
   1. 定位目标时间点的 binlog 文件与位置
   2. 从该位置正向读取 binlog 事件到当前时间点
-  3. 对每个 DML 事件进行逆向（INSERT→DELETE, DELETE→INSERT, UPDATE 互换）
-  4. 执行逆向 SQL 完成闪回
+  3. 缓存 Table_map_event，获取表名和列类型信息
+  4. 对每个 DML 事件进行逆向（INSERT→DELETE, DELETE→INSERT, UPDATE 互换）
+  5. 处理事务边界（GTID、XID），逆序执行反向 SQL
+  6. 支持断点续传和幂等重放（通过 checkpoint 文件）
 
   线程安全: 实例不可跨线程共享，每个 THD 使用独立实例。
 */
@@ -211,7 +508,6 @@ class BinlogFlashbackEngine {
     根据列类型将原始字节数据转换为 SQL 可接受的字面量格式。
 
     @param row_data    行数据指针
-    @param row_len     行数据长度
     @param null_bitmap NULL 位图
     @param sql_buf     输出的 SQL 值字符串
   */
@@ -229,6 +525,130 @@ class BinlogFlashbackEngine {
   */
   bool needs_file_switch(const char *current_file, char *next_file) const;
 
+  /**
+    缓存 Table_map_event（委托给 TableMapCache）
+
+    从 binlog 中读取到 Table_map_log_event 时，提取表名和列信息，
+    存入缓存供后续 Rows_event 使用。
+
+    @param tmev Table_map_log_event 指针
+  */
+  void cache_table_map(const Table_map_log_event *tmev) {
+    m_table_map_cache.register_table_map(tmev);
+  }
+
+  /**
+    查找指定 table_id 的缓存条目
+
+    @param table_id 要查找的 table_id
+    @return 缓存条目指针，如果未找到返回 nullptr
+  */
+  const TableMapEntry *lookup_table_map(uint64_t table_id) const {
+    return m_table_map_cache.get_table_map(table_id);
+  }
+
+  /**
+    检查 Rows_event 是否属于请求中的目标表
+
+    如果 request.tables 非空，则只处理属于目标表的 event。
+    如果 request.tables 为空，则处理所有表。
+
+    @param event  Rows_event
+    @param request 闪回请求参数
+    @retval true  需要处理
+    @retval false 跳过
+  */
+  bool should_process_event(const Rows_log_event &event,
+                            const FlashbackRequest &request) const;
+
+  /**
+    获取列的 MySQL 类型
+
+    @param tmev Table_map_log_event
+    @param col_idx 列索引
+    @return 列类型
+  */
+  static uint8_t get_column_type(const Table_map_log_event *tmev,
+                                 uint16_t col_idx);
+
+  /**
+    执行逆向 SQL（非 dry_run 模式）
+
+    WHY: 闪回操作必须设置 sql_log_bin=OFF（约束 C1），防止逆向 SQL
+    被复制到从库造成数据二次损坏。
+
+    @param thd      线程上下文
+    @param sql      要执行的 SQL
+    @param dry_run  如果为 true，仅记录不执行
+    @retval true    执行失败
+    @retval false   成功或 dry_run
+  */
+  bool execute_reverse_sql(THD *thd, const std::string &sql,
+                           bool dry_run) const;
+
+  /**
+    逆序执行单个事务的逆向 SQL
+
+    对 TransactionCollector 中收集的操作按 rbegin→rend 顺序执行。
+
+    @param thd       线程上下文
+    @param collector 事务收集器（已完成收集）
+    @param dry_run   如果为 true，仅统计不执行
+    @param[out] rows_executed  实际执行的行数
+    @retval true    执行失败
+    @retval false   成功
+  */
+  bool execute_transaction_reverse(THD *thd,
+                                    const TransactionCollector &collector,
+                                    bool dry_run,
+                                    ulonglong &rows_executed) const;
+
+  /**
+    写入检查点信息到文件
+
+    用于断点续传：记录已处理到的 binlog 文件和 position。
+
+    @param binlog_file 当前处理的 binlog 文件名
+    @param binlog_pos  当前处理的 position
+    @param gtid        最后处理的事务 GTID
+    @retval true  写入失败
+    @retval false 成功
+  */
+  bool write_checkpoint(const char *binlog_file, my_off_t binlog_pos,
+                        const std::string &gtid) const;
+
+  /**
+    从检查点文件读取上次处理位置
+
+    @param[out] binlog_file  上次处理的 binlog 文件名
+    @param[out] binlog_pos   上次处理的 position
+    @param[out] gtid         最后处理的事务 GTID
+    @retval true  读取失败或无检查点
+    @retval false 成功
+  */
+  bool read_checkpoint(char *binlog_file, my_off_t *binlog_pos,
+                       std::string &gtid) const;
+
+  /**
+    并发扫描多个 binlog 文件收集 DML 事件（只读预扫描）
+
+    WHY: 串行扫描多个大 binlog 文件可能耗时较长。
+    通过并发扫描，可以利用多核加速事件收集过程。
+    由于 DML 收集是只读的，不存在并发写冲突问题。
+
+    @param files_to_scan  要扫描的 binlog 文件列表（已排序）
+    @param binlog_dir     binlog 文件所在目录
+    @param request        闪回请求参数
+    @param[out] all_ops   收集到的所有逆向操作（按事务分组）
+    @param[out] error     是否发生错误
+  */
+  void scan_binlog_files_concurrent(
+      const std::vector<std::string> &files_to_scan,
+      const char *binlog_dir,
+      const FlashbackRequest &request,
+      std::vector<std::vector<ReverseSqlOp>> &all_ops,
+      std::atomic<bool> &error);
+
   /** 当前线程上下文 */
   THD *m_thd;
 
@@ -237,6 +657,15 @@ class BinlogFlashbackEngine {
 
   /** 闪回执行期间已处理的事件数 */
   uint64_t m_events_processed{0};
+
+  /**
+    Table_map_event 缓存
+
+    WHY: Rows_event 不包含表名，需要通过最近的 Table_map_event 获取。
+    由于 table_id 在 binlog 中可能重复（Rotate_event 后重置），
+    此缓存仅在单次闪回会话内有效。
+  */
+  TableMapCache m_table_map_cache;
 };
 
 }  // namespace flashback

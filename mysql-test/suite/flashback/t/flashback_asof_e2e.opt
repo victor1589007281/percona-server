@@ -1,0 +1,1 @@
+--log-bin=mysql-bin --binlog-format=ROW --binlog-row-image=FULL

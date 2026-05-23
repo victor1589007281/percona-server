@@ -51,6 +51,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ut0mutex.h"
 #endif /* !UNIV_HOTBACKUP */
 #include <atomic>
+#include <list>
+#include <map>
 #include <unordered_map>
 #include <vector>
 #include "trx0trx.h"
@@ -265,6 +267,62 @@ The function uses a two-phase approach:
 @param[in]  target_ts  Target timestamp (Unix epoch seconds)
 @return Approximate trx_id, or TRX_ID_MAX if target is outside undo window */
 trx_id_t trx_sys_find_trx_id_by_timestamp(my_time_t target_ts);
+
+/** Query result for timestamp-to-trx_id mapping. */
+struct trx_sys_time_mapping_result_t {
+  trx_id_t  trx_id;           /* Estimated transaction ID */
+  my_time_t timestamp;         /* Corresponding timestamp */
+  bool      is_exact;         /* Whether exact match found */
+  my_time_t oldest_undo_ts;   /* Oldest available undo timestamp */
+  bool      is_within_window; /* Whether timestamp is within undo window */
+};
+
+/** Single mapping entry for trx_id to commit timestamp. */
+struct trx_sys_time_mapping_entry_t {
+  trx_id_t  trx_id;           /* Transaction ID */
+  my_time_t commit_timestamp; /* Commit timestamp (Unix epoch seconds) */
+};
+
+/** Register a transaction commit in the time mapping cache.
+ * Called when a transaction commits, to record the trx_id -> timestamp
+ * mapping for flashback queries.
+ *
+ * @param[in] trx_id           Transaction ID
+ * @param[in] commit_timestamp Commit timestamp (Unix epoch seconds) */
+void trx_sys_time_mapping_register(trx_id_t trx_id,
+                                   my_time_t commit_timestamp);
+
+/** Query the transaction ID that was active at a given timestamp.
+ * Uses binary search on the mapping cache to find the closest trx_id.
+ * This implements the algorithm described in §8.1 of the design document.
+ *
+ * @param[in] target_ts Target timestamp (Unix epoch seconds)
+ * @return Query result containing estimated trx_id and window info */
+trx_sys_time_mapping_result_t trx_sys_time_mapping_query(
+    my_time_t target_ts);
+
+/** Batch register multiple transaction commit entries.
+ * Used during startup to load the mapping cache from persisted data.
+ *
+ * @param[in] entries Array of mapping entries
+ * @param[in] count   Number of entries */
+void trx_sys_time_mapping_batch_load(
+    const trx_sys_time_mapping_entry_t *entries, size_t count);
+
+/** Rebuild the time mapping cache from undo logs during crash recovery.
+ * Scans the undo log headers in rollback segments to recover the
+ * trx_id -> timestamp mapping.
+ *
+ * @return Number of entries recovered, or 0 on failure */
+size_t trx_sys_time_mapping_recover_from_undo(void);
+
+/** Get the oldest available undo timestamp from the mapping cache.
+ * @return Oldest timestamp, or 0 if cache is empty */
+my_time_t trx_sys_time_mapping_get_oldest_timestamp(void);
+
+/** Get the number of entries currently in the mapping cache.
+ * @return Cache entry count */
+size_t trx_sys_time_mapping_entry_count(void);
 
 #endif /* !UNIV_HOTBACKUP */
 

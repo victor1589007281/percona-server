@@ -827,6 +827,8 @@ SET(SQL_SOURCE
   flashback_sysvars.cc
   flashback_scheduler.cc
   flashback_binlog_engine.cc
+  flashback_checkpoint.cc
+  flashback_errors.cc
   )
 
 IF ((NOT WITHOUT_MYSQL_NATIVE_PASSWORD)

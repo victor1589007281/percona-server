@@ -94,6 +94,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef UNIV_HOTBACKUP
 #include "trx0i_s.h"
 #include "trx0purge.h"
+#include "purge_hold_scheduler.h"
 #include "usr0sess.h"
 #include "ut0crc32.h"
 #endif /* !UNIV_HOTBACKUP */
@@ -3247,6 +3248,19 @@ static ulint srv_do_purge(ulint *n_total_purged) {
   do {
     srv_current_thread_priority = srv_purge_thread_priority;
 
+    /* ==== Purge Hold Scheduler: 空间压力检查 ====
+     * 在每次 purge 迭代前检查是否有高优先级 Hold 请求。
+     * 如果有，跳过本轮 purge，等待下一轮调度。
+     * 此检查与 srv_max_purge_lag (record_count_lag) 机制并行工作，
+     * 互不干扰。 */
+    if (purge_hold_scheduler != nullptr) {
+      auto sched = purge_hold_scheduler->query_schedule(srv_purge_batch_size);
+      if (sched.should_pause) {
+        /* 高优先级 Hold: 暂停本轮 purge，但继续循环以便快速响应恢复 */
+        break;
+      }
+    }
+
     if (trx_sys->rseg_history_len.load() > rseg_history_len ||
         (srv_max_purge_lag > 0 && rseg_history_len > srv_max_purge_lag)) {
       /* History length is now longer than what it was
@@ -3462,6 +3476,20 @@ void srv_purge_coordinator_thread() {
     n_total_purged = 0;
 
     srv_current_thread_priority = srv_purge_thread_priority;
+
+    /* ==== Purge Hold Scheduler: 协调器级暂停检查 ====
+     * 在调用 srv_do_purge() 前再次检查 Hold 状态。
+     * 如果 should_pause 为 true，短暂等待后继续循环，
+     * 这样 coordinator 不会进入 srv_do_purge 的深层逻辑。
+     * 时间延迟已在 trx_purge() 内通过 sleep 处理，此处仅处理 pause。 */
+    if (purge_hold_scheduler != nullptr) {
+      auto sched = purge_hold_scheduler->query_schedule(srv_purge_batch_size);
+      if (sched.should_pause) {
+        /* 有关键 Hold 请求，短暂休眠后重新检查 */
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        continue;
+      }
+    }
 
     rseg_history_len = srv_do_purge(&n_total_purged);
 

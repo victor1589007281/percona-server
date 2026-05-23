@@ -10653,6 +10653,30 @@ ER_FLASHBACK_ENGINE_NONE
 ER_FLASHBACK_PRIVILEGE
   eng "Access denied; you need the FLASHBACK privilege on '%s.%s' to perform this operation."
 
+ER_FLASHBACK_VIEW_LIMIT
+  eng "Flashback view limit reached (%lu active views). Close existing views before registering new ones."
+
+ER_FLASHBACK_TIMESTAMP_UNAVAILABLE
+  eng "Target timestamp %s is beyond the undo log retention window. The oldest available undo timestamp is %s. Consider increasing innodb_flashback_window_seconds."
+
+ER_FLASHBACK_PURGE_HOLD_FAILED
+  eng "Failed to register purge hold request. Undo tablespace may be under space pressure."
+
+ER_FLASHBACK_VERSION_CHAIN_BROKEN
+  eng "Version chain is broken for row at position (%u, %u, %u). The undo record has been purged. Historical data is not available."
+
+ER_FLASHBACK_ESTIMATE_TRX_ID_FAILED
+  eng "Failed to estimate transaction ID for timestamp %s. The timestamp-to-transaction mapping cache may be empty."
+
+ER_FLASHBACK_WINDOW_EXCEEDED
+  eng "Flashback window limit exceeded. Current retention is %lu seconds, but requested flashback extends to %lu seconds ago. Either reduce the flashback window or increase innodb_flashback_window_seconds."
+
+ER_FLASHBACK_DDL_BARRIER_TRIGGERED
+  eng "DDL operation detected on table '%s' after target timestamp %s. Flashback to this time point is not safe. Please specify an earlier timestamp."
+
+ER_FLASHBACK_SPACE_CRITICAL
+  eng "Undo tablespace space is critically low (%s). Flashback operations are temporarily disabled. Please consider truncating undo tablespaces."
+
 
 ################################################################################
 # DO NOT add messages for the error-log to this file;

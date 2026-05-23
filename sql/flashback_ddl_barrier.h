@@ -38,6 +38,35 @@ class MDL_ticket;
 namespace flashback {
 
 /**
+  DDL 类型枚举
+
+  用于精确分类 binlog 中的 DDL 语句，替代简单的 strstr 关键字匹配。
+
+  UNKNOWN:    无法识别或非 DDL 语句
+  DROP_TABLE: DROP TABLE / DROP TABLE IF EXISTS
+  TRUNCATE:   TRUNCATE TABLE / TRUNCATE
+  DROP_COLUMN:ALTER TABLE ... DROP COLUMN
+  CHANGE_COLUMN: ALTER TABLE ... CHANGE COLUMN
+  MODIFY_COLUMN: ALTER TABLE ... MODIFY COLUMN
+  ADD_INDEX:  ALTER TABLE ... ADD INDEX / ADD UNIQUE / ADD PRIMARY KEY
+  DROP_INDEX: ALTER TABLE ... DROP INDEX
+  RENAME:     RENAME TABLE / ALTER TABLE ... RENAME TO / RENAME INDEX
+  OTHER:      其他已识别但不影响闪回的 DDL (ADD COLUMN, RENAME INDEX 等)
+*/
+enum class DdlType {
+  UNKNOWN,        /**< 无法识别或非 DDL */
+  DROP_TABLE,     /**< 删除表 */
+  TRUNCATE,       /**< 清空表 */
+  DROP_COLUMN,    /**< 删除列 */
+  CHANGE_COLUMN,  /**< 改名/改类型列 */
+  MODIFY_COLUMN,  /**< 修改列类型 */
+  ADD_INDEX,      /**< 添加索引 */
+  DROP_INDEX,     /**< 删除索引 */
+  RENAME,         /**< 重命名操作 */
+  OTHER           /**< 其他兼容的 DDL */
+};
+
+/**
   DDL 屏障类
 
   在闪回操作前和执行期间保护目标表不被不兼容的 DDL 修改。
@@ -108,7 +137,21 @@ class DDLBarrier {
   */
   bool has_lock() const { return m_locked; }
 
+  /**
+    静态方法: 快速判断单个 DDL SQL 是否与闪回兼容
+
+    用于并发 binlog 扫描中的线程安全调用（不依赖 DDLBarrier 实例）。
+
+    @param ddl_sql DDL 语句文本
+    @retval true  兼容，闪回可以继续
+    @retval false 不兼容，闪回必须中止
+  */
+  static bool classify_is_compatible(const char *ddl_sql);
+
  private:
+  /** 精确分类 DDL 语句类型，替代 strstr 关键字匹配 */
+  static DdlType classify_ddl(const char *ddl_sql);
+
   /** 检查单个 DDL event 是否与闪回兼容 */
   bool is_ddl_compatible(const char *ddl_sql) const;
 
